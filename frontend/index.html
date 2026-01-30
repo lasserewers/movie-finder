@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Movie Streaming Finder</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Movie Streaming Finder</h1>
+    <p class="subtitle">Find where to stream any movie, in any country</p>
+  </header>
+
+  <main>
+    <div class="setup-bar">
+      <div class="setup-row">
+        <label for="country-select">My country:</label>
+        <select id="country-select"></select>
+      </div>
+      <div class="setup-row">
+        <label>My services:</label>
+        <button id="settings-btn">Configure</button>
+        <span id="services-summary" class="services-summary"></span>
+      </div>
+    </div>
+
+    <div class="search-container">
+      <input type="text" id="search-input" placeholder="Search for a movie..." autocomplete="off">
+      <div id="search-results" class="search-results hidden"></div>
+    </div>
+
+    <div id="movie-detail" class="hidden">
+      <div class="movie-header">
+        <img id="movie-poster" src="" alt="">
+        <div class="movie-info">
+          <h2 id="movie-title"></h2>
+          <p id="movie-year"></p>
+          <p id="movie-overview"></p>
+        </div>
+      </div>
+      <div id="providers-table-container"></div>
+    </div>
+
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-content">
+        <h3>My Streaming Services</h3>
+        <p>Select the services you subscribe to:</p>
+        <label class="additional-toggle"><input type="checkbox" id="additional-services"> Show additional services from other countries</label>
+        <div id="provider-checklist"></div>
+        <div class="modal-actions">
+          <button id="save-settings">Save</button>
+          <button id="cancel-settings">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <p>Streaming data provided by <a href="https://www.justwatch.com" target="_blank">JustWatch</a> via <a href="https://www.themoviedb.org" target="_blank">TMDB</a></p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
