@@ -1,6 +1,15 @@
 const searchInput = document.getElementById("search-input");
 const searchResults = document.getElementById("search-results");
 const movieDetail = document.getElementById("movie-detail");
+const homeRows = document.getElementById("home-rows");
+const movieOverlay = document.getElementById("movie-overlay");
+const closeMovieOverlay = document.getElementById("close-movie-overlay");
+const sectionOverlay = document.getElementById("section-overlay");
+const closeSectionOverlay = document.getElementById("close-section-overlay");
+const sectionTitle = document.getElementById("section-title");
+const sectionGrid = document.getElementById("section-grid");
+const sectionLoader = document.getElementById("section-loader");
+const homeLoader = document.getElementById("home-loader");
 const settingsBtn = document.getElementById("settings-btn");
 const settingsModal = document.getElementById("settings-modal");
 const providerChecklist = document.getElementById("provider-checklist");
@@ -13,12 +22,29 @@ const additionalServices = document.getElementById("additional-services");
 const servicesSummary = document.getElementById("services-summary");
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
+const ROW_INITIAL_COUNT = 24;
+const SECTION_BATCH_PAGES = 3;
+const HOME_PAGE_SIZE = 6;
 let myProviderIds = new Set();
 let myCountries = [];
 let providerNameMap = {};
 let countryNameMap = {};
 let currentProviders = null;
 let activeCountries = new Set();
+let currentMovieTitle = "";
+let currentImdbId = "";
+let currentStreamingLinks = {}; // {country: [{service_id, service_name, type, link, ...}]}
+let currentMovieInfo = null; // {cast, directors, rating, poster, backdrop}
+let currentTmdbCredits = null; // {cast: [...], crew: [...]}
+const homeSectionMap = new Map();
+let sectionState = null;
+let sectionSeenIds = new Set();
+let sectionLoading = false;
+let sectionObserver = null;
+let homePage = 1;
+let homeHasMore = true;
+let homeLoading = false;
+let homeObserver = null;
 
 function countryFlag(code) {
   return String.fromCodePoint(...[...code.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
@@ -93,7 +119,7 @@ function renderCountryDropdown(query) {
     countryDropdown.classList.add("hidden");
     return;
   }
-  for (const r of filtered.slice(0, 10)) {
+  for (const r of filtered) {
     const div = document.createElement("div");
     div.className = "country-dropdown-item";
     div.textContent = `${countryFlag(r.iso_3166_1)} ${r.english_name}`;
@@ -122,19 +148,8 @@ document.addEventListener("click", (e) => {
 });
 
 function updateServicesSummary() {
-  if (!myProviderIds.size) {
-    servicesSummary.textContent = "None selected";
-    return;
-  }
-  const names = Array.from(myProviderIds)
-    .map(id => providerNameMap[id])
-    .filter(Boolean)
-    .sort();
-  if (names.length <= 3) {
-    servicesSummary.textContent = names.join(", ");
-  } else {
-    servicesSummary.textContent = names.slice(0, 3).join(", ") + ` +${names.length - 3} more`;
-  }
+  if (!servicesSummary) return;
+  servicesSummary.textContent = "";
 }
 
 // Init
@@ -146,6 +161,7 @@ async function init() {
     providerNameMap[p.provider_id] = p.provider_name;
   }
   updateServicesSummary();
+  await loadHomeRows(true);
 }
 
 async function saveConfig() {
@@ -169,6 +185,121 @@ async function doSearch(q) {
   const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
   const data = await res.json();
   renderSearchResults(data.results || []);
+}
+
+async function loadHomeRows(reset = false) {
+  if (!homeRows) return;
+  if (homeLoading) return;
+  if (!homeHasMore && !reset) return;
+  homeLoading = true;
+  if (reset) {
+    homePage = 1;
+    homeHasMore = true;
+    homeSectionMap.clear();
+    homeRows.innerHTML = "";
+  }
+  updateHomeLoader(true);
+  try {
+    const ids = Array.from(myProviderIds);
+    const qs = ids.length ? `&provider_ids=${ids.join(",")}` : "";
+    const res = await fetch(`/api/home?page=${homePage}&page_size=${HOME_PAGE_SIZE}${qs}`);
+    const data = await res.json();
+    const sections = data.sections || [];
+    renderHomeRows(sections, data.message || "", reset);
+    if (typeof data.has_more === "boolean") {
+      homeHasMore = data.has_more;
+    } else {
+      homeHasMore = sections.length > 0;
+    }
+    if (homeHasMore && data.next_page) {
+      homePage = data.next_page;
+    } else if (homeHasMore) {
+      homePage += 1;
+    }
+  } catch (err) {
+    if (reset) {
+      homeRows.innerHTML = '<div class="no-results">Unable to load rows</div>';
+    }
+    homeHasMore = false;
+  } finally {
+    homeLoading = false;
+    updateHomeLoader();
+    setupHomeObserver();
+  }
+}
+
+function renderHomeRows(sections, message, reset = false) {
+  const visibleSections = (sections || []).filter(section => (section.results || []).length);
+  if (!visibleSections.length && reset) {
+    const msg = message || "No titles available on your selected services yet.";
+    homeRows.innerHTML = `<div class="no-results">${esc(msg)}</div>`;
+    return;
+  }
+  for (const section of visibleSections) {
+    addHomeRow(section);
+  }
+}
+
+function addHomeRow(section) {
+  if (homeSectionMap.has(section.id)) return;
+  homeSectionMap.set(section.id, section);
+  const row = document.createElement("div");
+  row.className = "row";
+  const header = document.createElement("div");
+  header.className = "row-header";
+  const showMore = section.next_cursor || section.next_page || (section.total_pages && section.total_pages > 1);
+  const moreBtn = showMore ? `<button class="row-more" data-section="${section.id}">See more</button>` : "";
+  header.innerHTML = `<h3 class="row-title">${esc(section.title)}</h3>${moreBtn}`;
+  const scroll = document.createElement("div");
+  scroll.className = "row-scroll";
+  renderRowItems(section, scroll);
+  row.appendChild(header);
+  row.appendChild(scroll);
+  homeRows.appendChild(row);
+}
+
+function setupHomeObserver() {
+  if (!homeLoader) return;
+  if (homeObserver) {
+    homeObserver.disconnect();
+  }
+  if (!homeHasMore) return;
+  homeObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          loadHomeRows(false);
+        }
+      }
+    },
+    { root: null, threshold: 0.1 }
+  );
+  homeObserver.observe(homeLoader);
+}
+
+function updateHomeLoader(forceVisible = false) {
+  if (!homeLoader) return;
+  const shouldShow = forceVisible || homeHasMore;
+  homeLoader.classList.toggle("hidden", !shouldShow);
+}
+
+function renderRowItems(section, scroll) {
+  scroll.innerHTML = "";
+  const list = section.results || [];
+  const items = list.slice(0, ROW_INITIAL_COUNT);
+  for (const m of items) {
+    const card = document.createElement("div");
+    card.className = "movie-card";
+    card.dataset.movieId = m.id;
+    const poster = m.poster_url
+      ? `<img class="movie-poster" src="${esc(m.poster_url)}" alt="">`
+      : m.poster_path
+        ? `<img class="movie-poster" src="${TMDB_IMG}/w300${m.poster_path}" alt="">`
+        : `<div class="movie-poster"></div>`;
+    const year = m.release_date ? m.release_date.slice(0, 4) : "";
+    card.innerHTML = `${poster}<span class="movie-card-title">${esc(m.title)}</span><span class="movie-card-year">${year}</span>`;
+    scroll.appendChild(card);
+  }
 }
 
 function renderSearchResults(results) {
@@ -196,28 +327,353 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".search-container")) searchResults.classList.add("hidden");
 });
 
+if (homeRows) {
+  homeRows.addEventListener("click", (e) => {
+    const more = e.target.closest(".row-more");
+    if (more) {
+      const sectionId = more.dataset.section;
+      openSectionOverlay(sectionId);
+      return;
+    }
+    const card = e.target.closest(".movie-card");
+    if (card && card.dataset.movieId) {
+      selectMovie(card.dataset.movieId);
+    }
+  });
+}
+
+function openMovieOverlay() {
+  if (!movieOverlay) return;
+  movieOverlay.classList.remove("hidden");
+  movieOverlay.setAttribute("aria-hidden", "false");
+  updateBodyModalState();
+  const panel = movieOverlay.querySelector(".movie-overlay-panel");
+  if (panel) panel.scrollTop = 0;
+}
+
+function closeMovieOverlayFn() {
+  if (!movieOverlay) return;
+  movieOverlay.classList.add("hidden");
+  movieOverlay.setAttribute("aria-hidden", "true");
+  updateBodyModalState();
+}
+
+function updateBodyModalState() {
+  const movieOpen = movieOverlay && !movieOverlay.classList.contains("hidden");
+  const sectionOpen = sectionOverlay && !sectionOverlay.classList.contains("hidden");
+  document.body.classList.toggle("modal-open", movieOpen || sectionOpen);
+}
+
+function openSectionOverlay(sectionId) {
+  if (!sectionOverlay || !sectionGrid || !sectionTitle) return;
+  const section = homeSectionMap.get(sectionId);
+  if (!section) return;
+  const useCursor = Object.prototype.hasOwnProperty.call(section, "next_cursor");
+  sectionState = {
+    id: section.id,
+    title: section.title,
+    useCursor,
+    nextCursor: null,
+    nextPage: useCursor ? null : 1,
+    totalPages: section.total_pages || 0,
+    hasMore: true,
+  };
+  sectionSeenIds = new Set();
+  sectionTitle.textContent = section.title;
+  sectionGrid.innerHTML = "";
+  sectionOverlay.classList.remove("hidden");
+  sectionOverlay.setAttribute("aria-hidden", "false");
+  updateSectionLoader();
+  updateBodyModalState();
+  const panel = sectionOverlay.querySelector(".section-overlay-panel");
+  if (panel) panel.scrollTop = 0;
+  setupSectionObserver(panel);
+  loadMoreSection(true);
+}
+
+function closeSectionOverlayFn() {
+  if (!sectionOverlay) return;
+  sectionOverlay.classList.add("hidden");
+  sectionOverlay.setAttribute("aria-hidden", "true");
+  if (sectionObserver) {
+    sectionObserver.disconnect();
+  }
+  updateBodyModalState();
+}
+
+function renderSectionGridItems(items) {
+  if (!sectionGrid) return;
+  for (const m of items) {
+    const mid = m.id;
+    if (mid && sectionSeenIds.has(mid)) continue;
+    if (mid) sectionSeenIds.add(mid);
+    const card = document.createElement("div");
+    card.className = "movie-card";
+    card.dataset.movieId = m.id;
+    const poster = m.poster_url
+      ? `<img class="movie-poster" src="${esc(m.poster_url)}" alt="">`
+      : m.poster_path
+        ? `<img class="movie-poster" src="${TMDB_IMG}/w300${m.poster_path}" alt="">`
+        : `<div class="movie-poster"></div>`;
+    const year = m.release_date ? m.release_date.slice(0, 4) : "";
+    card.innerHTML = `${poster}<span class="movie-card-title">${esc(m.title)}</span><span class="movie-card-year">${year}</span>`;
+    sectionGrid.appendChild(card);
+  }
+}
+
+async function loadMoreSection(reset = false) {
+  if (!sectionState || sectionLoading) return;
+  if (sectionState.useCursor) {
+    if (sectionState.hasMore === false) return;
+  } else if (!sectionState.nextPage) {
+    return;
+  }
+  sectionLoading = true;
+  updateSectionLoader(true);
+  try {
+    const ids = Array.from(myProviderIds);
+    const qs = ids.length ? `&provider_ids=${ids.join(",")}` : "";
+    const cursor = sectionState.useCursor && sectionState.nextCursor ? `&cursor=${encodeURIComponent(sectionState.nextCursor)}` : "";
+    const page = sectionState.useCursor ? 1 : sectionState.nextPage;
+    const res = await fetch(`/api/section?section_id=${encodeURIComponent(sectionState.id)}&page=${page}&pages=${SECTION_BATCH_PAGES}${cursor}${qs}`);
+    const data = await res.json();
+    if (reset) {
+      sectionGrid.innerHTML = "";
+      sectionSeenIds = new Set();
+    }
+    renderSectionGridItems(data.results || []);
+    if (sectionState.useCursor) {
+      sectionState.nextCursor = data.next_cursor || null;
+      sectionState.hasMore = Boolean(sectionState.nextCursor);
+    } else {
+      sectionState.totalPages = data.total_pages || sectionState.totalPages;
+      sectionState.nextPage = data.next_page || null;
+      sectionState.hasMore = Boolean(sectionState.nextPage);
+    }
+  } catch (err) {
+    sectionState.hasMore = false;
+  } finally {
+    sectionLoading = false;
+    updateSectionLoader();
+  }
+}
+
+function updateSectionLoader(forceVisible = false) {
+  if (!sectionLoader) return;
+  const shouldShow = forceVisible || (sectionState && sectionState.hasMore);
+  sectionLoader.classList.toggle("hidden", !shouldShow);
+}
+
+function setupSectionObserver(panel) {
+  if (!sectionLoader || !panel) return;
+  if (sectionObserver) {
+    sectionObserver.disconnect();
+  }
+  sectionObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          loadMoreSection();
+        }
+      }
+    },
+    { root: panel, threshold: 0.1 }
+  );
+  sectionObserver.observe(sectionLoader);
+}
+
+if (closeMovieOverlay) {
+  closeMovieOverlay.addEventListener("click", closeMovieOverlayFn);
+}
+
+if (movieOverlay) {
+  movieOverlay.addEventListener("click", (e) => {
+    if (e.target.classList.contains("movie-overlay-backdrop")) closeMovieOverlayFn();
+  });
+}
+
+if (closeSectionOverlay) {
+  closeSectionOverlay.addEventListener("click", closeSectionOverlayFn);
+}
+
+if (sectionOverlay) {
+  sectionOverlay.addEventListener("click", (e) => {
+    if (e.target.classList.contains("movie-overlay-backdrop")) closeSectionOverlayFn();
+  });
+}
+
+if (sectionGrid) {
+  sectionGrid.addEventListener("click", (e) => {
+    const card = e.target.closest(".movie-card");
+    if (card && card.dataset.movieId) {
+      selectMovie(card.dataset.movieId);
+    }
+  });
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && movieOverlay && !movieOverlay.classList.contains("hidden")) {
+    closeMovieOverlayFn();
+    return;
+  }
+  if (e.key === "Escape" && sectionOverlay && !sectionOverlay.classList.contains("hidden")) {
+    closeSectionOverlayFn();
+  }
+});
+
 // Select movie
 async function selectMovie(movieId) {
   searchResults.classList.add("hidden");
-  const res = await fetch(`/api/movie/${movieId}/providers`);
-  const data = await res.json();
+  const [provRes, linksRes] = await Promise.all([
+    fetch(`/api/movie/${movieId}/providers`),
+    fetch(`/api/movie/${movieId}/links`).catch(() => null),
+  ]);
+  const data = await provRes.json();
   const movie = data.movie;
   currentProviders = data.providers;
+  const linksData = linksRes ? await linksRes.json() : {};
+  currentStreamingLinks = linksData.streaming || {};
+  currentMovieInfo = linksData.movie_info || null;
 
+  currentTmdbCredits = movie.credits || null;
+  currentMovieTitle = movie.title;
+  currentImdbId = movie.imdb_id || "";
   document.getElementById("movie-title").textContent = movie.title;
   document.getElementById("movie-year").textContent = movie.release_date ? movie.release_date.slice(0, 4) : "";
   document.getElementById("movie-overview").textContent = movie.overview || "";
 
   const poster = document.getElementById("movie-poster");
-  if (movie.poster_path) {
-    poster.src = `${TMDB_IMG}/w300${movie.poster_path}`;
+  const posterUrl = (currentMovieInfo && currentMovieInfo.poster) || (movie.poster_path ? `${TMDB_IMG}/w300${movie.poster_path}` : "");
+  if (posterUrl) {
+    poster.src = posterUrl;
     poster.style.display = "";
   } else {
     poster.style.display = "none";
   }
 
-  movieDetail.classList.remove("hidden");
+  // Render enriched movie meta (rating, cast, directors)
+  renderMovieMeta();
+
   renderProviders();
+  openMovieOverlay();
+}
+
+function renderPersonCircle(person) {
+  const img = person.profile_path
+    ? `<img src="${TMDB_IMG}/w185${person.profile_path}" alt="">`
+    : `<div class="person-placeholder"></div>`;
+  const role = person.character ? `<span class="person-role">${esc(person.character)}</span>` : "";
+  return `<div class="person-circle">${img}<span class="person-name">${esc(person.name)}</span>${role}</div>`;
+}
+
+function renderMovieMeta() {
+  const el = document.getElementById("movie-meta");
+  const credits = currentTmdbCredits;
+  if (!credits) { el.innerHTML = ""; return; }
+
+  const cast = credits.cast || [];
+  const crew = credits.crew || [];
+  const directors = crew.filter(c => c.job === "Director");
+  const topCast = cast.slice(0, 6);
+
+  // Show directors + top cast inline, with a "Cast & Crew" button
+  let html = "";
+  if (directors.length || topCast.length) {
+    html += `<div class="people-inline">`;
+    if (directors.length) {
+      html += `<div class="people-section"><h4 class="section-label">Director${directors.length > 1 ? "s" : ""}</h4><div class="people-row inline-row">${directors.map(renderPersonCircle).join("")}</div></div>`;
+    }
+    if (topCast.length) {
+      html += `<div class="people-section"><h4 class="section-label">Cast</h4><div class="people-row inline-row">${topCast.map(renderPersonCircle).join("")}</div></div>`;
+    }
+    html += `</div>`;
+  }
+  if (cast.length > 6 || crew.length) {
+    html += `<button id="open-credits-btn" class="credits-btn">Cast & Crew</button>`;
+  }
+  el.innerHTML = html;
+
+  const btn = document.getElementById("open-credits-btn");
+  if (btn) btn.addEventListener("click", () => openCreditsModal(credits));
+}
+
+function openCreditsModal(credits) {
+  const cast = credits.cast || [];
+  const crew = credits.crew || [];
+  const directors = crew.filter(c => c.job === "Director");
+  const writers = crew.filter(c => ["Writer", "Screenplay", "Story"].includes(c.job));
+  const producers = crew.filter(c => c.job === "Producer" || c.job === "Executive Producer");
+  const otherCrew = crew.filter(c => !["Director", "Writer", "Screenplay", "Story", "Producer", "Executive Producer"].includes(c.job));
+
+  // Deduplicate crew by id+job
+  function dedup(arr) {
+    const seen = new Set();
+    return arr.filter(c => { const k = c.id + ":" + c.job; if (seen.has(k)) return false; seen.add(k); return true; });
+  }
+
+  const tabs = [];
+  if (cast.length) tabs.push({ id: "cast", label: "Cast", people: cast, showRole: true });
+  const filmmakerSections = [
+    { label: `Director${directors.length > 1 ? "s" : ""}`, people: directors, showRole: false },
+    { label: "Writers", people: dedup(writers), showRole: true, roleField: "job" },
+    { label: "Producers", people: dedup(producers), showRole: true, roleField: "job" }
+  ].filter(section => section.people.length);
+  if (filmmakerSections.length) {
+    tabs.push({ id: "filmmakers", label: "Filmmakers", sections: filmmakerSections });
+  }
+  if (otherCrew.length) tabs.push({ id: "crew", label: "Additional Crew", people: dedup(otherCrew), showRole: true, roleField: "job" });
+
+  let html = `<div class="credits-tabs">`;
+  for (const tab of tabs) {
+    html += `<button class="credits-tab${tab === tabs[0] ? " active" : ""}" data-tab="${tab.id}">${tab.label}</button>`;
+  }
+  html += `</div>`;
+
+  for (const tab of tabs) {
+    html += `<div class="credits-panel${tab === tabs[0] ? "" : " hidden"}" data-panel="${tab.id}">`;
+    if (tab.sections) {
+      for (const section of tab.sections) {
+        html += `<div class="people-section"><h4 class="section-label">${section.label}</h4><div class="people-row">`;
+        for (const p of section.people) {
+          const img = p.profile_path
+            ? `<img src="${TMDB_IMG}/w185${p.profile_path}" alt="">`
+            : `<div class="person-placeholder"></div>`;
+          const role = section.showRole ? `<span class="person-role">${esc(section.roleField ? (p[section.roleField] || "") : (p.character || ""))}</span>` : "";
+          html += `<div class="person-circle">${img}<span class="person-name">${esc(p.name)}</span>${role}</div>`;
+        }
+        html += `</div></div>`;
+      }
+    } else {
+      html += `<div class="people-row">`;
+      for (const p of tab.people) {
+        const img = p.profile_path
+          ? `<img src="${TMDB_IMG}/w185${p.profile_path}" alt="">`
+          : `<div class="person-placeholder"></div>`;
+        const role = tab.showRole ? `<span class="person-role">${esc(tab.roleField ? (p[tab.roleField] || "") : (p.character || ""))}</span>` : "";
+        html += `<div class="person-circle">${img}<span class="person-name">${esc(p.name)}</span>${role}</div>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  const modal = document.getElementById("credits-modal");
+  document.getElementById("credits-content").innerHTML = html;
+  modal.classList.remove("hidden");
+
+  // Close button
+  document.getElementById("close-credits").addEventListener("click", () => modal.classList.add("hidden"));
+  modal.addEventListener("click", (e) => { if (e.target === modal) modal.classList.add("hidden"); });
+
+  // Tab switching
+  for (const btn of modal.querySelectorAll(".credits-tab")) {
+    btn.addEventListener("click", () => {
+      modal.querySelectorAll(".credits-tab").forEach(b => b.classList.remove("active"));
+      modal.querySelectorAll(".credits-panel").forEach(p => p.classList.add("hidden"));
+      btn.classList.add("active");
+      modal.querySelector(`[data-panel="${btn.dataset.tab}"]`).classList.remove("hidden");
+    });
+  }
 }
 
 function renderProviders() {
@@ -236,11 +692,13 @@ function renderProviders() {
     if (countryData) {
       html += `<h3>Available in ${countryLabel(code)}</h3>`;
 
+      const link = countryData.link || "";
+
       const streaming = [];
       for (const type of ["flatrate", "free", "ads"]) {
         if (!countryData[type]) continue;
         for (const p of countryData[type]) {
-          streaming.push({ ...p, type, isMine: myProviderIds.has(p.provider_id) });
+          streaming.push({ ...p, type, isMine: myProviderIds.has(p.provider_id), link });
         }
       }
 
@@ -251,7 +709,7 @@ function renderProviders() {
           if (rentBuyMap[p.provider_id]) {
             rentBuyMap[p.provider_id].type = "rent/buy";
           } else {
-            rentBuyMap[p.provider_id] = { ...p, type, isMine: myProviderIds.has(p.provider_id) };
+            rentBuyMap[p.provider_id] = { ...p, type, isMine: myProviderIds.has(p.provider_id), link };
           }
         }
       }
@@ -259,11 +717,11 @@ function renderProviders() {
 
       if (streaming.length) {
         html += `<h4 class="section-label">Stream</h4>`;
-        html += renderProviderGrid(streaming);
+        html += renderProviderGrid(streaming, code);
       }
       if (rentBuy.length) {
         html += `<h4 class="section-label">Rent / Buy</h4>`;
-        html += renderProviderGrid(rentBuy);
+        html += renderProviderGrid(rentBuy, code);
       }
       if (!streaming.length && !rentBuy.length) {
         html += '<div class="no-results">No streaming data for this country</div>';
@@ -338,7 +796,36 @@ function renderProviders() {
 
 }
 
-function renderProviderGrid(providers) {
+function extractDeep(l) {
+  return {
+    link: l.link, quality: l.quality,
+    price: l.price || "", audios: l.audios || [], subtitles: l.subtitles || [],
+    expires_on: l.expires_on || 0,
+  };
+}
+
+function findDeepLink(providerName, countryCode, type) {
+  const links = currentStreamingLinks[countryCode.toLowerCase()];
+  if (!links) return null;
+  const nameNorm = providerName.toLowerCase();
+  for (const l of links) {
+    if (l.service_name.toLowerCase() !== nameNorm) continue;
+    if (["flatrate", "free", "ads"].includes(type)) {
+      if (["subscription", "free", "addon"].includes(l.type)) return extractDeep(l);
+    }
+    if (type === "rent" || type === "buy" || type === "rent/buy") {
+      if (l.type === "rent" || l.type === "buy") return extractDeep(l);
+    }
+  }
+  for (const l of links) {
+    if (l.service_name.toLowerCase() === nameNorm) return extractDeep(l);
+  }
+  return null;
+}
+
+const QUALITY_LABELS = { uhd: "4K", qhd: "1440p", hd: "HD", sd: "SD" };
+
+function renderProviderGrid(providers, countryCode) {
   providers.sort((a, b) => (b.isMine ? 1 : 0) - (a.isMine ? 1 : 0));
   return '<div class="provider-grid">' + providers.map(p => {
     const logo = p.logo_path ? `<img class="provider-logo-lg" src="${TMDB_IMG}/w92${p.logo_path}" alt="">` : "";
@@ -348,7 +835,34 @@ function renderProviderGrid(providers) {
     else if (p.isMine) cls += " mine";
     else cls += " other";
     const typeLabel = p.type === "flatrate" ? "stream" : p.type;
-    return `<div class="${cls}">${logo}<span class="provider-card-name">${esc(p.provider_name)}</span><span class="type-label">${typeLabel}</span></div>`;
+    const deep = countryCode ? findDeepLink(p.provider_name, countryCode, p.type) : null;
+    const href = (deep && deep.link) || p.link || "";
+    // Quality badge
+    const qualityTag = deep && deep.quality && QUALITY_LABELS[deep.quality]
+      ? `<span class="quality-badge">${QUALITY_LABELS[deep.quality]}</span>` : "";
+    // Price
+    const priceTag = deep && deep.price
+      ? `<span class="price-label">${esc(deep.price)}</span>` : "";
+    // Expiring warning
+    let expiringTag = "";
+    if (deep && deep.expires_on) {
+      const daysLeft = Math.ceil((deep.expires_on * 1000 - Date.now()) / 86400000);
+      if (daysLeft > 0 && daysLeft <= 30) {
+        expiringTag = `<span class="expiring-badge">Leaving in ${daysLeft}d</span>`;
+      }
+    }
+    // Languages (compact)
+    let langTag = "";
+    if (deep && deep.audios && deep.audios.length) {
+      const langs = deep.audios.slice(0, 3).map(l => l.toUpperCase()).join(" ");
+      langTag = `<span class="lang-tags">${langs}</span>`;
+    }
+    const extras = [qualityTag, priceTag, expiringTag, langTag].filter(Boolean).join("");
+    const inner = `${logo}<span class="provider-card-name">${esc(p.provider_name)}</span><span class="type-label">${typeLabel}</span>${extras}`;
+    if (href) {
+      return `<a href="${esc(href)}" target="_blank" rel="noopener" class="${cls}">${inner}</a>`;
+    }
+    return `<div class="${cls}">${inner}</div>`;
   }).join("") + '</div>';
 }
 
@@ -537,6 +1051,7 @@ saveSettingsBtn.addEventListener("click", async () => {
   await saveConfig();
   updateServicesSummary();
   settingsModal.classList.add("hidden");
+  await loadHomeRows(true);
   if (currentProviders) renderProviders();
 });
 

@@ -3,17 +3,28 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Movie Streaming Finder</title>
+  <title>Movie Finder</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header>
-    <h1>Movie Streaming Finder</h1>
-    <p class="subtitle">Find where to stream any movie, in any country</p>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">MF</span>
+      <div>
+        <h1>Movie Finder</h1>
+        <p class="subtitle">Find where to stream any movie, in any country</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <div class="search-container">
+        <input type="text" id="search-input" placeholder="Search for a movie..." autocomplete="off">
+        <div id="search-results" class="search-results hidden"></div>
+      </div>
+    </div>
   </header>
 
   <main>
-    <div class="setup-bar">
+    <section class="setup-bar">
       <div class="setup-row">
         <label>My countries:</label>
         <div class="country-picker">
@@ -26,26 +37,59 @@
       </div>
       <div class="setup-row">
         <label>My services:</label>
-        <button id="settings-btn">Configure</button>
-        <span id="services-summary" class="services-summary"></span>
+        <button id="settings-btn" class="ghost-btn">Manage services</button>
+        <span id="services-summary" class="services-summary hidden"></span>
       </div>
+    </section>
+
+    <section class="hero">
+      <div class="hero-content">
+        <p class="hero-kicker">Pick a row. Tap a poster.</p>
+        <h2>Browse like Netflix, stream smarter.</h2>
+        <p>Explore popular categories and open any movie to see where to stream, cast, and full credits without leaving the page.</p>
+      </div>
+      <div class="hero-glow"></div>
+    </section>
+
+    <section id="home-rows" class="home-rows"></section>
+    <div id="home-loader" class="home-loader hidden">
+      <span class="spinner"></span>
     </div>
 
-    <div class="search-container">
-      <input type="text" id="search-input" placeholder="Search for a movie..." autocomplete="off">
-      <div id="search-results" class="search-results hidden"></div>
-    </div>
-
-    <div id="movie-detail" class="hidden">
-      <div class="movie-header">
-        <img id="movie-poster" src="" alt="">
-        <div class="movie-info">
-          <h2 id="movie-title"></h2>
-          <p id="movie-year"></p>
-          <p id="movie-overview"></p>
+    <div id="movie-overlay" class="movie-overlay hidden" aria-hidden="true">
+      <div class="movie-overlay-backdrop"></div>
+      <div class="movie-overlay-panel">
+        <button id="close-movie-overlay" class="close-overlay">&times;</button>
+        <div id="movie-detail">
+          <div class="movie-header">
+            <img id="movie-poster" src="" alt="">
+            <div class="movie-info">
+              <h2 id="movie-title"></h2>
+              <p id="movie-year"></p>
+              <p id="movie-overview"></p>
+              <div id="movie-meta" class="movie-meta"></div>
+            </div>
+          </div>
+          <div id="providers-table-container"></div>
         </div>
       </div>
-      <div id="providers-table-container"></div>
+    </div>
+
+    <div id="section-overlay" class="section-overlay hidden" aria-hidden="true">
+      <div class="movie-overlay-backdrop"></div>
+      <div class="section-overlay-panel">
+        <button id="close-section-overlay" class="close-overlay">&times;</button>
+        <div class="section-overlay-header">
+          <div>
+            <h3 id="section-title"></h3>
+            <p class="section-subtitle">Available on your services</p>
+          </div>
+        </div>
+        <div id="section-grid" class="section-grid"></div>
+        <div id="section-loader" class="section-loader hidden">
+          <span class="spinner"></span>
+        </div>
+      </div>
     </div>
 
     <div id="settings-modal" class="modal hidden">
@@ -63,10 +107,17 @@
         </div>
       </div>
     </div>
+
+    <div id="credits-modal" class="modal hidden">
+      <div class="modal-content credits-modal-content">
+        <button id="close-credits" class="close-credits">&times;</button>
+        <div id="credits-content"></div>
+      </div>
+    </div>
   </main>
 
   <footer>
-    <p>Streaming data provided by <a href="https://www.justwatch.com" target="_blank">JustWatch</a> via <a href="https://www.themoviedb.org" target="_blank">TMDB</a></p>
+    <p>Streaming data provided by JustWatch via TMDB</p>
   </footer>
 
   <script src="/app.js"></script>
