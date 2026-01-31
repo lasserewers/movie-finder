@@ -15,8 +15,14 @@
   <main>
     <div class="setup-bar">
       <div class="setup-row">
-        <label for="country-select">My country:</label>
-        <select id="country-select"></select>
+        <label>My countries:</label>
+        <div class="country-picker">
+          <div id="country-chips" class="country-chips"></div>
+          <div class="country-search-wrapper">
+            <input type="text" id="country-search-input" placeholder="Add country..." autocomplete="off">
+            <div id="country-dropdown" class="country-dropdown hidden"></div>
+          </div>
+        </div>
       </div>
       <div class="setup-row">
         <label>My services:</label>
@@ -46,7 +52,10 @@
       <div class="modal-content">
         <h3>My Streaming Services</h3>
         <p>Select the services you subscribe to:</p>
+        <input type="text" id="provider-search" placeholder="Search services..." autocomplete="off">
+        <div id="modal-country-filters" class="country-filters"></div>
         <label class="additional-toggle"><input type="checkbox" id="additional-services"> Show additional services from other countries</label>
+        <button id="deselect-all" type="button">Deselect all</button>
         <div id="provider-checklist"></div>
         <div class="modal-actions">
           <button id="save-settings">Save</button>

@@ -46,17 +46,95 @@ main {
 
 .services-summary { font-size: 0.85rem; color: #8b949e; }
 
-#country-select {
+.country-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.country-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.country-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 16px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.85rem;
+}
+
+.country-chip button {
+  background: none;
+  border: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 0.1rem;
+  line-height: 1;
+}
+
+.country-chip button:hover { color: #f85149; }
+
+.country-search-wrapper {
+  position: relative;
+}
+
+#country-search-input {
   padding: 0.4rem 0.6rem;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   border: 1px solid #30363d;
   border-radius: 6px;
   background: #161b22;
   color: #e6edf3;
   outline: none;
+  width: 160px;
 }
 
-#country-select:focus { border-color: #58a6ff; }
+#country-search-input:focus { border-color: #58a6ff; }
+
+.country-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 0 0 6px 6px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 20;
+}
+
+.country-dropdown.hidden { display: none; }
+
+.country-dropdown-item {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.country-dropdown-item:hover { background: #21262d; }
+
+#provider-search {
+  width: 100%;
+  padding: 0.5rem 0.8rem;
+  font-size: 0.9rem;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #0d1117;
+  color: #e6edf3;
+  outline: none;
+  margin: 0.5rem 0 0;
+}
+
+#provider-search:focus { border-color: #58a6ff; }
 
 .additional-toggle {
   display: flex;
@@ -67,6 +145,45 @@ main {
   margin: 0.5rem 0;
   cursor: pointer;
 }
+
+.country-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+}
+
+.country-filter-btn {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #30363d;
+  border-radius: 20px;
+  background: #21262d;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.15s;
+}
+
+.country-filter-btn.active {
+  background: #1f6feb;
+  border-color: #58a6ff;
+  color: #fff;
+}
+
+.country-filter-btn:hover { background: #30363d; }
+.country-filter-btn.active:hover { background: #1a60d2; }
+
+#deselect-all {
+  padding: 0.3rem 0.7rem;
+  background: #21262d;
+  color: #8b949e;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+#deselect-all:hover { background: #30363d; color: #e6edf3; }
 
 .search-container {
   position: relative;
@@ -157,6 +274,79 @@ main {
   margin-bottom: 0.8rem;
 }
 
+.section-label {
+  font-size: 0.85rem;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 1rem 0 0.4rem;
+}
+
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.provider-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.6rem;
+  border-radius: 8px;
+  border: 1px solid #30363d;
+  background: #161b22;
+  text-align: center;
+}
+
+.provider-card.mine {
+  border-color: #3fb950;
+  background: #0d2818;
+}
+
+.provider-card.other {
+  border-color: #f85149;
+  background: #2d1214;
+}
+
+.provider-card.rent {
+  border-color: #d4c020;
+  background: #2d2a06;
+}
+
+.provider-card.buy {
+  border-color: #d29922;
+  background: #2d2006;
+}
+
+.provider-logo-lg {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+}
+
+.provider-card-name {
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.provider-tag.other {
+  border-color: #f85149;
+  background: #2d1214;
+}
+
+.provider-tag.rent {
+  border-color: #d4c020;
+  background: #2d2a06;
+}
+
+.provider-tag.buy {
+  border-color: #d29922;
+  background: #2d2006;
+}
+
 .provider-tags {
   display: flex;
   flex-wrap: wrap;
@@ -164,11 +354,11 @@ main {
   margin: 0.5rem 0 1rem;
 }
 
-.other-countries {
+.other-countries, .other-options {
   margin-top: 1rem;
 }
 
-.other-countries summary {
+.other-countries summary, .other-options summary {
   cursor: pointer;
   color: #8b949e;
   font-size: 0.9rem;
