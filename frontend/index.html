@@ -20,6 +20,10 @@
         <input type="text" id="search-input" placeholder="Search for a movie..." autocomplete="off">
         <div id="search-results" class="search-results hidden"></div>
       </div>
+      <label class="search-filter">
+        <input type="checkbox" id="search-filter-services">
+        <span>Only my services</span>
+      </label>
     </div>
   </header>
 
@@ -97,9 +101,15 @@
         <h3>My Streaming Services</h3>
         <p>Select the services you subscribe to:</p>
         <input type="text" id="provider-search" placeholder="Search services..." autocomplete="off">
+        <div class="selected-services">
+          <div class="selected-services-header">
+            <span>Selected services</span>
+            <button id="deselect-all" type="button" class="selected-clear">Deselect all</button>
+          </div>
+          <div id="selected-services-list" class="selected-services-list"></div>
+        </div>
         <div id="modal-country-filters" class="country-filters"></div>
         <label class="additional-toggle"><input type="checkbox" id="additional-services"> Show additional services from other countries</label>
-        <button id="deselect-all" type="button">Deselect all</button>
         <div id="provider-checklist"></div>
         <div class="modal-actions">
           <button id="save-settings">Save</button>

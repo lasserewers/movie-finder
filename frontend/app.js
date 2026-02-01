@@ -1,5 +1,6 @@
 const searchInput = document.getElementById("search-input");
 const searchResults = document.getElementById("search-results");
+const searchFilterServices = document.getElementById("search-filter-services");
 const movieDetail = document.getElementById("movie-detail");
 const homeRows = document.getElementById("home-rows");
 const movieOverlay = document.getElementById("movie-overlay");
@@ -10,6 +11,7 @@ const sectionTitle = document.getElementById("section-title");
 const sectionGrid = document.getElementById("section-grid");
 const sectionLoader = document.getElementById("section-loader");
 const homeLoader = document.getElementById("home-loader");
+const selectedServicesList = document.getElementById("selected-services-list");
 const settingsBtn = document.getElementById("settings-btn");
 const settingsModal = document.getElementById("settings-modal");
 const providerChecklist = document.getElementById("provider-checklist");
@@ -29,6 +31,7 @@ let myProviderIds = new Set();
 let myCountries = [];
 let providerNameMap = {};
 let countryNameMap = {};
+let allProviders = [];
 let currentProviders = null;
 let activeCountries = new Set();
 let currentMovieTitle = "";
@@ -37,10 +40,12 @@ let currentStreamingLinks = {}; // {country: [{service_id, service_name, type, l
 let currentMovieInfo = null; // {cast, directors, rating, poster, backdrop}
 let currentTmdbCredits = null; // {cast: [...], crew: [...]}
 const homeSectionMap = new Map();
+let modalProviderIds = null;
 let sectionState = null;
 let sectionSeenIds = new Set();
 let sectionLoading = false;
 let sectionObserver = null;
+let sectionRequestId = 0;
 let homePage = 1;
 let homeHasMore = true;
 let homeLoading = false;
@@ -152,23 +157,152 @@ function updateServicesSummary() {
   servicesSummary.textContent = "";
 }
 
+const AUTO_MATCH_SUFFIX_TOKENS = new Set([
+  "kids",
+  "family",
+  "basic",
+  "standard",
+  "premium",
+  "ultimate",
+  "ultra",
+  "max",
+  "plus",
+  "with",
+  "ads",
+  "ad",
+  "free",
+  "no",
+  "4k",
+  "uhd",
+  "hd",
+  "plan",
+  "tier",
+  "bundle",
+  "student",
+  "annual",
+  "monthly",
+]);
+const OPTIONAL_PREFIX_TOKENS = new Set(["the", "amazon"]);
+
+function tokenizeProviderName(name) {
+  const cleaned = (name || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\+/g, " plus ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const tokens = cleaned ? cleaned.split(/\s+/) : [];
+  while (tokens.length && OPTIONAL_PREFIX_TOKENS.has(tokens[0])) {
+    tokens.shift();
+  }
+  return tokens;
+}
+
+function isLogicalVariant(baseTokens, otherTokens) {
+  if (!baseTokens.length || otherTokens.length <= baseTokens.length) return false;
+  for (let i = 0; i < baseTokens.length; i += 1) {
+    if (baseTokens[i] !== otherTokens[i]) return false;
+  }
+  const remainder = otherTokens.slice(baseTokens.length);
+  return remainder.length > 0 && remainder.every(token => AUTO_MATCH_SUFFIX_TOKENS.has(token));
+}
+
+function isLogicalMatch(tokensA, tokensB) {
+  return isLogicalVariant(tokensA, tokensB) || isLogicalVariant(tokensB, tokensA);
+}
+
+function expandRelatedProviders(targetSet, providers) {
+  const source = (allProviders && allProviders.length) ? allProviders : providers || [];
+  if (!source.length) return targetSet;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const seeds = Array.from(targetSet);
+    for (const id of seeds) {
+      const base = source.find(p => p.provider_id === id);
+      if (!base) continue;
+      const baseTokens = tokenizeProviderName(base.provider_name);
+      for (const p of source) {
+        if (targetSet.has(p.provider_id)) continue;
+        const otherTokens = tokenizeProviderName(p.provider_name);
+        if (isLogicalMatch(baseTokens, otherTokens)) {
+          targetSet.add(p.provider_id);
+          changed = true;
+        }
+      }
+    }
+  }
+  return targetSet;
+}
+
+function getExpandedProviderIds() {
+  const expanded = new Set(myProviderIds);
+  return expandRelatedProviders(expanded, allProviders);
+}
+
+function getProviderNameById(id) {
+  if (providerNameMap[id]) return providerNameMap[id];
+  const found = allProviders.find(p => p.provider_id === id);
+  if (found) {
+    providerNameMap[id] = found.provider_name;
+    return found.provider_name;
+  }
+  return `Service ${id}`;
+}
+
+function renderSelectedServices() {
+  if (!selectedServicesList) return;
+  const activeIds = modalProviderIds || myProviderIds;
+  const items = Array.from(activeIds)
+    .map(id => ({ id, name: getProviderNameById(id) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (!items.length) {
+    selectedServicesList.innerHTML = '<span class="selected-empty">None selected</span>';
+    return;
+  }
+  selectedServicesList.innerHTML = "";
+  for (const item of items) {
+    const chip = document.createElement("span");
+    chip.className = "selected-service-chip";
+    chip.innerHTML = `${esc(item.name)} <button type="button" data-id="${item.id}">&times;</button>`;
+    chip.querySelector("button").addEventListener("click", () => {
+      const targetSet = modalProviderIds || myProviderIds;
+      targetSet.delete(item.id);
+      const cb = providerChecklist.querySelector(`input[value="${item.id}"]`);
+      if (cb) cb.checked = false;
+      renderSelectedServices();
+    });
+    selectedServicesList.appendChild(chip);
+  }
+}
+
 // Init
 async function init() {
   await Promise.all([loadConfig(), loadRegions()]);
   renderCountryChips();
   const providers = await loadProviderList();
+  allProviders = providers;
   for (const p of providers) {
     providerNameMap[p.provider_id] = p.provider_name;
   }
+  myProviderIds = expandRelatedProviders(new Set(myProviderIds), allProviders);
   updateServicesSummary();
   await loadHomeRows(true);
 }
 
-async function saveConfig() {
+function normalizeProviderIds(ids) {
+  if (!ids) return Array.from(myProviderIds);
+  if (Array.isArray(ids)) return ids;
+  return Array.from(ids);
+}
+
+async function saveConfig(options = {}) {
+  const provider_ids = normalizeProviderIds(options.providerIds);
+  const countries = options.countries ?? myCountries;
   await fetch("/api/config", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider_ids: Array.from(myProviderIds), countries: myCountries }),
+    body: JSON.stringify({ provider_ids, countries }),
   });
 }
 
@@ -182,9 +316,15 @@ searchInput.addEventListener("input", () => {
 });
 
 async function doSearch(q) {
-  const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+  const filterOn = searchFilterServices && searchFilterServices.checked;
+  const ids = Array.from(getExpandedProviderIds());
+  const qs = filterOn && ids.length ? `&provider_ids=${ids.join(",")}` : "";
+  const url = filterOn
+    ? `/api/search_filtered?q=${encodeURIComponent(q)}${qs}`
+    : `/api/search?q=${encodeURIComponent(q)}`;
+  const res = await fetch(url);
   const data = await res.json();
-  renderSearchResults(data.results || []);
+  renderSearchResults(data.results || [], filterOn);
 }
 
 async function loadHomeRows(reset = false) {
@@ -200,7 +340,7 @@ async function loadHomeRows(reset = false) {
   }
   updateHomeLoader(true);
   try {
-    const ids = Array.from(myProviderIds);
+    const ids = Array.from(getExpandedProviderIds());
     const qs = ids.length ? `&provider_ids=${ids.join(",")}` : "";
     const res = await fetch(`/api/home?page=${homePage}&page_size=${HOME_PAGE_SIZE}${qs}`);
     const data = await res.json();
@@ -302,10 +442,12 @@ function renderRowItems(section, scroll) {
   }
 }
 
-function renderSearchResults(results) {
+function renderSearchResults(results, filtered = false) {
   searchResults.innerHTML = "";
   if (!results.length) {
-    searchResults.innerHTML = '<div class="no-results">No movies found</div>';
+    searchResults.innerHTML = filtered
+      ? '<div class="no-results">No matches on your services</div>'
+      : '<div class="no-results">No movies found</div>';
     searchResults.classList.remove("hidden");
     return;
   }
@@ -326,6 +468,13 @@ function renderSearchResults(results) {
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".search-container")) searchResults.classList.add("hidden");
 });
+
+if (searchFilterServices) {
+  searchFilterServices.addEventListener("change", () => {
+    const q = searchInput.value.trim();
+    if (q.length >= 2) doSearch(q);
+  });
+}
 
 if (homeRows) {
   homeRows.addEventListener("click", (e) => {
@@ -369,6 +518,8 @@ function openSectionOverlay(sectionId) {
   const section = homeSectionMap.get(sectionId);
   if (!section) return;
   const useCursor = Object.prototype.hasOwnProperty.call(section, "next_cursor");
+  sectionRequestId += 1;
+  sectionLoading = false;
   sectionState = {
     id: section.id,
     title: section.title,
@@ -377,6 +528,7 @@ function openSectionOverlay(sectionId) {
     nextPage: useCursor ? null : 1,
     totalPages: section.total_pages || 0,
     hasMore: true,
+    requestId: sectionRequestId,
   };
   sectionSeenIds = new Set();
   sectionTitle.textContent = section.title;
@@ -398,6 +550,8 @@ function closeSectionOverlayFn() {
   if (sectionObserver) {
     sectionObserver.disconnect();
   }
+  sectionLoading = false;
+  sectionState = null;
   updateBodyModalState();
 }
 
@@ -430,6 +584,7 @@ async function loadMoreSection(reset = false) {
   }
   sectionLoading = true;
   updateSectionLoader(true);
+  const requestId = sectionState.requestId;
   try {
     const ids = Array.from(myProviderIds);
     const qs = ids.length ? `&provider_ids=${ids.join(",")}` : "";
@@ -437,6 +592,7 @@ async function loadMoreSection(reset = false) {
     const page = sectionState.useCursor ? 1 : sectionState.nextPage;
     const res = await fetch(`/api/section?section_id=${encodeURIComponent(sectionState.id)}&page=${page}&pages=${SECTION_BATCH_PAGES}${cursor}${qs}`);
     const data = await res.json();
+    if (!sectionState || sectionState.requestId !== requestId) return;
     if (reset) {
       sectionGrid.innerHTML = "";
       sectionSeenIds = new Set();
@@ -918,23 +1074,26 @@ async function loadProviderList(country) {
 // Find related providers: any provider whose name starts with this one's name,
 // or whose name this one starts with (e.g. "Netflix" matches "Netflix Kids")
 function findRelatedIds(changedProvider, providers) {
-  const name = changedProvider.provider_name.toLowerCase();
+  const baseTokens = tokenizeProviderName(changedProvider.provider_name);
   const ids = [];
   for (const p of providers) {
-    const other = p.provider_name.toLowerCase();
-    if (other.startsWith(name) || name.startsWith(other)) {
+    if (p.provider_id === changedProvider.provider_id) continue;
+    const otherTokens = tokenizeProviderName(p.provider_name);
+    if (isLogicalMatch(baseTokens, otherTokens)) {
       ids.push(p.provider_id);
     }
   }
   return ids;
 }
 
-function onProviderToggle(changedId, checked, providers) {
+function onProviderToggle(changedId, checked, providers, targetSet) {
   if (!checked) return;
-  const changedProvider = providers.find(p => p.provider_id === changedId);
+  const source = (allProviders && allProviders.length) ? allProviders : providers;
+  const changedProvider = source.find(p => p.provider_id === changedId) || providers.find(p => p.provider_id === changedId);
   if (!changedProvider) return;
-  const related = findRelatedIds(changedProvider, providers);
+  const related = findRelatedIds(changedProvider, source);
   for (const id of related) {
+    targetSet.add(id);
     const cb = providerChecklist.querySelector(`input[value="${id}"]`);
     if (cb && !cb.checked) {
       cb.checked = true;
@@ -947,6 +1106,7 @@ let currentModalProviders = [];
 function renderProviderChecklist(providers) {
   providerChecklist.innerHTML = "";
   currentModalProviders = providers;
+  const activeIds = modalProviderIds || myProviderIds;
   providers.sort((a, b) => a.provider_name.localeCompare(b.provider_name));
   for (const p of providers) {
     providerNameMap[p.provider_id] = p.provider_name;
@@ -954,9 +1114,16 @@ function renderProviderChecklist(providers) {
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.value = p.provider_id;
-    cb.checked = myProviderIds.has(p.provider_id);
+    cb.checked = activeIds.has(p.provider_id);
     cb.addEventListener("change", () => {
-      onProviderToggle(p.provider_id, cb.checked, providers);
+      const targetSet = modalProviderIds || myProviderIds;
+      if (cb.checked) {
+        targetSet.add(p.provider_id);
+        onProviderToggle(p.provider_id, true, providers, targetSet);
+      } else {
+        targetSet.delete(p.provider_id);
+      }
+      renderSelectedServices();
     });
     label.appendChild(cb);
     if (p.logo_path) {
@@ -968,6 +1135,7 @@ function renderProviderChecklist(providers) {
     label.appendChild(document.createTextNode(p.provider_name));
     providerChecklist.appendChild(label);
   }
+  renderSelectedServices();
 }
 
 const modalCountryFilters = document.getElementById("modal-country-filters");
@@ -1009,6 +1177,7 @@ const additionalToggle = additionalServices.closest(".additional-toggle");
 settingsBtn.addEventListener("click", async () => {
   additionalServices.checked = false;
   providerSearch.value = "";
+  modalProviderIds = new Set(myProviderIds);
   activeCountries = new Set(myCountries);
   renderModalCountryFilters();
   additionalToggle.style.display = myCountries.length ? "" : "none";
@@ -1036,18 +1205,32 @@ async function loadCombinedProviders(countries) {
 
 additionalServices.addEventListener("change", () => reloadModalProviders());
 
-document.getElementById("deselect-all").addEventListener("click", () => {
+document.getElementById("deselect-all").addEventListener("click", async () => {
+  if (modalProviderIds) {
+    modalProviderIds.clear();
+  }
+  myProviderIds = new Set();
   for (const cb of providerChecklist.querySelectorAll("input[type=checkbox]")) {
     cb.checked = false;
   }
+  renderSelectedServices();
+  await saveConfig({ providerIds: [] });
+  updateServicesSummary();
+  await loadHomeRows(true);
+  if (currentProviders) renderProviders();
 });
 
-cancelSettingsBtn.addEventListener("click", () => settingsModal.classList.add("hidden"));
+cancelSettingsBtn.addEventListener("click", () => {
+  modalProviderIds = null;
+  settingsModal.classList.add("hidden");
+});
 
 saveSettingsBtn.addEventListener("click", async () => {
-  const checked = providerChecklist.querySelectorAll("input:checked");
-  const ids = Array.from(checked).map(cb => parseInt(cb.value));
-  myProviderIds = new Set(ids);
+  if (modalProviderIds) {
+    expandRelatedProviders(modalProviderIds, allProviders);
+    myProviderIds = new Set(modalProviderIds);
+  }
+  modalProviderIds = null;
   await saveConfig();
   updateServicesSummary();
   settingsModal.classList.add("hidden");

@@ -29,6 +29,60 @@ async def search(q: str = Query(..., min_length=1)):
     return data
 
 
+@app.get("/api/search_filtered")
+async def search_filtered(q: str = Query(..., min_length=1), provider_ids: str | None = None):
+    target = 20
+    max_pages = 4
+    if provider_ids:
+        ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
+    else:
+        ids = set(config.load_config().get("provider_ids", []))
+    if not ids:
+        return {"results": [], "filtered": True}
+    ids = await _expand_provider_ids(ids)
+    semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
+    flag_cache: dict[int, bool] = {}
+    seen = set()
+    results: list = []
+    page = 1
+    total_pages = 0
+    base = None
+    chunk = 12
+    buf: list = []
+    while page <= max_pages and len(results) < target:
+        data = await tmdb.search_movie(q, page=page)
+        if base is None:
+            base = data
+        total_pages = data.get("total_pages") or total_pages
+        raw = data.get("results", [])
+        if not raw:
+            break
+        for m in raw:
+            mid = m.get("id")
+            if not mid or mid in seen:
+                continue
+            seen.add(mid)
+            buf.append(m)
+        while buf and len(results) < target:
+            batch = buf[:chunk]
+            buf = buf[chunk:]
+            filtered = await _filter_results(batch, ids, semaphore, flag_cache)
+            for m in filtered:
+                results.append(m)
+                if len(results) >= target:
+                    break
+            if len(results) >= target:
+                break
+        if total_pages and page >= total_pages:
+            break
+        page += 1
+    if base is None:
+        base = {"results": []}
+    base["results"] = results
+    base["filtered"] = True
+    return base
+
+
 @app.get("/api/movie/{movie_id}/providers")
 async def movie_providers(movie_id: int):
     providers = await tmdb.get_watch_providers(movie_id)
@@ -203,6 +257,31 @@ async def _get_tmdb_provider_name_map() -> dict[int, str]:
 
 def _normalize_name(name: str) -> str:
     return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+async def _expand_provider_ids(ids: set[int]) -> set[int]:
+    if not ids:
+        return ids
+    name_map = await _get_tmdb_provider_name_map()
+    selected = []
+    for pid in ids:
+        name = name_map.get(pid)
+        if name:
+            norm = _normalize_name(name)
+            if norm:
+                selected.append(norm)
+    if not selected:
+        return ids
+    expanded = set(ids)
+    for pid, name in name_map.items():
+        norm = _normalize_name(name)
+        if not norm:
+            continue
+        for sel in selected:
+            if norm in sel or sel in norm:
+                expanded.add(pid)
+                break
+    return expanded
 
 
 async def _resolve_streaming_catalogs(provider_ids: set[int]) -> list[str]:
@@ -510,7 +589,21 @@ async def get_config():
 @app.post("/api/config")
 async def set_config(data: dict):
     existing = config.load_config()
-    existing.update(data)
+    if "provider_ids" in data:
+        incoming = data.get("provider_ids") or []
+        provider_ids = []
+        for pid in incoming:
+            try:
+                provider_ids.append(int(pid))
+            except (TypeError, ValueError):
+                continue
+        existing["provider_ids"] = provider_ids
+    if "countries" in data:
+        existing["countries"] = data.get("countries") or []
+    for key, value in data.items():
+        if key in ("provider_ids", "countries"):
+            continue
+        existing[key] = value
     config.save_config(existing)
     return {"ok": True}
 
