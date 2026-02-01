@@ -1,14 +1,15 @@
 import os
 import httpx
 
-from . import config as app_config
-
 BASE_URL = "https://api.themoviedb.org/3"
 _client: httpx.AsyncClient | None = None
 
 
 def _get_api_key() -> str:
-    return os.environ.get("TMDB_API_KEY") or app_config.load_config().get("tmdb_api_key", "")
+    key = os.environ.get("TMDB_API_KEY", "")
+    if not key:
+        raise RuntimeError("TMDB_API_KEY environment variable not set.")
+    return key
 
 
 async def _get_client() -> httpx.AsyncClient:
@@ -29,7 +30,7 @@ async def _get(path: str, params: dict | None = None) -> dict:
     params = params or {}
     api_key = _get_api_key()
     if not api_key:
-        raise RuntimeError("TMDB_API_KEY not set. Export TMDB_API_KEY or add tmdb_api_key to user_config.json.")
+        raise RuntimeError("TMDB_API_KEY environment variable not set.")
     params["api_key"] = api_key
     client = await _get_client()
     resp = await client.get(f"{BASE_URL}{path}", params=params)

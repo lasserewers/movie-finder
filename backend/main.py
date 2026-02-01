@@ -1,14 +1,28 @@
 import asyncio
+import os
 import time
 from datetime import date
-from fastapi import FastAPI, Query
+from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from fastapi import FastAPI, Query, Depends, Request, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pathlib import Path
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
-from . import tmdb, config, streaming_availability
-
-app = FastAPI()
+from . import tmdb, streaming_availability
+from .database import get_db, init_db, close_db
+from .models import User, UserPreferences
+from .auth import get_current_user, get_optional_user, verify_csrf
+from .routes_auth import router as auth_router
 
 WATCH_PROVIDER_TTL = 6 * 60 * 60
 WATCH_PROVIDER_CACHE: dict[int, tuple[float, dict]] = {}
@@ -20,7 +34,70 @@ SECTION_CACHE_TTL = 10 * 60
 SECTION_CACHE: dict[str, tuple[float, dict]] = {}
 FILTER_CONCURRENCY = 12
 
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
+# Fallback to frontend/ if dist/ doesn't exist (dev without build)
+if not FRONTEND_DIR.exists():
+    FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+
+limiter = Limiter(key_func=get_remote_address)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+    await tmdb.close_client()
+    await streaming_availability.close_client()
+    await close_db()
+
+
+app = FastAPI(lifespan=lifespan)
+app.state.limiter = limiter
+
+
+# Rate limit error handler
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(status_code=429, content={"detail": "Too many requests. Please try again later."})
+
+
+# Security headers middleware
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+# CSRF middleware for state-changing requests
+@app.middleware("http")
+async def csrf_middleware(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        # Skip CSRF for auth endpoints (login/signup don't have a token yet)
+        path = request.url.path
+        if path not in ("/api/auth/login", "/api/auth/signup", "/api/auth/logout"):
+            if request.cookies.get("access_token"):
+                verify_csrf(request)
+    return await call_next(request)
+
+
+# CORS
+ALLOWED_ORIGINS = os.environ.get("CORS_ORIGINS", "").split(",")
+ALLOWED_ORIGINS = [o.strip() for o in ALLOWED_ORIGINS if o.strip()]
+if ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "X-CSRF-Token"],
+    )
+
+
+# Auth routes
+app.include_router(auth_router)
 
 
 @app.get("/api/search")
@@ -30,13 +107,21 @@ async def search(q: str = Query(..., min_length=1)):
 
 
 @app.get("/api/search_filtered")
-async def search_filtered(q: str = Query(..., min_length=1), provider_ids: str | None = None):
+async def search_filtered(
+    q: str = Query(..., min_length=1),
+    provider_ids: str | None = None,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
     target = 20
     max_pages = 4
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
+    elif user:
+        prefs = await _get_user_prefs(db, user.id)
+        ids = set(prefs.provider_ids) if prefs else set()
     else:
-        ids = set(config.load_config().get("provider_ids", []))
+        ids = set()
     if not ids:
         return {"results": [], "filtered": True}
     ids = await _expand_provider_ids(ids)
@@ -93,6 +178,11 @@ async def movie_providers(movie_id: int):
 @app.get("/api/movie/{movie_id}/links")
 async def movie_links(movie_id: int):
     return await streaming_availability.get_streaming_links(movie_id)
+
+
+async def _get_user_prefs(db: AsyncSession, user_id) -> UserPreferences | None:
+    result = await db.execute(select(UserPreferences).where(UserPreferences.user_id == user_id))
+    return result.scalar_one_or_none()
 
 
 async def _get_watch_providers_cached(movie_id: int) -> dict:
@@ -331,7 +421,6 @@ async def _resolve_streaming_catalogs(provider_ids: set[int]) -> list[str]:
         if not service:
             continue
         catalogs.append(f"{service}.{option}" if option else service)
-    # Deduplicate while preserving order
     seen = set()
     unique = []
     for c in catalogs:
@@ -367,19 +456,29 @@ async def _fetch_section_page(section: dict, page: int) -> dict:
 
 
 @app.get("/api/home")
-async def home(provider_ids: str | None = None, page: int = 1, page_size: int = 6):
+async def home(
+    provider_ids: str | None = None,
+    page: int = 1,
+    page_size: int = 6,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
+        countries = []
+    elif user:
+        prefs = await _get_user_prefs(db, user.id)
+        ids = set(prefs.provider_ids) if prefs else set()
+        countries = list(prefs.countries) if prefs else []
     else:
-        ids = set(config.load_config().get("provider_ids", []))
+        ids = set()
+        countries = []
 
     if not ids:
         return {"sections": [], "filtered": True, "message": "Select streaming services to see available titles."}
 
     page = max(1, page)
     page_size = max(3, min(10, page_size))
-    config_data = config.load_config()
-    countries = config_data.get("countries", [])
     cache_key = f"{','.join(str(pid) for pid in sorted(ids))}:{','.join(countries)}:{page}:{page_size}"
     now = time.time()
     cached = HOME_CACHE.get(cache_key)
@@ -408,11 +507,11 @@ async def home(provider_ids: str | None = None, page: int = 1, page_size: int = 
             }
         results = []
         seen_ids = set()
-        page = 1
+        pg = 1
         last_page = 0
         total_pages = 0
-        while page <= MAX_PAGES and len(results) < TARGET_ROW:
-            data = await _fetch_section_page(section, page)
+        while pg <= MAX_PAGES and len(results) < TARGET_ROW:
+            data = await _fetch_section_page(section, pg)
             total_pages = data.get("total_pages") or total_pages
             raw = data.get("results", [])
             if not raw:
@@ -426,10 +525,10 @@ async def home(provider_ids: str | None = None, page: int = 1, page_size: int = 
                 results.append(m)
                 if len(results) >= TARGET_ROW:
                     break
-            last_page = page
-            if total_pages and page >= total_pages:
+            last_page = pg
+            if total_pages and pg >= total_pages:
                 break
-            page += 1
+            pg += 1
         next_page = None
         if total_pages and last_page and last_page < total_pages:
             next_page = last_page + 1
@@ -475,17 +574,23 @@ async def section(
     pages: int = 1,
     provider_ids: str | None = None,
     cursor: str | None = None,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
 ):
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
+        countries = []
+    elif user:
+        prefs = await _get_user_prefs(db, user.id)
+        ids = set(prefs.provider_ids) if prefs else set()
+        countries = list(prefs.countries) if prefs else []
     else:
-        ids = set(config.load_config().get("provider_ids", []))
+        ids = set()
+        countries = []
 
     if not ids:
         return {"id": section_id, "results": [], "filtered": True, "message": "Select streaming services first."}
 
-    config_data = config.load_config()
-    countries = config_data.get("countries", [])
     sections = await _home_section_config(ids, countries)
     section_def = next((s for s in sections if s["id"] == section_id), None)
     if not section_def:
@@ -582,13 +687,21 @@ async def regions():
 
 
 @app.get("/api/config")
-async def get_config():
-    return config.load_config()
+async def get_config(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    prefs = await _get_user_prefs(db, user.id)
+    if not prefs:
+        return {"provider_ids": [], "countries": []}
+    return {"provider_ids": prefs.provider_ids or [], "countries": prefs.countries or []}
 
 
 @app.post("/api/config")
-async def set_config(data: dict):
-    existing = config.load_config()
+async def set_config(data: dict, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(UserPreferences).where(UserPreferences.user_id == user.id))
+    prefs = result.scalar_one_or_none()
+    if not prefs:
+        prefs = UserPreferences(user_id=user.id)
+        db.add(prefs)
+
     if "provider_ids" in data:
         incoming = data.get("provider_ids") or []
         provider_ids = []
@@ -597,21 +710,13 @@ async def set_config(data: dict):
                 provider_ids.append(int(pid))
             except (TypeError, ValueError):
                 continue
-        existing["provider_ids"] = provider_ids
+        prefs.provider_ids = provider_ids
+
     if "countries" in data:
-        existing["countries"] = data.get("countries") or []
-    for key, value in data.items():
-        if key in ("provider_ids", "countries"):
-            continue
-        existing[key] = value
-    config.save_config(existing)
+        prefs.countries = data.get("countries") or []
+
+    await db.commit()
     return {"ok": True}
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    await tmdb.close_client()
-    await streaming_availability.close_client()
 
 
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

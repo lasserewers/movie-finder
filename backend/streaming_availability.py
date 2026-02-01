@@ -2,8 +2,6 @@ import os
 import time
 import httpx
 
-from . import config as app_config
-
 BASE_URL = "https://streaming-availability.p.rapidapi.com"
 
 # In-memory cache: tmdb_id -> parsed result
@@ -82,7 +80,7 @@ async def get_streaming_links(tmdb_id: int) -> dict:
 
 
 def _get_api_key() -> str:
-    return os.environ.get("STREAMING_AVAILABILITY_API_KEY") or app_config.load_config().get("streaming_availability_api_key", "")
+    return os.environ.get("STREAMING_AVAILABILITY_API_KEY", "")
 
 
 async def _get_client() -> httpx.AsyncClient:

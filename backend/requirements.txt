@@ -1,3 +1,10 @@
 fastapi
 uvicorn
 httpx
+asyncpg
+sqlalchemy[asyncio]
+argon2-cffi
+python-jose[cryptography]
+slowapi
+pydantic[email]
+python-dotenv

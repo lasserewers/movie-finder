@@ -1,0 +1,138 @@
+import { apiFetch } from "./client";
+
+export interface Movie {
+  id: number;
+  title: string;
+  poster_path?: string;
+  poster_url?: string;
+  release_date?: string;
+  overview?: string;
+  imdb_id?: string;
+  credits?: {
+    cast: Person[];
+    crew: CrewMember[];
+  };
+}
+
+export interface Person {
+  id: number;
+  name: string;
+  profile_path?: string;
+  character?: string;
+}
+
+export interface CrewMember {
+  id: number;
+  name: string;
+  profile_path?: string;
+  job: string;
+}
+
+export interface HomeSection {
+  id: string;
+  title: string;
+  results: Movie[];
+  next_cursor?: string;
+  next_page?: number;
+  total_pages?: number;
+}
+
+export interface HomeResponse {
+  sections: HomeSection[];
+  has_more: boolean;
+  next_page?: number;
+  message?: string;
+}
+
+export interface ProviderInfo {
+  provider_id: number;
+  provider_name: string;
+  logo_path?: string;
+}
+
+export interface CountryProviders {
+  link?: string;
+  flatrate?: ProviderInfo[];
+  free?: ProviderInfo[];
+  ads?: ProviderInfo[];
+  rent?: ProviderInfo[];
+  buy?: ProviderInfo[];
+}
+
+export interface StreamingLink {
+  service_name: string;
+  type: string;
+  link?: string;
+  quality?: string;
+  price?: string;
+  audios?: string[];
+  subtitles?: string[];
+  expires_on?: number;
+}
+
+export interface Region {
+  iso_3166_1: string;
+  english_name: string;
+}
+
+export async function searchMovies(q: string): Promise<{ results: Movie[] }> {
+  return apiFetch(`/api/search?q=${encodeURIComponent(q)}`);
+}
+
+export async function searchFiltered(
+  q: string,
+  providerIds: number[]
+): Promise<{ results: Movie[] }> {
+  const ids = providerIds.join(",");
+  return apiFetch(
+    `/api/search_filtered?q=${encodeURIComponent(q)}${ids ? `&provider_ids=${ids}` : ""}`
+  );
+}
+
+export async function getHome(
+  page: number,
+  pageSize: number,
+  providerIds: number[]
+): Promise<HomeResponse> {
+  const ids = providerIds.join(",");
+  return apiFetch(
+    `/api/home?page=${page}&page_size=${pageSize}${ids ? `&provider_ids=${ids}` : ""}`
+  );
+}
+
+export async function getSection(
+  sectionId: string,
+  page: number,
+  pages: number,
+  providerIds: number[],
+  cursor?: string
+): Promise<HomeSection & { next_cursor?: string }> {
+  const ids = providerIds.join(",");
+  const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+  return apiFetch(
+    `/api/section?section_id=${encodeURIComponent(sectionId)}&page=${page}&pages=${pages}${ids ? `&provider_ids=${ids}` : ""}${cursorParam}`
+  );
+}
+
+export async function getMovieProviders(
+  movieId: number
+): Promise<{ movie: Movie; providers: Record<string, CountryProviders> }> {
+  return apiFetch(`/api/movie/${movieId}/providers`);
+}
+
+export async function getMovieLinks(
+  movieId: number
+): Promise<{ streaming?: Record<string, StreamingLink[]>; movie_info?: { poster?: string; backdrop?: string } }> {
+  return apiFetch(`/api/movie/${movieId}/links`);
+}
+
+export async function getProviders(
+  country?: string
+): Promise<ProviderInfo[]> {
+  const url = country ? `/api/providers?country=${encodeURIComponent(country)}` : "/api/providers";
+  return apiFetch(url);
+}
+
+export async function getRegions(): Promise<Region[]> {
+  return apiFetch("/api/regions");
+}

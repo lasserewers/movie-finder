@@ -1,0 +1,39 @@
+services:
+  db:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_DB: moviefinder
+      POSTGRES_USER: moviefinder
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-moviefinder}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+asyncpg://moviefinder:${DB_PASSWORD:-moviefinder}@db:5432/moviefinder
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      TMDB_API_KEY: ${TMDB_API_KEY}
+      STREAMING_AVAILABILITY_API_KEY: ${STREAMING_AVAILABILITY_API_KEY}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    restart: unless-stopped
+
+  # Uncomment for production deployment with Cloudflare Tunnel
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   command: tunnel run
+  #   environment:
+  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+  #   depends_on:
+  #     - app
+  #   restart: unless-stopped
+
+volumes:
+  pgdata:

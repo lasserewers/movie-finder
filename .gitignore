@@ -2,4 +2,9 @@ __pycache__/
 *.pyc
 user_config.json
 .env
+.venv/
+node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+frontend_old/
 25.3
