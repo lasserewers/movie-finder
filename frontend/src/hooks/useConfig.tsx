@@ -11,10 +11,12 @@ import { getProviders, type ProviderInfo } from "../api/movies";
 interface ConfigContextValue {
   providerIds: Set<number>;
   countries: string[];
+  theme: string;
   providerMap: Record<number, string>;
   allProviders: ProviderInfo[];
   loadConfig: () => Promise<void>;
   saveConfig: (ids: number[], countries: string[]) => Promise<void>;
+  setTheme: (theme: string) => Promise<void>;
   loadProviders: (country?: string) => Promise<ProviderInfo[]>;
   expandedProviderIds: () => Set<number>;
 }
@@ -73,9 +75,19 @@ function expandProviders(ids: Set<number>, providers: ProviderInfo[]): Set<numbe
   return expanded;
 }
 
+function applyThemeClass(theme: string) {
+  document.documentElement.classList.toggle("light", theme === "light");
+  localStorage.setItem("theme", theme);
+}
+
 export function ConfigProvider({ children }: { children: ReactNode }) {
   const [providerIds, setProviderIds] = useState<Set<number>>(new Set());
   const [countries, setCountries] = useState<string[]>([]);
+  const [theme, setThemeState] = useState(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved) applyThemeClass(saved);
+    return saved || "dark";
+  });
   const [providerMap, setProviderMap] = useState<Record<number, string>>({});
   const [allProviders, setAllProviders] = useState<ProviderInfo[]>([]);
 
@@ -87,20 +99,30 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     for (const p of providers) map[p.provider_id] = p.provider_name;
     setProviderMap(map);
 
+    // Keep this as the user's exact saved subscriptions for backend filtering.
     const ids = new Set(cfg.provider_ids || []);
-    setProviderIds(expandProviders(ids, providers));
+    setProviderIds(ids);
     setCountries(cfg.countries || []);
+
+    const t = localStorage.getItem("theme") || cfg.theme || "dark";
+    setThemeState(t);
+    applyThemeClass(t);
   }, []);
 
   const saveConfigFn = useCallback(
     async (ids: number[], ctries: string[]) => {
       await configApi.saveConfig({ provider_ids: ids, countries: ctries });
-      const expanded = expandProviders(new Set(ids), allProviders);
-      setProviderIds(expanded);
+      setProviderIds(new Set(ids));
       setCountries(ctries);
     },
-    [allProviders]
+    []
   );
+
+  const setTheme = useCallback(async (newTheme: string) => {
+    setThemeState(newTheme);
+    applyThemeClass(newTheme);
+    await configApi.saveConfig({ theme: newTheme });
+  }, []);
 
   const loadProviders = useCallback(async (country?: string) => {
     return getProviders(country);
@@ -115,10 +137,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       value={{
         providerIds,
         countries,
+        theme,
         providerMap,
         allProviders,
         loadConfig,
         saveConfig: saveConfigFn,
+        setTheme,
         loadProviders,
         expandedProviderIds,
       }}

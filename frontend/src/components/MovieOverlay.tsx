@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getMovieProviders, getMovieLinks, type Movie, type CountryProviders, type StreamingLink, type Person, type CrewMember } from "../api/movies";
+import { getMovieProviders, getMovieLinks, getTvProviders, getTvLinks, type Movie, type CountryProviders, type StreamingLink, type Person, type CrewMember } from "../api/movies";
 import ProviderGrid from "./ProviderGrid";
 import CreditsModal from "./CreditsModal";
 import Spinner from "./Spinner";
@@ -25,9 +25,10 @@ interface Props {
   movieId: number | null;
   onClose: () => void;
   countryNameMap: Record<string, string>;
+  itemMediaType?: "movie" | "tv";
 }
 
-export default function MovieOverlay({ movieId, onClose, countryNameMap }: Props) {
+export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMediaType }: Props) {
   const [movie, setMovie] = useState<Movie | null>(null);
   const [providers, setProviders] = useState<Record<string, CountryProviders>>({});
   const [streamingLinks, setStreamingLinks] = useState<Record<string, StreamingLink[]>>({});
@@ -39,7 +40,10 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap }: Props
     if (!movieId) return;
     setLoading(true);
     setMovie(null);
-    Promise.all([getMovieProviders(movieId), getMovieLinks(movieId).catch(() => ({} as Awaited<ReturnType<typeof getMovieLinks>>))])
+    const isTV = itemMediaType === "tv";
+    const provFn = isTV ? getTvProviders : getMovieProviders;
+    const linksFn = isTV ? getTvLinks : getMovieLinks;
+    Promise.all([provFn(movieId), linksFn(movieId).catch(() => ({} as Awaited<ReturnType<typeof getMovieLinks>>))])
       .then(([provData, linksData]) => {
         setMovie(provData.movie);
         setProviders(provData.providers);
@@ -47,7 +51,7 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap }: Props
         setMovieInfo(linksData?.movie_info || null);
       })
       .finally(() => setLoading(false));
-  }, [movieId]);
+  }, [movieId, itemMediaType]);
 
   useEffect(() => {
     if (movieId) document.body.classList.add("overflow-hidden");
@@ -75,19 +79,23 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap }: Props
           >
             <div className="absolute inset-0 bg-[rgba(6,7,10,0.7)] backdrop-blur-md" onClick={onClose} />
             <motion.div
-              className="relative w-[min(980px,92vw)] max-h-[90vh] overflow-auto bg-gradient-to-b from-panel/[0.98] to-bg/[0.98] border border-border rounded-2xl p-6 sm:p-8 z-10 shadow-[0_40px_80px_rgba(0,0,0,0.45)]"
+              className="relative w-[min(980px,92vw)] max-h-[90vh] flex flex-col bg-gradient-to-b from-panel/[0.98] to-bg/[0.98] border border-border rounded-2xl z-10 shadow-[0_40px_80px_rgba(0,0,0,0.45)]"
               initial={{ y: 40, scale: 0.97 }}
               animate={{ y: 0, scale: 1 }}
               exit={{ y: 40, scale: 0.97 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
             >
-              <button
-                onClick={onClose}
-                className="absolute top-4 right-4 w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors"
-              >
-                &times;
-              </button>
+              <div className="flex justify-between items-center p-6 sm:p-8 pb-0 sm:pb-0">
+                <h2 className="font-display text-2xl">{movie?.title || ""}</h2>
+                <button
+                  onClick={onClose}
+                  className="w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors flex-shrink-0"
+                >
+                  &times;
+                </button>
+              </div>
 
+              <div className="flex-1 overflow-auto p-6 sm:p-8 pt-4 sm:pt-4">
               {loading ? (
                 <div className="flex justify-center py-16">
                   <Spinner />
@@ -99,9 +107,13 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap }: Props
                       <img src={posterUrl} alt="" className="w-[150px] rounded-lg flex-shrink-0 self-start" />
                     )}
                     <div>
-                      <h2 className="font-display text-2xl mb-1">{movie.title}</h2>
-                      <p className="text-muted mb-2">{movie.release_date?.slice(0, 4)}</p>
-                      <p className="text-sm text-[#c9d1d9] leading-relaxed">{movie.overview}</p>
+                      <p className="text-muted mb-2">
+                        {movie.release_date?.slice(0, 4)}
+                        {movie.number_of_seasons != null && (
+                          <span className="ml-2">&middot; {movie.number_of_seasons} season{movie.number_of_seasons !== 1 ? "s" : ""}</span>
+                        )}
+                      </p>
+                      <p className="text-sm text-muted leading-relaxed">{movie.overview}</p>
 
                       {(directors.length > 0 || topCast.length > 0) && (
                         <div className="flex flex-nowrap gap-5 mt-4 overflow-x-auto pb-1">
@@ -148,6 +160,7 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap }: Props
                   />
                 </>
               ) : null}
+              </div>
             </motion.div>
           </motion.div>
         )}

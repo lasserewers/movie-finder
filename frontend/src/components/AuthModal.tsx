@@ -6,27 +6,37 @@ import { ApiError } from "../api/client";
 interface Props {
   open: boolean;
   onClose?: () => void;
+  onSignupComplete?: () => void;
 }
 
-export default function AuthModal({ open, onClose }: Props) {
+export default function AuthModal({ open, onClose, onSignupComplete }: Props) {
   const { login, signup } = useAuth();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (mode === "signup" && password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+
     setLoading(true);
     try {
       if (mode === "signup") {
         await signup(email, password);
+        onClose?.();
+        onSignupComplete?.();
       } else {
         await login(email, password);
+        onClose?.();
       }
-      onClose?.();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Network error. Please try again.");
     } finally {
@@ -37,6 +47,7 @@ export default function AuthModal({ open, onClose }: Props) {
   const switchMode = () => {
     setMode(mode === "login" ? "signup" : "login");
     setError("");
+    setConfirmPassword("");
   };
 
   return (
@@ -86,6 +97,20 @@ export default function AuthModal({ open, onClose }: Props) {
                   className="px-3 py-2.5 text-sm border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors"
                 />
               </div>
+              {mode === "signup" && (
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm text-muted">Confirm password</label>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
+                    className="px-3 py-2.5 text-sm border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors"
+                  />
+                </div>
+              )}
               {error && (
                 <div className="text-sm text-red-400 bg-red-400/10 rounded-lg px-3 py-2">
                   {error}

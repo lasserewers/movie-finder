@@ -31,3 +31,17 @@ export async function signup(email: string, password: string): Promise<User> {
 export async function logout(): Promise<void> {
   await apiFetch("/api/auth/logout", { method: "POST" });
 }
+
+export async function changeEmail(currentPassword: string, newEmail: string): Promise<{ email: string }> {
+  return apiFetch("/api/auth/email", {
+    method: "PUT",
+    body: JSON.stringify({ current_password: currentPassword, new_email: newEmail }),
+  });
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await apiFetch("/api/auth/password", {
+    method: "PUT",
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}

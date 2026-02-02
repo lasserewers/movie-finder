@@ -1,7 +1,7 @@
 import asyncio
 import os
 import time
-from datetime import date
+from datetime import date, timedelta
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -25,14 +25,32 @@ from .auth import get_current_user, get_optional_user, verify_csrf
 from .routes_auth import router as auth_router
 
 WATCH_PROVIDER_TTL = 6 * 60 * 60
-WATCH_PROVIDER_CACHE: dict[int, tuple[float, dict]] = {}
+WATCH_PROVIDER_CACHE: dict[tuple[str, int], tuple[float, dict]] = {}
 HOME_CACHE_TTL = 10 * 60
 HOME_CACHE: dict[str, tuple[float, dict]] = {}
 PROVIDER_NAME_TTL = 24 * 60 * 60
 PROVIDER_NAME_CACHE: tuple[float, dict[int, str]] | None = None
 SECTION_CACHE_TTL = 10 * 60
 SECTION_CACHE: dict[str, tuple[float, dict]] = {}
-FILTER_CONCURRENCY = 12
+SECTION_CONFIG_CACHE: dict[str, tuple[float, list]] = {}
+SECTION_CONFIG_TTL = 10 * 60
+FILTER_CONCURRENCY = 30
+VALID_MEDIA_TYPES = ("movie", "tv", "mix")
+
+
+def _normalize_result(item: dict) -> dict:
+    """Unify TV/movie result shape so frontend always sees title + release_date."""
+    if "name" in item and "title" not in item:
+        item["title"] = item.get("name") or item.get("original_name") or ""
+        item["release_date"] = item.get("first_air_date") or ""
+        item["media_type"] = "tv"
+    elif "title" in item:
+        item.setdefault("media_type", "movie")
+    # For /trending/all results, TMDB includes media_type already
+    if item.get("media_type") == "tv" and "title" not in item:
+        item["title"] = item.get("name") or ""
+        item["release_date"] = item.get("first_air_date") or ""
+    return item
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 # Fallback to frontend/ if dist/ doesn't exist (dev without build)
@@ -101,8 +119,28 @@ app.include_router(auth_router)
 
 
 @app.get("/api/search")
-async def search(q: str = Query(..., min_length=1)):
+async def search(q: str = Query(..., min_length=1), media_type: str = "movie"):
+    if media_type not in VALID_MEDIA_TYPES:
+        media_type = "movie"
+    if media_type == "tv":
+        data = await tmdb.search_tv(q)
+        for r in data.get("results", []):
+            _normalize_result(r)
+        return data
+    if media_type == "mix":
+        movie_data, tv_data = await asyncio.gather(tmdb.search_movie(q), tmdb.search_tv(q))
+        movies = movie_data.get("results", [])
+        tv_shows = tv_data.get("results", [])
+        for r in movies:
+            _normalize_result(r)
+        for r in tv_shows:
+            _normalize_result(r)
+        combined = sorted(movies + tv_shows, key=lambda x: x.get("popularity", 0), reverse=True)
+        movie_data["results"] = combined
+        return movie_data
     data = await tmdb.search_movie(q)
+    for r in data.get("results", []):
+        _normalize_result(r)
     return data
 
 
@@ -110,9 +148,12 @@ async def search(q: str = Query(..., min_length=1)):
 async def search_filtered(
     q: str = Query(..., min_length=1),
     provider_ids: str | None = None,
+    media_type: str = "movie",
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if media_type not in VALID_MEDIA_TYPES:
+        media_type = "movie"
     target = 20
     max_pages = 4
     if provider_ids:
@@ -124,43 +165,62 @@ async def search_filtered(
         ids = set()
     if not ids:
         return {"results": [], "filtered": True}
-    ids = await _expand_provider_ids(ids)
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
-    flag_cache: dict[int, bool] = {}
-    seen = set()
-    results: list = []
-    page = 1
-    total_pages = 0
-    base = None
-    chunk = 12
-    buf: list = []
-    while page <= max_pages and len(results) < target:
-        data = await tmdb.search_movie(q, page=page)
-        if base is None:
-            base = data
-        total_pages = data.get("total_pages") or total_pages
-        raw = data.get("results", [])
-        if not raw:
-            break
-        for m in raw:
-            mid = m.get("id")
-            if not mid or mid in seen:
-                continue
-            seen.add(mid)
-            buf.append(m)
-        while buf and len(results) < target:
-            batch = buf[:chunk]
-            buf = buf[chunk:]
-            filtered = await _filter_results(batch, ids, semaphore, flag_cache)
-            for m in filtered:
-                results.append(m)
+    flag_cache: dict[tuple[str, int], bool] = {}
+
+    async def _search_and_filter(search_fn, mt: str):
+        seen = set()
+        results: list = []
+        page = 1
+        total_pages = 0
+        base = None
+        chunk = 12
+        buf: list = []
+        while page <= max_pages and len(results) < target:
+            data = await search_fn(q, page=page)
+            if base is None:
+                base = data
+            total_pages = data.get("total_pages") or total_pages
+            raw = data.get("results", [])
+            if not raw:
+                break
+            for m in raw:
+                _normalize_result(m)
+                if mt == "tv":
+                    m.setdefault("media_type", "tv")
+                mid = m.get("id")
+                if not mid or mid in seen:
+                    continue
+                seen.add(mid)
+                buf.append(m)
+            while buf and len(results) < target:
+                batch = buf[:chunk]
+                buf = buf[chunk:]
+                filtered = await _filter_results(batch, ids, semaphore, flag_cache, mt)
+                for m in filtered:
+                    results.append(m)
+                    if len(results) >= target:
+                        break
                 if len(results) >= target:
                     break
-            if len(results) >= target:
+            if total_pages and page >= total_pages:
                 break
-        if total_pages and page >= total_pages:
-            break
-        page += 1
+            page += 1
+        return base, results
+
+    if media_type == "mix":
+        (base_m, res_m), (base_t, res_t) = await asyncio.gather(
+            _search_and_filter(tmdb.search_movie, "movie"),
+            _search_and_filter(tmdb.search_tv, "tv"),
+        )
+        combined = sorted(res_m + res_t, key=lambda x: x.get("popularity", 0), reverse=True)[:target]
+        base = base_m or base_t or {"results": []}
+        base["results"] = combined
+        base["filtered"] = True
+        return base
+
+    search_fn = tmdb.search_tv if media_type == "tv" else tmdb.search_movie
+    base, results = await _search_and_filter(search_fn, media_type)
     if base is None:
         base = {"results": []}
     base["results"] = results
@@ -180,42 +240,61 @@ async def movie_links(movie_id: int):
     return await streaming_availability.get_streaming_links(movie_id)
 
 
+@app.get("/api/tv/{tv_id}/providers")
+async def tv_providers(tv_id: int):
+    providers = await tmdb.get_tv_watch_providers(tv_id)
+    details = await tmdb.get_tv_details(tv_id)
+    _normalize_result(details)
+    return {"movie": details, "providers": providers}
+
+
+@app.get("/api/tv/{tv_id}/links")
+async def tv_links(tv_id: int):
+    return await streaming_availability.get_streaming_links(tv_id, media_type="tv")
+
+
 async def _get_user_prefs(db: AsyncSession, user_id) -> UserPreferences | None:
     result = await db.execute(select(UserPreferences).where(UserPreferences.user_id == user_id))
     return result.scalar_one_or_none()
 
 
-async def _get_watch_providers_cached(movie_id: int) -> dict:
+async def _get_watch_providers_cached(item_id: int, media_type: str = "movie") -> dict:
+    cache_key = (media_type, item_id)
     now = time.time()
-    cached = WATCH_PROVIDER_CACHE.get(movie_id)
+    cached = WATCH_PROVIDER_CACHE.get(cache_key)
     if cached and (now - cached[0]) < WATCH_PROVIDER_TTL:
         return cached[1]
-    providers = await tmdb.get_watch_providers(movie_id)
-    WATCH_PROVIDER_CACHE[movie_id] = (now, providers)
+    if media_type == "tv":
+        providers = await tmdb.get_tv_watch_providers(item_id)
+    else:
+        providers = await tmdb.get_watch_providers(item_id)
+    WATCH_PROVIDER_CACHE[cache_key] = (now, providers)
     return providers
 
 
-async def _movie_has_provider(
-    movie_id: int,
+async def _item_has_provider(
+    item_id: int,
     provider_ids: set[int],
     semaphore: asyncio.Semaphore,
-    flag_cache: dict[int, bool],
+    flag_cache: dict[tuple[str, int], bool],
+    media_type: str = "movie",
 ) -> bool:
-    if movie_id in flag_cache:
-        return flag_cache[movie_id]
+    cache_key = (media_type, item_id)
+    if cache_key in flag_cache:
+        return flag_cache[cache_key]
     async with semaphore:
         try:
-            providers = await _get_watch_providers_cached(movie_id)
+            providers = await _get_watch_providers_cached(item_id, media_type)
         except Exception:
-            flag_cache[movie_id] = False
+            flag_cache[cache_key] = False
             return False
     for region in providers.values():
         for key in ("flatrate", "free", "ads"):
             for p in region.get(key, []):
                 if p.get("provider_id") in provider_ids:
-                    flag_cache[movie_id] = True
+                    flag_cache[cache_key] = True
                     return True
-    flag_cache[movie_id] = False
+    flag_cache[cache_key] = False
     return False
 
 
@@ -223,27 +302,52 @@ async def _filter_results(
     results: list,
     provider_ids: set[int],
     semaphore: asyncio.Semaphore,
-    flag_cache: dict[int, bool],
+    flag_cache: dict[tuple[str, int], bool],
+    media_type: str = "movie",
 ) -> list:
     seen = set()
-    movies = []
+    items = []
     for m in results:
         mid = m.get("id")
         if not mid or mid in seen:
             continue
         seen.add(mid)
-        movies.append(m)
-    if not movies:
+        items.append(m)
+    if not items:
         return []
     flags = await asyncio.gather(
-        *(_movie_has_provider(m["id"], provider_ids, semaphore, flag_cache) for m in movies)
+        *(_item_has_provider(m["id"], provider_ids, semaphore, flag_cache, m.get("media_type", media_type)) for m in items)
     )
-    return [m for m, ok in zip(movies, flags) if ok]
+    return [m for m, ok in zip(items, flags) if ok]
 
 
-async def _home_section_config(provider_ids: set[int] | None = None, countries: list[str] | None = None):
-    genres = await tmdb.get_genres()
-    genre_map = {g["name"].lower(): g["id"] for g in genres}
+async def _home_section_config(provider_ids: set[int] | None = None, countries: list[str] | None = None, media_type: str = "movie"):
+    cache_key = f"{','.join(str(p) for p in sorted(provider_ids or []))}:{','.join(sorted(countries or []))}:{media_type}"
+    now = time.time()
+    cached = SECTION_CONFIG_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < SECTION_CONFIG_TTL:
+        return cached[1]
+
+    is_movie = media_type in ("movie", "mix")
+    is_tv = media_type in ("tv", "mix")
+
+    # Fetch genres for the relevant media type(s)
+    if media_type == "mix":
+        movie_genres, tv_genres = await asyncio.gather(tmdb.get_genres(), tmdb.get_tv_genres())
+        # Merge genres, preferring movie IDs for shared names
+        genre_map = {}
+        for g in tv_genres:
+            genre_map[g["name"].lower()] = g["id"]
+        for g in movie_genres:
+            genre_map[g["name"].lower()] = g["id"]
+        all_genre_names = sorted(genre_map.keys())
+        genres = [{"id": genre_map[n], "name": n.title()} for n in all_genre_names]
+    elif media_type == "tv":
+        genres = await tmdb.get_tv_genres()
+        genre_map = {g["name"].lower(): g["id"] for g in genres}
+    else:
+        genres = await tmdb.get_genres()
+        genre_map = {g["name"].lower(): g["id"] for g in genres}
 
     def gid(name: str):
         return genre_map.get(name.lower())
@@ -261,20 +365,27 @@ async def _home_section_config(provider_ids: set[int] | None = None, countries: 
         recent_section["countries"] = countries or []
 
     current_year = date.today().year
+
+    # Use appropriate date field name for discover params
+    # TMDB discover/tv uses first_air_date instead of primary_release_date
+    date_gte = "first_air_date.gte" if media_type == "tv" else "primary_release_date.gte"
+    date_lte = "first_air_date.lte" if media_type == "tv" else "primary_release_date.lte"
+    date_year = "first_air_date_year" if media_type == "tv" else "primary_release_year"
+
     sections += [
         {
             "id": "new_this_year",
             "title": f"{current_year} Releases",
             "kind": "discover",
-            "params": {"primary_release_year": current_year},
+            "params": {date_year: current_year},
         },
         {
             "id": "recent_hits",
             "title": "Recent Hits",
             "kind": "discover",
             "params": {
-                "primary_release_date.gte": f"{current_year - 1}-01-01",
-                "primary_release_date.lte": f"{current_year}-12-31",
+                date_gte: f"{current_year - 1}-01-01",
+                date_lte: f"{current_year}-12-31",
             },
         },
         {
@@ -295,9 +406,14 @@ async def _home_section_config(provider_ids: set[int] | None = None, countries: 
             "kind": "discover",
             "params": {"vote_average.gte": 7.2, "vote_count.gte": 100, "vote_count.lte": 500},
         },
-        {"id": "short_sweet", "title": "Short & Sweet", "kind": "discover", "params": {"with_runtime.lte": 90}},
-        {"id": "epic_journeys", "title": "Epic Journeys", "kind": "discover", "params": {"with_runtime.gte": 140}},
     ]
+
+    # Runtime filters only apply to movies
+    if is_movie:
+        sections += [
+            {"id": "short_sweet", "title": "Short & Sweet", "kind": "discover", "params": {"with_runtime.lte": 90}},
+            {"id": "epic_journeys", "title": "Epic Journeys", "kind": "discover", "params": {"with_runtime.gte": 140}},
+        ]
 
     combo_specs = [
         ("Action & Adventure", [gid("Action"), gid("Adventure")], "combo_action_adventure"),
@@ -331,6 +447,7 @@ async def _home_section_config(provider_ids: set[int] | None = None, countries: 
     for g in sorted(genres, key=lambda x: x["name"].lower()):
         sections.append({"id": f"genre_{g['id']}", "title": g["name"], "kind": "genre", "genre_id": g["id"]})
 
+    SECTION_CONFIG_CACHE[cache_key] = (time.time(), sections)
     return sections
 
 
@@ -347,31 +464,6 @@ async def _get_tmdb_provider_name_map() -> dict[int, str]:
 
 def _normalize_name(name: str) -> str:
     return "".join(ch for ch in name.lower() if ch.isalnum())
-
-
-async def _expand_provider_ids(ids: set[int]) -> set[int]:
-    if not ids:
-        return ids
-    name_map = await _get_tmdb_provider_name_map()
-    selected = []
-    for pid in ids:
-        name = name_map.get(pid)
-        if name:
-            norm = _normalize_name(name)
-            if norm:
-                selected.append(norm)
-    if not selected:
-        return ids
-    expanded = set(ids)
-    for pid, name in name_map.items():
-        norm = _normalize_name(name)
-        if not norm:
-            continue
-        for sel in selected:
-            if norm in sel or sel in norm:
-                expanded.add(pid)
-                break
-    return expanded
 
 
 async def _resolve_streaming_catalogs(provider_ids: set[int]) -> list[str]:
@@ -431,28 +523,65 @@ async def _resolve_streaming_catalogs(provider_ids: set[int]) -> list[str]:
     return unique
 
 
-async def _fetch_section_page(section: dict, page: int) -> dict:
+def _translate_movie_params_to_tv(params: dict) -> dict:
+    """Translate movie-style TMDB discover params to TV-style equivalents."""
+    tv_params = {}
+    mapping = {
+        "primary_release_date.gte": "first_air_date.gte",
+        "primary_release_date.lte": "first_air_date.lte",
+        "primary_release_year": "first_air_date_year",
+    }
+    for k, v in params.items():
+        tv_params[mapping.get(k, k)] = v
+    return tv_params
+
+
+async def _fetch_section_page(section: dict, page: int, media_type: str = "movie") -> dict:
+    """Fetch a single page of raw (unfiltered) results for a section."""
     kind = section.get("kind")
-    if kind == "trending":
-        return await tmdb.get_trending(time_window=section.get("time_window", "week"), page=page)
-    if kind == "popular":
-        return await tmdb.get_popular(page=page)
-    if kind == "top_rated":
-        return await tmdb.get_top_rated(page=page)
-    if kind == "now_playing":
-        return await tmdb.get_now_playing(page=page)
-    if kind == "upcoming":
-        return await tmdb.get_upcoming(page=page)
-    if kind == "genre":
-        return await tmdb.discover({"with_genres": section.get("genre_id")}, page=page)
-    if kind == "discover":
-        return await tmdb.discover(section.get("params", {}), page=page)
+
     if kind == "recently_added":
         catalogs = section.get("catalogs", [])
-        countries = section.get("countries", [])
-        data = await streaming_availability.get_recently_added(catalogs, countries, None, pages=1)
+        section_countries = section.get("countries", [])
+        show_type = "series" if media_type == "tv" else ("movie" if media_type == "movie" else None)
+        data = await streaming_availability.get_recently_added(catalogs, section_countries, None, pages=1, show_type=show_type)
         return {"results": data.get("results", []), "next_cursor": data.get("next_cursor")}
-    return {}
+
+    if kind == "trending":
+        data = await tmdb.get_trending(time_window=section.get("time_window", "week"), page=page, media_type=media_type)
+        for r in data.get("results", []):
+            _normalize_result(r)
+        return data
+
+    if kind == "top_rated":
+        params = {"sort_by": "vote_average.desc", "vote_count.gte": 300}
+    elif kind == "genre":
+        params = {"with_genres": section.get("genre_id")}
+    elif kind == "discover":
+        params = dict(section.get("params", {}))
+    else:
+        return {}
+
+    if media_type == "mix":
+        tv_params = _translate_movie_params_to_tv(params)
+        movie_data, tv_data = await asyncio.gather(
+            tmdb.discover(params, page=page),
+            tmdb.discover_tv(tv_params, page=page),
+        )
+        movie_results = [_normalize_result(r) for r in movie_data.get("results", [])]
+        tv_results = [_normalize_result(r) for r in tv_data.get("results", [])]
+        combined = sorted(movie_results + tv_results, key=lambda x: x.get("popularity", 0), reverse=True)
+        total_pages = max(movie_data.get("total_pages", 0), tv_data.get("total_pages", 0))
+        return {"results": combined, "total_pages": total_pages}
+
+    if media_type == "tv":
+        tv_params = _translate_movie_params_to_tv(params)
+        data = await tmdb.discover_tv(tv_params, page=page)
+    else:
+        data = await tmdb.discover(params, page=page)
+    for r in data.get("results", []):
+        _normalize_result(r)
+    return data
 
 
 @app.get("/api/home")
@@ -460,31 +589,32 @@ async def home(
     provider_ids: str | None = None,
     page: int = 1,
     page_size: int = 6,
+    media_type: str = "mix",
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if media_type not in VALID_MEDIA_TYPES:
+        media_type = "mix"
+    prefs = await _get_user_prefs(db, user.id) if user else None
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
-        countries = []
-    elif user:
-        prefs = await _get_user_prefs(db, user.id)
-        ids = set(prefs.provider_ids) if prefs else set()
-        countries = list(prefs.countries) if prefs else []
+    elif prefs:
+        ids = set(prefs.provider_ids) if prefs.provider_ids else set()
     else:
         ids = set()
-        countries = []
+    countries = list(prefs.countries) if prefs and prefs.countries else []
 
     if not ids:
         return {"sections": [], "filtered": True, "message": "Select streaming services to see available titles."}
 
     page = max(1, page)
     page_size = max(3, min(10, page_size))
-    cache_key = f"{','.join(str(pid) for pid in sorted(ids))}:{','.join(countries)}:{page}:{page_size}"
+    cache_key = f"{','.join(str(pid) for pid in sorted(ids))}:{','.join(countries)}:{page}:{page_size}:{media_type}"
     now = time.time()
     cached = HOME_CACHE.get(cache_key)
     if cached and (now - cached[0]) < HOME_CACHE_TTL:
         return cached[1]
-    sections_config = await _home_section_config(ids, countries)
+    sections_config = await _home_section_config(ids, countries, media_type)
     total_sections = len(sections_config)
     start = (page - 1) * page_size
     end = start + page_size
@@ -493,12 +623,14 @@ async def home(
     TARGET_ROW = 24
     MAX_PAGES = 3
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
-    flag_cache: dict[int, bool] = {}
+    flag_cache: dict[tuple[str, int], bool] = {}
 
     async def build_section(section: dict):
         if section.get("kind") == "recently_added":
-            data = await _fetch_section_page(section, 1)
-            results = data.get("results", [])[:TARGET_ROW]
+            data = await _fetch_section_page(section, 1, media_type)
+            raw = data.get("results", [])
+            filtered = await _filter_results(raw, ids, semaphore, flag_cache, media_type)
+            results = filtered[:TARGET_ROW]
             return {
                 "id": section["id"],
                 "title": section["title"],
@@ -507,16 +639,16 @@ async def home(
             }
         results = []
         seen_ids = set()
-        pg = 1
+        p = 1
         last_page = 0
         total_pages = 0
-        while pg <= MAX_PAGES and len(results) < TARGET_ROW:
-            data = await _fetch_section_page(section, pg)
+        while p <= MAX_PAGES and len(results) < TARGET_ROW:
+            data = await _fetch_section_page(section, p, media_type)
             total_pages = data.get("total_pages") or total_pages
             raw = data.get("results", [])
             if not raw:
                 break
-            filtered = await _filter_results(raw, ids, semaphore, flag_cache)
+            filtered = await _filter_results(raw, ids, semaphore, flag_cache, media_type)
             for m in filtered:
                 mid = m.get("id")
                 if not mid or mid in seen_ids:
@@ -525,10 +657,10 @@ async def home(
                 results.append(m)
                 if len(results) >= TARGET_ROW:
                     break
-            last_page = pg
-            if total_pages and pg >= total_pages:
+            last_page = p
+            if total_pages and p >= total_pages:
                 break
-            pg += 1
+            p += 1
         next_page = None
         if total_pages and last_page and last_page < total_pages:
             next_page = last_page + 1
@@ -574,42 +706,47 @@ async def section(
     pages: int = 1,
     provider_ids: str | None = None,
     cursor: str | None = None,
+    media_type: str = "mix",
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if media_type not in VALID_MEDIA_TYPES:
+        media_type = "mix"
+    prefs = await _get_user_prefs(db, user.id) if user else None
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
-        countries = []
-    elif user:
-        prefs = await _get_user_prefs(db, user.id)
-        ids = set(prefs.provider_ids) if prefs else set()
-        countries = list(prefs.countries) if prefs else []
+    elif prefs:
+        ids = set(prefs.provider_ids) if prefs.provider_ids else set()
     else:
         ids = set()
-        countries = []
+    countries = list(prefs.countries) if prefs and prefs.countries else []
 
     if not ids:
         return {"id": section_id, "results": [], "filtered": True, "message": "Select streaming services first."}
 
-    sections = await _home_section_config(ids, countries)
-    section_def = next((s for s in sections if s["id"] == section_id), None)
-    if not section_def:
-        return {"id": section_id, "results": [], "filtered": True, "message": "Unknown section."}
-
-    cache_key = f"{section_id}:{','.join(str(pid) for pid in sorted(ids))}:{page}:{pages}:{cursor or ''}"
+    cache_key = f"{section_id}:{','.join(str(pid) for pid in sorted(ids))}:{','.join(sorted(countries))}:{page}:{pages}:{cursor or ''}:{media_type}"
     now = time.time()
     cached = SECTION_CACHE.get(cache_key)
     if cached and (now - cached[0]) < SECTION_CACHE_TTL:
         return cached[1]
 
+    sections = await _home_section_config(ids, countries, media_type)
+    section_def = next((s for s in sections if s["id"] == section_id), None)
+    if not section_def:
+        return {"id": section_id, "results": [], "filtered": True, "message": "Unknown section."}
+
     if section_def.get("kind") == "recently_added":
+        semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
+        flag_cache: dict[tuple[str, int], bool] = {}
+        show_type = "series" if media_type == "tv" else ("movie" if media_type == "movie" else None)
         data = await streaming_availability.get_recently_added(
             section_def.get("catalogs", []),
             section_def.get("countries", []),
             cursor,
             pages=pages,
+            show_type=show_type,
         )
-        results = data.get("results", [])
+        results = await _filter_results(data.get("results", []), ids, semaphore, flag_cache, media_type)
         target = pages * 20
         if len(results) > target:
             results = results[:target]
@@ -624,13 +761,14 @@ async def section(
         SECTION_CACHE[cache_key] = (time.time(), payload)
         return payload
 
+    # Fetch raw results, filter each page, accumulate
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
-    flag_cache: dict[int, bool] = {}
+    flag_cache: dict[tuple[str, int], bool] = {}
     pages = max(1, min(5, pages))
     target_count = pages * 20
     max_scan_pages = pages * 5
     results: list = []
-    seen_ids = set()
+    seen_ids: set = set()
     total_pages = 0
     last_page = page - 1
     scanned = 0
@@ -640,10 +778,10 @@ async def section(
             break
         if scanned >= max_scan_pages:
             break
-        data = await _fetch_section_page(section_def, p)
+        data = await _fetch_section_page(section_def, p, media_type)
         if not total_pages:
             total_pages = data.get("total_pages", 0)
-        filtered = await _filter_results(data.get("results", []), ids, semaphore, flag_cache)
+        filtered = await _filter_results(data.get("results", []), ids, semaphore, flag_cache, media_type)
         for m in filtered:
             mid = m.get("id")
             if not mid or mid in seen_ids:
@@ -651,7 +789,6 @@ async def section(
             seen_ids.add(mid)
             results.append(m)
             if len(results) >= target_count:
-                results = results[:target_count]
                 break
         last_page = p
         scanned += 1
@@ -660,9 +797,7 @@ async def section(
         if len(results) >= target_count:
             break
         p += 1
-    next_page = None
-    if total_pages and last_page < total_pages:
-        next_page = last_page + 1
+    next_page = last_page + 1 if total_pages and last_page < total_pages else None
     payload = {
         "id": section_id,
         "title": section_def["title"],
@@ -691,7 +826,7 @@ async def get_config(user: User = Depends(get_current_user), db: AsyncSession = 
     prefs = await _get_user_prefs(db, user.id)
     if not prefs:
         return {"provider_ids": [], "countries": []}
-    return {"provider_ids": prefs.provider_ids or [], "countries": prefs.countries or []}
+    return {"provider_ids": prefs.provider_ids or [], "countries": prefs.countries or [], "theme": prefs.theme or "dark"}
 
 
 @app.post("/api/config")
@@ -714,6 +849,9 @@ async def set_config(data: dict, user: User = Depends(get_current_user), db: Asy
 
     if "countries" in data:
         prefs.countries = data.get("countries") or []
+
+    if "theme" in data:
+        prefs.theme = data["theme"] if data["theme"] in ("dark", "light") else "dark"
 
     await db.commit()
     return {"ok": True}

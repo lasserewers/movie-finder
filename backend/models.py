@@ -26,5 +26,6 @@ class UserPreferences(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     provider_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list)
     countries: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
+    theme: Mapped[str] = mapped_column(String, default="dark")
 
     user: Mapped["User"] = relationship(back_populates="preferences")

@@ -67,6 +67,37 @@ async def me(user: User = Depends(get_current_user)):
     return {"email": user.email, "id": str(user.id)}
 
 
+class ChangeEmailRequest(BaseModel):
+    current_password: str
+    new_email: EmailStr
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+@router.put("/email")
+async def change_email(body: ChangeEmailRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=403, detail="Incorrect password")
+    existing = await db.execute(select(User).where(User.email == body.new_email.lower()))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Email already registered")
+    user.email = body.new_email.lower()
+    await db.commit()
+    return {"ok": True, "email": user.email}
+
+
+@router.put("/password")
+async def change_password(body: ChangePasswordRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=403, detail="Incorrect password")
+    user.password_hash = hash_password(body.new_password)
+    await db.commit()
+    return {"ok": True}
+
+
 @router.post("/refresh")
 async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     token = request.cookies.get("refresh_token")

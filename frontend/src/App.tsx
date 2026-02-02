@@ -8,11 +8,12 @@ import MovieOverlay from "./components/MovieOverlay";
 import SectionOverlay from "./components/SectionOverlay";
 import AuthModal from "./components/AuthModal";
 import SettingsModal from "./components/SettingsModal";
-import CountryPicker from "./components/CountryPicker";
+import ProfileModal from "./components/ProfileModal";
+import OnboardingModal from "./components/OnboardingModal";
 import { SkeletonRow } from "./components/Skeleton";
 import Spinner from "./components/Spinner";
 import { useInfiniteScroll } from "./hooks/useInfiniteScroll";
-import { getHome, getRegions, type HomeSection, type Region } from "./api/movies";
+import { getHome, getRegions, type HomeSection, type Region, type MediaType } from "./api/movies";
 
 function AppContent() {
   const { user, loading: authLoading } = useAuth();
@@ -20,8 +21,14 @@ function AppContent() {
 
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [countriesModalOpen, setCountriesModalOpen] = useState(false);
+  const [isOnboarding, setIsOnboarding] = useState(false);
   const [selectedMovie, setSelectedMovie] = useState<number | null>(null);
+  const [selectedMovieType, setSelectedMovieType] = useState<"movie" | "tv">("movie");
   const [selectedSection, setSelectedSection] = useState<HomeSection | null>(null);
+  const [mediaType, setMediaType] = useState<MediaType>("mix");
 
   const [sections, setSections] = useState<HomeSection[]>([]);
   const [homePage, setHomePage] = useState(1);
@@ -53,11 +60,11 @@ function AppContent() {
     }
   }, [user, authLoading]);
 
-  // Load home rows when config is ready
+  // Load home rows when config is ready or media type changes
   useEffect(() => {
     if (!homeInitialized || !user) return;
     loadHomeRows(true);
-  }, [homeInitialized, providerIds]);
+  }, [homeInitialized, providerIds, mediaType]);
 
   const loadHomeRows = useCallback(
     async (reset = false) => {
@@ -68,7 +75,7 @@ function AppContent() {
       setHomeLoading(true);
       try {
         const ids = Array.from(providerIds);
-        const data = await getHome(page, 6, ids);
+        const data = await getHome(page, 6, ids, mediaType);
         if (reset) {
           setSections(data.sections || []);
         } else {
@@ -86,7 +93,7 @@ function AppContent() {
         setHomeLoading(false);
       }
     },
-    [homeLoading, homePage, homeHasMore, providerIds]
+    [homeLoading, homePage, homeHasMore, providerIds, mediaType]
   );
 
   const sentinelRef = useInfiniteScroll(
@@ -94,20 +101,34 @@ function AppContent() {
     homeHasMore && !homeLoading
   );
 
-  const handleAddCountry = async (code: string) => {
-    if (countries.includes(code)) return;
-    const newCountries = [...countries, code];
-    await saveConfig(Array.from(providerIds), newCountries);
-  };
-
-  const handleRemoveCountry = async (code: string) => {
-    const newCountries = countries.filter((c) => c !== code);
-    await saveConfig(Array.from(providerIds), newCountries);
-  };
-
   const handleAuthClose = () => {
     setAuthModalOpen(false);
   };
+
+  const handleSignupComplete = () => {
+    setIsOnboarding(true);
+    setOnboardingOpen(true);
+  };
+
+  const handleOnboardingDone = async (selectedCountries: string[]) => {
+    setOnboardingOpen(false);
+    await saveConfig(Array.from(providerIds), selectedCountries);
+    if (isOnboarding) {
+      setIsOnboarding(false);
+      setSettingsOpen(true);
+    }
+  };
+
+  const handleCountriesDone = async (selectedCountries: string[]) => {
+    setCountriesModalOpen(false);
+    await saveConfig(Array.from(providerIds), selectedCountries);
+    loadHomeRows(true);
+  };
+
+  const handleSelectMovie = useCallback((id: number, mt?: "movie" | "tv") => {
+    setSelectedMovie(id);
+    setSelectedMovieType(mt || "movie");
+  }, []);
 
   const sectionMap = new Map(sections.map((s) => [s.id, s]));
 
@@ -122,30 +143,16 @@ function AppContent() {
   return (
     <div className="min-h-screen flex flex-col">
       <Topbar
-        onSelectMovie={setSelectedMovie}
+        onSelectMovie={handleSelectMovie}
         onLoginClick={() => setAuthModalOpen(true)}
+        onOpenProfile={() => setProfileOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenCountries={() => setCountriesModalOpen(true)}
+        mediaType={mediaType}
+        onMediaTypeChange={setMediaType}
       />
 
       <main className="page-container flex-1 pt-2 pb-16">
-        {user && (
-          <div className="relative z-10 mb-6 flex flex-wrap items-center gap-x-6 gap-y-3">
-            <CountryPicker
-              countries={countries}
-              regions={regions}
-              countryNameMap={countryNameMap}
-              onAdd={handleAddCountry}
-              onRemove={handleRemoveCountry}
-            />
-            <div className="h-5 w-px bg-border hidden sm:block" />
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="px-3 py-1.5 text-muted border border-border rounded-full text-sm hover:text-text hover:border-white/30 transition-colors"
-            >
-              Manage services
-            </button>
-          </div>
-        )}
-
         <HeroSection />
 
         <section className="flex flex-col gap-10">
@@ -153,7 +160,7 @@ function AppContent() {
             <MovieRow
               key={section.id}
               section={section}
-              onSelectMovie={setSelectedMovie}
+              onSelectMovie={handleSelectMovie}
               onSeeMore={(id) => setSelectedSection(sectionMap.get(id) || null)}
             />
           ))}
@@ -188,12 +195,14 @@ function AppContent() {
         movieId={selectedMovie}
         onClose={() => setSelectedMovie(null)}
         countryNameMap={countryNameMap}
+        itemMediaType={selectedMovieType}
       />
 
       <SectionOverlay
         section={selectedSection}
         onClose={() => setSelectedSection(null)}
-        onSelectMovie={setSelectedMovie}
+        onSelectMovie={handleSelectMovie}
+        mediaType={mediaType}
       />
 
       <SettingsModal
@@ -203,9 +212,33 @@ function AppContent() {
         countryNameMap={countryNameMap}
       />
 
+      <ProfileModal
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+      />
+
+      {/* Onboarding (post-signup) */}
+      <OnboardingModal
+        open={onboardingOpen}
+        regions={regions}
+        countryNameMap={countryNameMap}
+        onDone={handleOnboardingDone}
+      />
+
+      {/* Edit countries from dropdown */}
+      <OnboardingModal
+        open={countriesModalOpen}
+        regions={regions}
+        countryNameMap={countryNameMap}
+        initialCountries={countries}
+        onDone={handleCountriesDone}
+        onClose={() => setCountriesModalOpen(false)}
+      />
+
       <AuthModal
         open={authModalOpen}
         onClose={handleAuthClose}
+        onSignupComplete={handleSignupComplete}
       />
     </div>
   );

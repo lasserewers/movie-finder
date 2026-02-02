@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getSection, type HomeSection, type Movie } from "../api/movies";
+import { getSection, type HomeSection, type Movie, type MediaType } from "../api/movies";
 import { useConfig } from "../hooks/useConfig";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import MovieCard from "./MovieCard";
@@ -9,10 +9,11 @@ import Spinner from "./Spinner";
 interface Props {
   section: HomeSection | null;
   onClose: () => void;
-  onSelectMovie: (id: number) => void;
+  onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
+  mediaType?: MediaType;
 }
 
-export default function SectionOverlay({ section, onClose, onSelectMovie }: Props) {
+export default function SectionOverlay({ section, onClose, onSelectMovie, mediaType = "mix" }: Props) {
   const { providerIds } = useConfig();
   const [results, setResults] = useState<Movie[]>([]);
   const [loading, setLoading] = useState(false);
@@ -50,9 +51,10 @@ export default function SectionOverlay({ section, onClose, onSelectMovie }: Prop
       const data = await getSection(
         section.id,
         s.useCursor ? 1 : (s.nextPage || 1),
-        3,
+        2,
         ids,
-        s.nextCursor || undefined
+        s.nextCursor || undefined,
+        mediaType
       );
       const items = (data.results || []).filter((m) => {
         if (seenRef.current.has(m.id)) return false;
@@ -94,25 +96,26 @@ export default function SectionOverlay({ section, onClose, onSelectMovie }: Prop
         >
           <div className="absolute inset-0 bg-[rgba(6,7,10,0.7)] backdrop-blur-md" onClick={onClose} />
           <motion.div
-            ref={panelRef}
-            className="relative w-[min(1100px,94vw)] max-h-[90vh] overflow-auto bg-gradient-to-b from-panel/[0.98] to-bg/[0.98] border border-border rounded-2xl p-6 sm:p-8 z-10 shadow-[0_40px_80px_rgba(0,0,0,0.45)]"
+            className="relative w-[min(1100px,94vw)] max-h-[90vh] flex flex-col bg-gradient-to-b from-panel/[0.98] to-bg/[0.98] border border-border rounded-2xl z-10 shadow-[0_40px_80px_rgba(0,0,0,0.45)]"
             initial={{ y: 40, scale: 0.97 }}
             animate={{ y: 0, scale: 1 }}
             exit={{ y: 40, scale: 0.97 }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
           >
-            <button
-              onClick={onClose}
-              className="absolute top-4 right-4 w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors"
-            >
-              &times;
-            </button>
-
-            <div className="mb-4">
-              <h3 className="font-display text-2xl">{section.title}</h3>
-              <p className="text-sm text-muted mt-1">Available on your services</p>
+            <div className="flex items-start justify-between p-6 sm:p-8 pb-0 sm:pb-0">
+              <div>
+                <h3 className="font-display text-2xl">{section.title}</h3>
+                <p className="text-sm text-muted mt-1">Available on your services</p>
+              </div>
+              <button
+                onClick={onClose}
+                className="w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors flex-shrink-0"
+              >
+                &times;
+              </button>
             </div>
 
+            <div ref={panelRef} className="flex-1 overflow-auto p-6 sm:p-8 pt-4 sm:pt-4">
             <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-4">
               {results.map((m, i) => (
                 <MovieCard
@@ -125,6 +128,7 @@ export default function SectionOverlay({ section, onClose, onSelectMovie }: Prop
                   onClick={onSelectMovie}
                   index={i}
                   fill
+                  mediaType={m.media_type}
                 />
               ))}
             </div>
@@ -134,6 +138,7 @@ export default function SectionOverlay({ section, onClose, onSelectMovie }: Prop
                 <Spinner />
               </div>
             )}
+            </div>
           </motion.div>
         </motion.div>
       )}

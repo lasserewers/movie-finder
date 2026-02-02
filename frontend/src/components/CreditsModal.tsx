@@ -67,19 +67,13 @@ export default function CreditsModal({ open, onClose, cast, crew }: Props) {
         >
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
           <motion.div
-            className="relative bg-panel border border-border rounded-2xl p-6 w-[min(95vw,700px)] max-h-[86vh] overflow-y-auto"
+            className="relative bg-panel border border-border rounded-2xl w-[min(95vw,700px)] max-h-[86vh] flex flex-col"
             initial={{ scale: 0.95, y: 20 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.95, y: 20 }}
           >
-            <button
-              onClick={onClose}
-              className="absolute top-3 right-4 text-muted text-2xl hover:text-text transition-colors"
-            >
-              &times;
-            </button>
-
-            <div className="flex gap-1 border-b border-border pb-2 mb-4 flex-wrap">
+            <div className="flex items-center justify-between p-6 pb-0">
+              <div className="flex gap-1 flex-wrap">
               {tabs.map((t) => (
                 <button
                   key={t.id}
@@ -93,8 +87,16 @@ export default function CreditsModal({ open, onClose, cast, crew }: Props) {
                   {t.label}
                 </button>
               ))}
+              </div>
+              <button
+                onClick={onClose}
+                className="w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors flex-shrink-0"
+              >
+                &times;
+              </button>
             </div>
 
+            <div className="flex-1 overflow-y-auto p-6 pt-4">
             {tab === "cast" && (
               <div className="flex flex-wrap gap-3">
                 {cast.map((p) => (
@@ -147,6 +149,7 @@ export default function CreditsModal({ open, onClose, cast, crew }: Props) {
                 ))}
               </div>
             )}
+            </div>
           </motion.div>
         </motion.div>
       )}

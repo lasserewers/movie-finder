@@ -4,26 +4,28 @@ import httpx
 
 BASE_URL = "https://streaming-availability.p.rapidapi.com"
 
-# In-memory cache: tmdb_id -> parsed result
-_cache: dict[int, dict] = {}
+# In-memory cache: (media_type, tmdb_id) -> parsed result
+_cache: dict[tuple, dict] = {}
 _changes_cache: dict[str, tuple[float, dict]] = {}
 _client: httpx.AsyncClient | None = None
 
 CHANGES_TTL = 10 * 60
 
 
-async def get_streaming_links(tmdb_id: int) -> dict:
+async def get_streaming_links(tmdb_id: int, media_type: str = "movie") -> dict:
     """Return enriched streaming data + movie info."""
     api_key = _get_api_key()
     if not api_key:
         return {}
-    if tmdb_id in _cache:
-        return _cache[tmdb_id]
+    cache_key = (media_type, tmdb_id)
+    if cache_key in _cache:
+        return _cache[cache_key]
 
+    show_type = "tv" if media_type == "tv" else "movie"
     headers = {"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": "streaming-availability.p.rapidapi.com"}
     client = await _get_client()
     resp = await client.get(
-        f"{BASE_URL}/shows/movie/{tmdb_id}",
+        f"{BASE_URL}/shows/{show_type}/{tmdb_id}",
         headers=headers,
     )
     if resp.status_code != 200:
@@ -75,7 +77,7 @@ async def get_streaming_links(tmdb_id: int) -> dict:
     }
 
     result = {"streaming": streaming, "movie_info": movie_info}
-    _cache[tmdb_id] = result
+    _cache[cache_key] = result
     return result
 
 
@@ -109,7 +111,7 @@ def _extract_tmdb_id(show: dict) -> int | None:
     if isinstance(val, int):
         return val
     if isinstance(val, str):
-        if val.startswith("movie/"):
+        if val.startswith("movie/") or val.startswith("tv/"):
             val = val.split("/", 1)[1]
         if val.isdigit():
             return int(val)
@@ -130,10 +132,30 @@ def _extract_release_date(show: dict) -> str:
         val = show.get(key)
         if isinstance(val, str):
             return val
+    year = show.get("releaseYear")
+    if isinstance(year, int):
+        return f"{year}-01-01"
     year = show.get("year")
     if isinstance(year, int):
         return f"{year}-01-01"
     return ""
+
+
+def _extract_media_type(show: dict) -> str | None:
+    show_type = show.get("showType") or show.get("show_type") or show.get("type")
+    if isinstance(show_type, str):
+        st = show_type.lower()
+        if st in ("movie", "film"):
+            return "movie"
+        if st in ("series", "tv", "show"):
+            return "tv"
+    tmdb_val = show.get("tmdbId") or show.get("tmdb_id") or show.get("tmdb")
+    if isinstance(tmdb_val, str):
+        if tmdb_val.startswith("movie/"):
+            return "movie"
+        if tmdb_val.startswith("tv/"):
+            return "tv"
+    return None
 
 
 async def get_recently_added(
@@ -141,6 +163,7 @@ async def get_recently_added(
     countries: list[str],
     cursor: str | None = None,
     pages: int = 1,
+    show_type: str | None = "movie",
 ) -> dict:
     api_key = _get_api_key()
     if not api_key:
@@ -150,7 +173,7 @@ async def get_recently_added(
     pages = max(1, min(5, pages))
     catalogs = [c for c in catalogs if c]
     catalogs_key = ",".join(sorted(catalogs)) if catalogs else "*"
-    cache_key = f"{','.join(sorted(countries))}:{catalogs_key}:{cursor or ''}:{pages}"
+    cache_key = f"{','.join(sorted(countries))}:{catalogs_key}:{cursor or ''}:{pages}:{show_type or 'all'}"
     now = time.time()
     cached = _changes_cache.get(cache_key)
     if cached and (now - cached[0]) < CHANGES_TTL:
@@ -169,8 +192,9 @@ async def get_recently_added(
                 "country": country.lower(),
                 "change_type": "new",
                 "item_type": "show",
-                "show_type": "movie",
             }
+            if show_type:
+                params["show_type"] = show_type
             if catalogs:
                 params["catalogs"] = ",".join(catalogs)
             if cur:
@@ -197,14 +221,20 @@ async def get_recently_added(
                 if not tmdb_id or tmdb_id in seen:
                     continue
                 seen.add(tmdb_id)
-                results.append(
-                    {
-                        "id": tmdb_id,
-                        "title": show.get("title") or show.get("originalTitle") or "",
-                        "release_date": _extract_release_date(show),
-                        "poster_url": _extract_poster_url(show),
-                    }
-                )
+                media_type = _extract_media_type(show)
+                if show_type == "movie":
+                    media_type = "movie"
+                elif show_type == "series":
+                    media_type = "tv"
+                item = {
+                    "id": tmdb_id,
+                    "title": show.get("title") or show.get("originalTitle") or "",
+                    "release_date": _extract_release_date(show),
+                    "poster_url": _extract_poster_url(show),
+                }
+                if media_type in ("movie", "tv"):
+                    item["media_type"] = media_type
+                results.append(item)
 
             next_cursor = data.get("nextCursor") or data.get("next_cursor") or next_cursor
             has_more = data.get("hasMore")

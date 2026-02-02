@@ -1,21 +1,22 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { searchMovies, searchFiltered, type Movie } from "../api/movies";
+import { type Movie, type MediaType } from "../api/movies";
 import { useConfig } from "../hooks/useConfig";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
 
 interface Props {
-  onSelectMovie: (movieId: number) => void;
+  onSelectMovie: (movieId: number, mediaType?: "movie" | "tv") => void;
+  mediaType: MediaType;
 }
 
-export default function SearchBar({ onSelectMovie }: Props) {
+export default function SearchBar({ onSelectMovie, mediaType }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Movie[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [filterOn, setFilterOn] = useState(false);
-  const { expandedProviderIds } = useConfig();
+  const { providerIds } = useConfig();
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,10 +44,10 @@ export default function SearchBar({ onSelectMovie }: Props) {
 
     setLoading(true);
 
-    const ids = filtered ? Array.from(expandedProviderIds()) : [];
+    const ids = filtered ? Array.from(providerIds) : [];
     const url = filtered && ids.length
-      ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}`
-      : `/api/search?q=${encodeURIComponent(q)}`;
+      ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}&media_type=${mediaType}`
+      : `/api/search?q=${encodeURIComponent(q)}&media_type=${mediaType}`;
 
     fetch(url, { signal: controller.signal })
       .then((res) => res.json())
@@ -69,6 +70,12 @@ export default function SearchBar({ onSelectMovie }: Props) {
     timerRef.current = setTimeout(() => doSearch(value.trim(), filterOn), 300);
   };
 
+  // Re-search when media type changes
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length >= 2) doSearch(q, filterOn);
+  }, [mediaType]);
+
   const handleFilterToggle = () => {
     const next = !filterOn;
     setFilterOn(next);
@@ -77,25 +84,25 @@ export default function SearchBar({ onSelectMovie }: Props) {
   };
 
   return (
-    <div ref={containerRef} className="relative w-full max-w-[420px]">
-      <div className="flex items-center gap-2 border border-border rounded-full bg-panel px-4 py-2.5 focus-within:border-accent-2 transition-colors">
+    <div ref={containerRef} className="relative flex-1 min-w-0 max-w-[530px]">
+      <div className="flex items-center gap-2.5 border border-border rounded-full bg-panel px-5 h-[52px] focus-within:border-accent-2 transition-colors">
         <input
           type="text"
           value={query}
           onChange={(e) => handleInput(e.target.value)}
           onFocus={() => results.length && setOpen(true)}
-          placeholder="Search for a movie..."
-          className="flex-1 bg-transparent text-text text-[0.95rem] outline-none placeholder:text-muted"
+          placeholder={mediaType === "tv" ? "Search TV shows..." : mediaType === "movie" ? "Search movies..." : "Search movies & TV..."}
+          className="flex-1 bg-transparent text-text text-base outline-none placeholder:text-muted"
         />
         <button
           onClick={handleFilterToggle}
-          className={`text-xs font-medium px-2.5 py-1 rounded-full border transition-colors whitespace-nowrap ${
+          className={`text-xs font-medium px-3 py-1.5 rounded-full border-2 transition-colors whitespace-nowrap ${
             filterOn
-              ? "bg-white/10 border-white/30 text-text"
-              : "bg-transparent border-border text-muted hover:border-white/20"
+              ? "bg-accent/15 border-accent text-text"
+              : "bg-transparent border-transparent text-muted hover:border-border"
           }`}
         >
-          My services
+          Only my services
         </button>
       </div>
 
@@ -111,7 +118,7 @@ export default function SearchBar({ onSelectMovie }: Props) {
               <div
                 key={m.id}
                 onClick={() => {
-                  onSelectMovie(m.id);
+                  onSelectMovie(m.id, m.media_type);
                   setOpen(false);
                 }}
                 className="flex items-center gap-3.5 px-4 py-3 cursor-pointer border-b border-white/5 hover:bg-white/[0.04] transition-colors"
@@ -141,7 +148,7 @@ export default function SearchBar({ onSelectMovie }: Props) {
 
       {open && !loading && results.length === 0 && query.trim().length >= 2 && (
         <div className="absolute top-[calc(100%+0.5rem)] left-0 w-[min(480px,90vw)] bg-panel border border-border rounded-xl p-6 text-center text-sm text-muted z-[140]">
-          {filterOn ? "No matches on your services" : "No movies found"}
+          {filterOn ? "No matches on your services" : "No results found"}
         </div>
       )}
     </div>

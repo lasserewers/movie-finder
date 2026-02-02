@@ -3,7 +3,7 @@ import MovieCard from "./MovieCard";
 
 interface Props {
   section: HomeSection;
-  onSelectMovie: (id: number) => void;
+  onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
   onSeeMore: (sectionId: string) => void;
 }
 
@@ -23,7 +23,7 @@ export default function MovieRow({ section, onSelectMovie, onSeeMore }: Props) {
           </button>
         )}
       </div>
-      <div className="flex gap-4 overflow-x-auto overflow-y-visible pt-2 -mt-2 pb-3 snap-x snap-mandatory scrollbar-thin">
+      <div className="flex gap-4 overflow-x-auto overflow-y-visible pt-2 -mt-2 pb-3 pl-1 pr-1 -ml-1 -mr-1 snap-x snap-mandatory scrollbar-thin">
         {section.results.slice(0, 24).map((m, i) => (
           <MovieCard
             key={m.id}
@@ -34,6 +34,7 @@ export default function MovieRow({ section, onSelectMovie, onSeeMore }: Props) {
             releaseDate={m.release_date}
             onClick={onSelectMovie}
             index={i}
+            mediaType={m.media_type}
           />
         ))}
       </div>

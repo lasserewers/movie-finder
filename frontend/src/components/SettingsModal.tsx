@@ -78,14 +78,10 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      // Auto-save
+      saveConfig(Array.from(next), countries).then(() => onSaved());
       return next;
     });
-  };
-
-  const handleSave = async () => {
-    await saveConfig(Array.from(selected), countries);
-    onSaved();
-    onClose();
   };
 
   const sorted = [...providers].sort((a, b) => a.provider_name.localeCompare(b.provider_name));
@@ -109,26 +105,34 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
         >
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
           <motion.div
-            className="relative bg-panel border border-border rounded-2xl p-6 w-[min(92vw,620px)] max-h-[86vh] overflow-y-auto"
+            className="relative bg-panel border border-border rounded-2xl w-[min(92vw,620px)] max-h-[86vh] flex flex-col"
             initial={{ scale: 0.95, y: 20 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.95, y: 20 }}
           >
-            <button
-              onClick={onClose}
-              className="absolute top-4 right-4 w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors"
-            >
-              &times;
-            </button>
-            <h3 className="font-display text-xl mb-1">My Streaming Services</h3>
-            <p className="text-sm text-muted mb-4">Select the services you subscribe to:</p>
+            <div className="flex items-start justify-between p-6 pb-0">
+              <div>
+                <h3 className="font-display text-xl mb-1">My Streaming Services</h3>
+                <p className="text-sm text-muted">Select the services you subscribe to:</p>
+              </div>
+              <button
+                onClick={onClose}
+                className="w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors flex-shrink-0"
+              >
+                &times;
+              </button>
+            </div>
 
+            <div className="flex-1 overflow-y-auto p-6 pt-4">
             {/* Selected services */}
             <div className="bg-panel-2 border border-border rounded-xl p-3 mb-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-muted uppercase tracking-widest">Selected services</span>
                 <button
-                  onClick={() => setSelected(new Set())}
+                  onClick={() => {
+                    setSelected(new Set());
+                    saveConfig([], countries).then(() => onSaved());
+                  }}
                   className="text-xs text-muted border border-border rounded-full px-2 py-0.5 hover:border-accent-2 hover:text-text transition-colors"
                 >
                   Deselect all
@@ -164,7 +168,7 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
                     onClick={() => toggleCountry(code)}
                     className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-sm border transition-colors ${
                       activeCountries.has(code)
-                        ? "bg-white/10 border-white/30 text-text"
+                        ? "bg-accent/10 border-accent/50 text-text"
                         : "bg-panel-2 border-border text-muted"
                     }`}
                   >
@@ -175,18 +179,19 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
             )}
 
             {countries.length > 0 && (
-              <label className="flex items-center gap-2 text-sm text-muted mb-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showAll}
-                  onChange={(e) => setShowAll(e.target.checked)}
-                  className="accent-accent"
-                />
+              <button
+                onClick={() => setShowAll(!showAll)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition-colors mb-3 ${
+                  showAll
+                    ? "bg-accent/10 border-accent/50 text-text"
+                    : "bg-panel-2 border-border text-muted"
+                }`}
+              >
                 Show additional services from other countries
-              </label>
+              </button>
             )}
 
-            <div className="mr-8">
+            <div>
               <input
                 type="text"
                 value={search}
@@ -195,41 +200,27 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
                 className="w-full px-3 py-2 text-sm border border-border rounded-md bg-bg-2 text-text outline-none focus:border-accent-2 mb-3"
               />
 
-              <div className="grid grid-cols-2 gap-1 max-h-[52vh] overflow-y-auto pr-1">
+              <div className="grid grid-cols-2 gap-1.5 pr-1">
                 {filtered.map((p) => (
-                  <label
+                  <button
                     key={p.provider_id}
-                    className="flex items-center gap-2 text-sm cursor-pointer p-1 rounded hover:bg-white/[0.04]"
+                    onClick={() => toggle(p.provider_id)}
+                    className={`flex items-center gap-2 text-sm p-1.5 rounded-lg border-2 transition-colors text-left ${
+                      selected.has(p.provider_id)
+                        ? "bg-accent/15 border-accent text-text"
+                        : "bg-panel-2 border-transparent text-muted hover:border-border"
+                    }`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={selected.has(p.provider_id)}
-                      onChange={() => toggle(p.provider_id)}
-                      className="accent-accent"
-                    />
                     {p.logo_path && (
-                      <img src={`${TMDB_IMG}/w45${p.logo_path}`} alt="" className="w-7 h-7 rounded-md" />
+                      <img src={`${TMDB_IMG}/w45${p.logo_path}`} alt="" className="w-7 h-7 rounded-md flex-shrink-0" />
                     )}
-                    {p.provider_name}
-                  </label>
+                    <span className="truncate">{p.provider_name}</span>
+                  </button>
                 ))}
               </div>
             </div>
-
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 bg-panel-2 border border-border rounded-md text-sm text-text hover:bg-white/5 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="px-4 py-2 bg-green-700 border border-green-700 rounded-md text-sm text-white hover:bg-green-600 transition-colors"
-              >
-                Save
-              </button>
             </div>
+
           </motion.div>
         </motion.div>
       )}

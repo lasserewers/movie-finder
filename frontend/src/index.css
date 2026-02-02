@@ -15,6 +15,18 @@
   --font-body: "Space Grotesk", "Segoe UI", sans-serif;
 }
 
+html.light {
+  --color-bg: #f5f5f7;
+  --color-bg-2: #eaeaef;
+  --color-panel: #ffffff;
+  --color-panel-2: #f0f0f5;
+  --color-border: #d4d4d8;
+  --color-muted: #6b7280;
+  --color-text: #1a1a2e;
+  --color-accent: #e50914;
+  --color-accent-2: #c2185b;
+}
+
 body {
   font-family: var(--font-body);
   background: radial-gradient(
@@ -26,6 +38,16 @@ body {
     var(--color-bg);
   color: var(--color-text);
   min-height: 100vh;
+}
+
+html.light body {
+  background: radial-gradient(
+      1200px 600px at 20% -10%,
+      rgba(229, 9, 20, 0.08),
+      transparent
+    ),
+    radial-gradient(900px 500px at 90% 10%, rgba(255, 123, 123, 0.06), transparent),
+    var(--color-bg);
 }
 
 /* Layout container used by topbar + main */
@@ -76,4 +98,20 @@ body {
 
 *::-webkit-scrollbar-thumb:hover {
   background: rgba(229, 9, 20, 0.75);
+}
+
+html.light * {
+  scrollbar-color: rgba(229, 9, 20, 0.35) rgba(0, 0, 0, 0.06);
+}
+
+html.light *::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+html.light *::-webkit-scrollbar-thumb {
+  background: rgba(229, 9, 20, 0.35);
+}
+
+html.light *::-webkit-scrollbar-thumb:hover {
+  background: rgba(229, 9, 20, 0.6);
 }

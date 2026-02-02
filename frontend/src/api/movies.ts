@@ -1,5 +1,7 @@
 import { apiFetch } from "./client";
 
+export type MediaType = "movie" | "tv" | "mix";
+
 export interface Movie {
   id: number;
   title: string;
@@ -8,6 +10,9 @@ export interface Movie {
   release_date?: string;
   overview?: string;
   imdb_id?: string;
+  media_type?: "movie" | "tv";
+  number_of_seasons?: number;
+  number_of_episodes?: number;
   credits?: {
     cast: Person[];
     crew: CrewMember[];
@@ -75,28 +80,30 @@ export interface Region {
   english_name: string;
 }
 
-export async function searchMovies(q: string): Promise<{ results: Movie[] }> {
-  return apiFetch(`/api/search?q=${encodeURIComponent(q)}`);
+export async function searchMovies(q: string, mediaType: MediaType = "movie"): Promise<{ results: Movie[] }> {
+  return apiFetch(`/api/search?q=${encodeURIComponent(q)}&media_type=${mediaType}`);
 }
 
 export async function searchFiltered(
   q: string,
-  providerIds: number[]
+  providerIds: number[],
+  mediaType: MediaType = "movie"
 ): Promise<{ results: Movie[] }> {
   const ids = providerIds.join(",");
   return apiFetch(
-    `/api/search_filtered?q=${encodeURIComponent(q)}${ids ? `&provider_ids=${ids}` : ""}`
+    `/api/search_filtered?q=${encodeURIComponent(q)}${ids ? `&provider_ids=${ids}` : ""}&media_type=${mediaType}`
   );
 }
 
 export async function getHome(
   page: number,
   pageSize: number,
-  providerIds: number[]
+  providerIds: number[],
+  mediaType: MediaType = "mix"
 ): Promise<HomeResponse> {
   const ids = providerIds.join(",");
   return apiFetch(
-    `/api/home?page=${page}&page_size=${pageSize}${ids ? `&provider_ids=${ids}` : ""}`
+    `/api/home?page=${page}&page_size=${pageSize}${ids ? `&provider_ids=${ids}` : ""}&media_type=${mediaType}`
   );
 }
 
@@ -105,12 +112,13 @@ export async function getSection(
   page: number,
   pages: number,
   providerIds: number[],
-  cursor?: string
+  cursor?: string,
+  mediaType: MediaType = "mix"
 ): Promise<HomeSection & { next_cursor?: string }> {
   const ids = providerIds.join(",");
   const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
   return apiFetch(
-    `/api/section?section_id=${encodeURIComponent(sectionId)}&page=${page}&pages=${pages}${ids ? `&provider_ids=${ids}` : ""}${cursorParam}`
+    `/api/section?section_id=${encodeURIComponent(sectionId)}&page=${page}&pages=${pages}${ids ? `&provider_ids=${ids}` : ""}${cursorParam}&media_type=${mediaType}`
   );
 }
 
@@ -124,6 +132,18 @@ export async function getMovieLinks(
   movieId: number
 ): Promise<{ streaming?: Record<string, StreamingLink[]>; movie_info?: { poster?: string; backdrop?: string } }> {
   return apiFetch(`/api/movie/${movieId}/links`);
+}
+
+export async function getTvProviders(
+  tvId: number
+): Promise<{ movie: Movie; providers: Record<string, CountryProviders> }> {
+  return apiFetch(`/api/tv/${tvId}/providers`);
+}
+
+export async function getTvLinks(
+  tvId: number
+): Promise<{ streaming?: Record<string, StreamingLink[]>; movie_info?: { poster?: string; backdrop?: string } }> {
+  return apiFetch(`/api/tv/${tvId}/links`);
 }
 
 export async function getProviders(
