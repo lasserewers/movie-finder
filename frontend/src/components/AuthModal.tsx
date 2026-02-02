@@ -60,13 +60,20 @@ export default function AuthModal({ open, onClose, onSignupComplete }: Props) {
           exit={{ opacity: 0 }}
           onClick={(e) => e.target === e.currentTarget && onClose?.()}
         >
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => onClose?.()} />
           <motion.div
             className="relative bg-panel border border-border rounded-2xl p-8 w-[min(92vw,400px)]"
             initial={{ scale: 0.95, y: 20 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.95, y: 20 }}
+            onClick={(e) => e.stopPropagation()}
           >
+            <button
+              onClick={() => onClose?.()}
+              className="absolute top-4 right-4 w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors"
+            >
+              &times;
+            </button>
             <div className="flex justify-center mb-4">
               <img src="/logo.svg" alt="FullStreamer" className="h-12" />
             </div>

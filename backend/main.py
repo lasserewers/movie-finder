@@ -553,12 +553,13 @@ async def _fetch_section_page(section: dict, page: int, media_type: str = "movie
             _normalize_result(r)
         return data
 
+    params = dict(section.get("params", {}))
     if kind == "top_rated":
-        params = {"sort_by": "vote_average.desc", "vote_count.gte": 300}
+        params.update({"sort_by": "vote_average.desc", "vote_count.gte": 300})
     elif kind == "genre":
-        params = {"with_genres": section.get("genre_id")}
+        params["with_genres"] = section.get("genre_id")
     elif kind == "discover":
-        params = dict(section.get("params", {}))
+        pass
     else:
         return {}
 
@@ -584,12 +585,162 @@ async def _fetch_section_page(section: dict, page: int, media_type: str = "movie
     return data
 
 
+def _normalize_country_code(country: str | None) -> str | None:
+    if not country:
+        return None
+    code = country.strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return None
+    return code
+
+
+async def _guest_section_config(media_type: str, country: str) -> list[dict]:
+    cache_key = f"guest:{media_type}:{country}"
+    now = time.time()
+    cached = SECTION_CONFIG_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < SECTION_CONFIG_TTL:
+        return cached[1]
+
+    base_params = {"watch_region": country}
+    sections = [
+        {"id": "trending_day", "title": "Trending Today", "kind": "trending", "time_window": "day"},
+        {"id": "trending_week", "title": "Trending This Week", "kind": "trending", "time_window": "week"},
+        {"id": "top_rated", "title": "Top Rated", "kind": "top_rated", "params": dict(base_params)},
+    ]
+
+    if media_type == "mix":
+        movie_genres, tv_genres = await asyncio.gather(tmdb.get_genres(), tmdb.get_tv_genres())
+        genre_map = {}
+        for g in tv_genres:
+            genre_map[g["name"].lower()] = g["id"]
+        for g in movie_genres:
+            genre_map[g["name"].lower()] = g["id"]
+        genres = [{"id": genre_map[n], "name": n.title()} for n in sorted(genre_map.keys())]
+    elif media_type == "tv":
+        genres = await tmdb.get_tv_genres()
+    else:
+        genres = await tmdb.get_genres()
+
+    for g in genres[:8]:
+        sections.append(
+            {
+                "id": f"genre_{g['id']}",
+                "title": g["name"],
+                "kind": "genre",
+                "genre_id": g["id"],
+                "params": dict(base_params),
+            }
+        )
+
+    SECTION_CONFIG_CACHE[cache_key] = (now, sections)
+    return sections
+
+
+async def _guest_home(page: int, page_size: int, media_type: str, country: str) -> dict:
+    cache_key = f"guest:{country}:{page}:{page_size}:{media_type}"
+    now = time.time()
+    cached = HOME_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < HOME_CACHE_TTL:
+        return cached[1]
+
+    sections_config = await _guest_section_config(media_type, country)
+    total_sections = len(sections_config)
+    start = (page - 1) * page_size
+    end = start + page_size
+    slice_config = sections_config[start:end]
+
+    async def build_guest_section(section: dict):
+        data = await _fetch_section_page(section, 1, media_type)
+        results = data.get("results", [])[:24]
+        return {
+            "id": section["id"],
+            "title": section["title"],
+            "results": results,
+            "next_page": 2 if data.get("total_pages", 0) > 1 else None,
+            "total_pages": data.get("total_pages", 0),
+        }
+
+    built = await asyncio.gather(*(build_guest_section(s) for s in slice_config))
+    sections = [s for s in built if s.get("results")]
+    has_more = end < total_sections
+    payload = {
+        "sections": sections,
+        "filtered": False,
+        "page": page,
+        "page_size": page_size,
+        "total_sections": total_sections,
+        "has_more": has_more,
+        "next_page": page + 1 if has_more else None,
+    }
+    HOME_CACHE[cache_key] = (time.time(), payload)
+    return payload
+
+
+async def _guest_section(section_id: str, page: int, pages: int, media_type: str, country: str) -> dict:
+    pages = max(1, min(5, pages))
+    cache_key = f"guest:{section_id}:{country}:{page}:{pages}:{media_type}"
+    now = time.time()
+    cached = SECTION_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < SECTION_CACHE_TTL:
+        return cached[1]
+
+    sections = await _guest_section_config(media_type, country)
+    section_def = next((s for s in sections if s["id"] == section_id), None)
+    if not section_def:
+        return {"id": section_id, "results": [], "message": "Unknown section."}
+
+    target_count = pages * 20
+    results: list = []
+    seen_ids: set[int] = set()
+    total_pages = 0
+    p = page
+    scanned = 0
+    last_page = page - 1
+    while len(results) < target_count and scanned < pages:
+        if total_pages and p > total_pages:
+            break
+        data = await _fetch_section_page(section_def, p, media_type)
+        if not total_pages:
+            total_pages = data.get("total_pages", 0)
+        raw = data.get("results", [])
+        if not raw:
+            break
+        for m in raw:
+            mid = m.get("id")
+            if not mid or mid in seen_ids:
+                continue
+            seen_ids.add(mid)
+            results.append(m)
+            if len(results) >= target_count:
+                break
+        last_page = p
+        scanned += 1
+        if total_pages and p >= total_pages:
+            break
+        p += 1
+
+    next_page = last_page + 1 if total_pages and last_page < total_pages else None
+    payload = {
+        "id": section_id,
+        "title": section_def["title"],
+        "results": results[:target_count],
+        "page": page,
+        "next_page": next_page,
+        "total_pages": total_pages,
+        "filtered": False,
+    }
+    SECTION_CACHE[cache_key] = (time.time(), payload)
+    return payload
+
+
 @app.get("/api/home")
 async def home(
     provider_ids: str | None = None,
     page: int = 1,
     page_size: int = 6,
     media_type: str = "mix",
+    country: str | None = None,
+    unfiltered: bool = False,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -604,7 +755,20 @@ async def home(
         ids = set()
     countries = list(prefs.countries) if prefs and prefs.countries else []
 
+    guest_country = _normalize_country_code(country)
+    if unfiltered:
+        if not guest_country:
+            fallback = countries[0] if countries else "US"
+            guest_country = _normalize_country_code(fallback) or "US"
+        page = max(1, page)
+        page_size = max(3, min(10, page_size))
+        return await _guest_home(page, page_size, media_type, guest_country)
+
     if not ids:
+        if guest_country:
+            page = max(1, page)
+            page_size = max(3, min(10, page_size))
+            return await _guest_home(page, page_size, media_type, guest_country)
         return {"sections": [], "filtered": True, "message": "Select streaming services to see available titles."}
 
     page = max(1, page)
@@ -707,6 +871,8 @@ async def section(
     provider_ids: str | None = None,
     cursor: str | None = None,
     media_type: str = "mix",
+    country: str | None = None,
+    unfiltered: bool = False,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -721,7 +887,18 @@ async def section(
         ids = set()
     countries = list(prefs.countries) if prefs and prefs.countries else []
 
+    guest_country = _normalize_country_code(country)
+    if unfiltered:
+        if not guest_country:
+            fallback = countries[0] if countries else "US"
+            guest_country = _normalize_country_code(fallback) or "US"
+        page = max(1, page)
+        return await _guest_section(section_id, page, pages, media_type, guest_country)
+
     if not ids:
+        if guest_country:
+            page = max(1, page)
+            return await _guest_section(section_id, page, pages, media_type, guest_country)
         return {"id": section_id, "results": [], "filtered": True, "message": "Select streaming services first."}
 
     cache_key = f"{section_id}:{','.join(str(pid) for pid in sorted(ids))}:{','.join(sorted(countries))}:{page}:{pages}:{cursor or ''}:{media_type}"

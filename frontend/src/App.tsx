@@ -15,6 +15,18 @@ import Spinner from "./components/Spinner";
 import { useInfiniteScroll } from "./hooks/useInfiniteScroll";
 import { getHome, getRegions, type HomeSection, type Region, type MediaType } from "./api/movies";
 
+const MEDIA_OPTIONS: { value: MediaType; label: string }[] = [
+  { value: "mix", label: "All" },
+  { value: "movie", label: "Movies" },
+  { value: "tv", label: "TV Shows" },
+];
+const GUEST_COUNTRY_STORAGE_KEY = "guest_country";
+const DEFAULT_ONBOARDING_COUNTRY = "US";
+
+function countryFlag(code: string) {
+  return String.fromCodePoint(...[...code.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
+
 function AppContent() {
   const { user, loading: authLoading } = useAuth();
   const { providerIds, countries, loadConfig, saveConfig } = useConfig();
@@ -29,6 +41,16 @@ function AppContent() {
   const [selectedMovieType, setSelectedMovieType] = useState<"movie" | "tv">("movie");
   const [selectedSection, setSelectedSection] = useState<HomeSection | null>(null);
   const [mediaType, setMediaType] = useState<MediaType>("mix");
+  const [rowResetToken, setRowResetToken] = useState(0);
+  const [showAllForUser, setShowAllForUser] = useState(false);
+  const [guestCountry, setGuestCountry] = useState(() => {
+    try {
+      const saved = localStorage.getItem(GUEST_COUNTRY_STORAGE_KEY);
+      return saved || "US";
+    } catch {
+      return "US";
+    }
+  });
 
   const [sections, setSections] = useState<HomeSection[]>([]);
   const [homePage, setHomePage] = useState(1);
@@ -56,15 +78,39 @@ function AppContent() {
     if (user) {
       loadConfig().then(() => setHomeInitialized(true));
     } else {
-      setAuthModalOpen(true);
+      setHomeInitialized(true);
     }
   }, [user, authLoading]);
 
   // Load home rows when config is ready or media type changes
   useEffect(() => {
-    if (!homeInitialized || !user) return;
+    if (!homeInitialized) return;
     loadHomeRows(true);
-  }, [homeInitialized, providerIds, mediaType]);
+  }, [homeInitialized, providerIds, mediaType, user, guestCountry, showAllForUser, countries]);
+
+  // Persist guest country across refreshes; default stays US for first-time visitors.
+  useEffect(() => {
+    if (user) return;
+    localStorage.setItem(GUEST_COUNTRY_STORAGE_KEY, guestCountry);
+  }, [user, guestCountry]);
+
+  useEffect(() => {
+    if (!regions.length) return;
+    if (regions.some((r) => r.iso_3166_1 === guestCountry)) return;
+    const fallback = regions.some((r) => r.iso_3166_1 === "US") ? "US" : regions[0].iso_3166_1;
+    setGuestCountry(fallback);
+  }, [regions, guestCountry]);
+
+  useEffect(() => {
+    if (!user || countries.length === 0) return;
+    if (!countries.includes(guestCountry)) {
+      setGuestCountry(countries[0]);
+    }
+  }, [user, countries, guestCountry]);
+
+  useEffect(() => {
+    if (!user) setShowAllForUser(false);
+  }, [user]);
 
   const loadHomeRows = useCallback(
     async (reset = false) => {
@@ -74,8 +120,10 @@ function AppContent() {
 
       setHomeLoading(true);
       try {
-        const ids = Array.from(providerIds);
-        const data = await getHome(page, 6, ids, mediaType);
+        const unfiltered = !user || showAllForUser;
+        const country = unfiltered ? (user ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY) : guestCountry) : undefined;
+        const ids = unfiltered ? [] : Array.from(providerIds);
+        const data = await getHome(page, 6, ids, mediaType, country, unfiltered);
         if (reset) {
           setSections(data.sections || []);
         } else {
@@ -93,7 +141,7 @@ function AppContent() {
         setHomeLoading(false);
       }
     },
-    [homeLoading, homePage, homeHasMore, providerIds, mediaType]
+    [homeLoading, homePage, homeHasMore, providerIds, mediaType, user, guestCountry, showAllForUser, countries]
   );
 
   const sentinelRef = useInfiniteScroll(
@@ -111,12 +159,18 @@ function AppContent() {
   };
 
   const handleOnboardingDone = async (selectedCountries: string[]) => {
+    const chosenCountries = selectedCountries.length ? selectedCountries : [DEFAULT_ONBOARDING_COUNTRY];
+    const shouldOpenServices = selectedCountries.length > 0;
     setOnboardingOpen(false);
-    await saveConfig(Array.from(providerIds), selectedCountries);
+    await saveConfig(Array.from(providerIds), chosenCountries);
     if (isOnboarding) {
       setIsOnboarding(false);
-      setSettingsOpen(true);
+      if (shouldOpenServices) setSettingsOpen(true);
     }
+  };
+
+  const handleOnboardingClose = () => {
+    void handleOnboardingDone([]);
   };
 
   const handleCountriesDone = async (selectedCountries: string[]) => {
@@ -130,7 +184,14 @@ function AppContent() {
     setSelectedMovieType(mt || "movie");
   }, []);
 
+  const handleMediaTypeChange = (next: MediaType) => {
+    setMediaType(next);
+    if (next === "mix") setRowResetToken((v) => v + 1);
+  };
+
   const sectionMap = new Map(sections.map((s) => [s.id, s]));
+  const unfilteredMode = !user || showAllForUser;
+  const discoveryCountry = user ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY) : guestCountry;
 
   if (authLoading) {
     return (
@@ -142,26 +203,91 @@ function AppContent() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Topbar
-        onSelectMovie={handleSelectMovie}
-        onLoginClick={() => setAuthModalOpen(true)}
-        onOpenProfile={() => setProfileOpen(true)}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenCountries={() => setCountriesModalOpen(true)}
-        mediaType={mediaType}
-        onMediaTypeChange={setMediaType}
-      />
+      <div className="sticky top-0 z-[120] bg-bg border-b border-border/70">
+        <Topbar
+          onSelectMovie={handleSelectMovie}
+          onLoginClick={() => setAuthModalOpen(true)}
+          onOpenProfile={() => setProfileOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenCountries={() => setCountriesModalOpen(true)}
+          mediaType={mediaType}
+        />
+      </div>
 
       <main className="page-container flex-1 pt-2 pb-16">
-        <HeroSection />
+        <div className="flex items-start justify-between gap-6 mb-6 max-sm:flex-col max-sm:items-stretch">
+          <HeroSection
+            className="mb-0 flex-1"
+            showGuestPrompt={!user}
+            onLoginClick={() => setAuthModalOpen(true)}
+          />
+          <div className="flex flex-col items-end gap-2 flex-shrink-0 max-sm:items-stretch">
+            {!user && regions.length > 0 && (
+              <select
+                value={guestCountry}
+                onChange={(e) => setGuestCountry(e.target.value)}
+                className="h-[42px] w-[248px] px-3 border border-border rounded-full bg-panel text-text text-sm outline-none max-sm:w-full"
+              >
+                {regions.map((r) => (
+                  <option key={r.iso_3166_1} value={r.iso_3166_1}>
+                    {countryFlag(r.iso_3166_1)} {r.english_name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {user && (
+              <button
+                onClick={() => setShowAllForUser((prev) => !prev)}
+                aria-pressed={showAllForUser}
+                className={`h-[42px] w-[248px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 max-sm:w-full ${
+                  showAllForUser
+                    ? "border-accent/60 bg-accent/10 text-text"
+                    : "border-border bg-panel text-text"
+                }`}
+              >
+                <span className="truncate">{showAllForUser ? "Showing everything" : "Only my services"}</span>
+                <span
+                  className={`relative h-5 w-9 rounded-full border transition-colors ${
+                    showAllForUser
+                      ? "bg-accent border-accent"
+                      : "bg-panel-2 border-border"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                      showAllForUser ? "translate-x-4" : ""
+                    }`}
+                  />
+                </span>
+              </button>
+            )}
+            <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[248px] max-sm:w-full">
+              {MEDIA_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => handleMediaTypeChange(opt.value)}
+                  className={`flex-1 h-full text-sm font-medium transition-colors ${
+                    mediaType === opt.value
+                      ? "bg-accent/15 text-text"
+                      : "text-muted hover:text-text"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
-        <section className="flex flex-col gap-10">
+        <section className="flex flex-col gap-6 sm:gap-10">
           {sections.map((section) => (
             <MovieRow
-              key={section.id}
+              key={`${section.id}:${rowResetToken}`}
               section={section}
               onSelectMovie={handleSelectMovie}
               onSeeMore={(id) => setSelectedSection(sectionMap.get(id) || null)}
+              resetToken={rowResetToken}
+              mediaType={mediaType}
             />
           ))}
 
@@ -196,6 +322,7 @@ function AppContent() {
         onClose={() => setSelectedMovie(null)}
         countryNameMap={countryNameMap}
         itemMediaType={selectedMovieType}
+        guestCountry={!user ? guestCountry : undefined}
       />
 
       <SectionOverlay
@@ -203,6 +330,8 @@ function AppContent() {
         onClose={() => setSelectedSection(null)}
         onSelectMovie={handleSelectMovie}
         mediaType={mediaType}
+        country={unfilteredMode ? discoveryCountry : undefined}
+        unfiltered={unfilteredMode}
       />
 
       <SettingsModal
@@ -223,6 +352,7 @@ function AppContent() {
         regions={regions}
         countryNameMap={countryNameMap}
         onDone={handleOnboardingDone}
+        onClose={handleOnboardingClose}
       />
 
       {/* Edit countries from dropdown */}

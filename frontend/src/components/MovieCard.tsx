@@ -30,7 +30,7 @@ export default function MovieCard({
 
   return (
     <motion.div
-      className={`flex flex-col gap-1.5 cursor-pointer snap-start ${fill ? "w-full" : "w-[160px] sm:w-[180px] flex-shrink-0"}`}
+      className={`flex flex-col gap-1.5 cursor-pointer snap-start ${fill ? "w-full" : "w-[112px] min-[430px]:w-[126px] sm:w-[180px] flex-shrink-0"}`}
       whileHover={{ y: -4, scale: 1.02, transition: { duration: 0.15 } }}
       onClick={() => onClick(id, mediaType)}
     >
@@ -51,8 +51,8 @@ export default function MovieCard({
           </span>
         )}
       </div>
-      <span className="text-[0.85rem] text-text leading-tight line-clamp-2">{title}</span>
-      <span className="text-xs text-muted">{year}</span>
+      <span className="text-[0.78rem] sm:text-[0.85rem] text-text leading-tight line-clamp-2">{title}</span>
+      <span className="text-[0.68rem] sm:text-xs text-muted">{year}</span>
     </motion.div>
   );
 }

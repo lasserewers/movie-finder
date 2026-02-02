@@ -11,9 +11,18 @@ interface Props {
   onClose: () => void;
   onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
   mediaType?: MediaType;
+  country?: string;
+  unfiltered?: boolean;
 }
 
-export default function SectionOverlay({ section, onClose, onSelectMovie, mediaType = "mix" }: Props) {
+export default function SectionOverlay({
+  section,
+  onClose,
+  onSelectMovie,
+  mediaType = "mix",
+  country,
+  unfiltered = false,
+}: Props) {
   const { providerIds } = useConfig();
   const [results, setResults] = useState<Movie[]>([]);
   const [loading, setLoading] = useState(false);
@@ -37,7 +46,7 @@ export default function SectionOverlay({ section, onClose, onSelectMovie, mediaT
     setResults([]);
     setHasMore(true);
     loadMore();
-  }, [section?.id]);
+  }, [section?.id, country, unfiltered]);
 
   const loadMore = useCallback(async () => {
     if (!section || loading) return;
@@ -47,14 +56,16 @@ export default function SectionOverlay({ section, onClose, onSelectMovie, mediaT
 
     setLoading(true);
     try {
-      const ids = Array.from(providerIds);
+      const ids = unfiltered ? [] : Array.from(providerIds);
       const data = await getSection(
         section.id,
         s.useCursor ? 1 : (s.nextPage || 1),
         2,
         ids,
         s.nextCursor || undefined,
-        mediaType
+        mediaType,
+        country,
+        unfiltered
       );
       const items = (data.results || []).filter((m) => {
         if (seenRef.current.has(m.id)) return false;
@@ -75,7 +86,7 @@ export default function SectionOverlay({ section, onClose, onSelectMovie, mediaT
     } finally {
       setLoading(false);
     }
-  }, [section, loading, providerIds, results.length]);
+  }, [section, loading, providerIds, results.length, mediaType, country, unfiltered]);
 
   const sentinelRef = useInfiniteScroll(loadMore, hasMore && !loading, panelRef.current);
 
@@ -105,7 +116,7 @@ export default function SectionOverlay({ section, onClose, onSelectMovie, mediaT
             <div className="flex items-start justify-between p-6 sm:p-8 pb-0 sm:pb-0">
               <div>
                 <h3 className="font-display text-2xl">{section.title}</h3>
-                <p className="text-sm text-muted mt-1">Available on your services</p>
+                <p className="text-sm text-muted mt-1">{unfiltered ? `Popular in ${country || "US"}` : "Available on your services"}</p>
               </div>
               <button
                 onClick={onClose}

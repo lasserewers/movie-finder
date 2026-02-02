@@ -23,6 +23,7 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
   const [search, setSearch] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [activeCountries, setActiveCountries] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -78,10 +79,20 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      // Auto-save
-      saveConfig(Array.from(next), countries).then(() => onSaved());
       return next;
     });
+  };
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await saveConfig(Array.from(selected), countries);
+      onSaved();
+      onClose();
+    } finally {
+      setSaving(false);
+    }
   };
 
   const sorted = [...providers].sort((a, b) => a.provider_name.localeCompare(b.provider_name));
@@ -131,7 +142,6 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
                 <button
                   onClick={() => {
                     setSelected(new Set());
-                    saveConfig([], countries).then(() => onSaved());
                   }}
                   className="text-xs text-muted border border-border rounded-full px-2 py-0.5 hover:border-accent-2 hover:text-text transition-colors"
                 >
@@ -157,6 +167,15 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
                     </span>
                   ))
                 )}
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-4 py-1.5 rounded-full border border-accent/60 bg-accent/15 text-sm font-semibold text-text hover:bg-accent/25 transition-colors disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Save"}
+                </button>
               </div>
             </div>
 
@@ -217,6 +236,15 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
                     <span className="truncate">{p.provider_name}</span>
                   </button>
                 ))}
+              </div>
+              <div className="mt-4 flex justify-end">
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="px-4 py-1.5 rounded-full border border-accent/60 bg-accent/15 text-sm font-semibold text-text hover:bg-accent/25 transition-colors disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Save"}
+                </button>
               </div>
             </div>
             </div>

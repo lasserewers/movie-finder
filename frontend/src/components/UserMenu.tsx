@@ -30,9 +30,9 @@ export default function UserMenu({ onOpenProfile, onOpenSettings, onOpenCountrie
     <div ref={ref} className="relative flex-shrink-0">
       <button
         onClick={() => setOpen(!open)}
-        className="w-[52px] h-[52px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors"
+        className="w-[44px] h-[44px] sm:w-[52px] sm:h-[52px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors"
       >
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text sm:w-[22px] sm:h-[22px]">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
           <circle cx="12" cy="7" r="4" />
         </svg>

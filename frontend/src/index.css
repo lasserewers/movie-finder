@@ -36,6 +36,8 @@ body {
     ),
     radial-gradient(900px 500px at 90% 10%, rgba(255, 123, 123, 0.12), transparent),
     var(--color-bg);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
   color: var(--color-text);
   min-height: 100vh;
 }

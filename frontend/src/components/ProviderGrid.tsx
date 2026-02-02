@@ -44,33 +44,40 @@ interface CardProps {
   provider: ProviderInfo & { type: string; isMine: boolean; link?: string };
   countryCode: string;
   streamingLinks: Record<string, StreamingLink[]>;
+  isGuest: boolean;
 }
 
-function ProviderCard({ provider, countryCode, streamingLinks }: CardProps) {
+function ProviderCard({ provider, countryCode, streamingLinks, isGuest }: CardProps) {
   const deep = findDeepLink(provider.provider_name, countryCode, provider.type, streamingLinks);
   const href = deep?.link || provider.link || "";
   const typeLabel = provider.type === "flatrate" ? "stream" : provider.type;
 
   let borderClass = "border-red-500/60 bg-red-500/10"; // other
-  if (provider.type === "buy") borderClass = "border-amber-500/60 bg-amber-500/10";
-  else if (provider.type === "rent" || provider.type === "rent/buy") borderClass = "border-yellow-500/60 bg-yellow-500/10";
-  else if (provider.isMine) borderClass = "border-green-500/60 bg-green-500/10";
+  if (isGuest) {
+    borderClass = "border-border bg-panel-2/60";
+  } else if (provider.type === "buy") {
+    borderClass = "border-amber-500/60 bg-amber-500/10";
+  } else if (provider.type === "rent" || provider.type === "rent/buy") {
+    borderClass = "border-yellow-500/60 bg-yellow-500/10";
+  } else if (provider.isMine) {
+    borderClass = "border-green-500/60 bg-green-500/10";
+  }
 
   const content = (
     <>
       {provider.logo_path && (
-        <img src={`${TMDB_IMG}/w92${provider.logo_path}`} alt="" className="w-12 h-12 rounded-[10px]" />
+        <img src={`${TMDB_IMG}/w92${provider.logo_path}`} alt="" className="w-9 h-9 sm:w-12 sm:h-12 rounded-[10px]" />
       )}
-      <span className="text-[0.8rem] leading-tight text-center">{provider.provider_name}</span>
-      <span className="text-[0.65rem] text-muted uppercase">{typeLabel}</span>
+      <span className="text-[0.68rem] sm:text-[0.8rem] leading-tight text-center">{provider.provider_name}</span>
+      <span className="text-[0.56rem] sm:text-[0.65rem] text-muted uppercase">{typeLabel}</span>
       {deep?.quality && QUALITY_LABELS[deep.quality] && (
-        <span className="text-[0.6rem] font-bold bg-panel-2 px-1.5 py-0.5 rounded">{QUALITY_LABELS[deep.quality]}</span>
+        <span className="text-[0.55rem] sm:text-[0.6rem] font-bold bg-panel-2 px-1.5 py-0.5 rounded">{QUALITY_LABELS[deep.quality]}</span>
       )}
-      {deep?.price && <span className="text-[0.7rem] font-semibold text-yellow-400">{deep.price}</span>}
+      {deep?.price && <span className="text-[0.62rem] sm:text-[0.7rem] font-semibold text-yellow-400">{deep.price}</span>}
       {deep?.expires_on && (() => {
         const days = Math.ceil((deep.expires_on * 1000 - Date.now()) / 86400000);
         return days > 0 && days <= 30 ? (
-          <span className="text-[0.6rem] font-semibold bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded">
+          <span className="text-[0.55rem] sm:text-[0.6rem] font-semibold bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded">
             Leaving in {days}d
           </span>
         ) : null;
@@ -78,7 +85,7 @@ function ProviderCard({ provider, countryCode, streamingLinks }: CardProps) {
     </>
   );
 
-  const cls = `flex flex-col items-center gap-1 p-2.5 rounded-lg border ${borderClass} text-center`;
+  const cls = `flex flex-col items-center gap-0.5 sm:gap-1 p-2 sm:p-2.5 rounded-lg border ${borderClass} text-center`;
 
   if (href) {
     return (
@@ -94,16 +101,19 @@ interface Props {
   providers: Record<string, CountryProviders>;
   streamingLinks: Record<string, StreamingLink[]>;
   countryNameMap: Record<string, string>;
+  guestCountry?: string;
 }
 
-export default function ProviderGrid({ providers, streamingLinks, countryNameMap }: Props) {
+export default function ProviderGrid({ providers, streamingLinks, countryNameMap, guestCountry }: Props) {
   const { countries: myCountries, providerIds: myProviderIds } = useConfig();
 
   if (!providers || !Object.keys(providers).length) {
     return <div className="text-center text-muted py-8">No streaming data available for this movie</div>;
   }
 
-  const myCountrySet = new Set(myCountries);
+  // Guest mode: only show the selected country
+  const displayCountries = guestCountry ? [guestCountry] : myCountries;
+  const myCountrySet = new Set(displayCountries);
 
   const buildProviders = (data: CountryProviders, types: string[]) => {
     const result: (ProviderInfo & { type: string; isMine: boolean; link?: string })[] = [];
@@ -111,7 +121,7 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
       const list = data[type as keyof CountryProviders] as ProviderInfo[] | undefined;
       if (!list || !Array.isArray(list)) continue;
       for (const p of list) {
-        result.push({ ...p, type, isMine: myProviderIds.has(p.provider_id), link: data.link });
+        result.push({ ...p, type, isMine: !guestCountry && myProviderIds.has(p.provider_id), link: data.link });
       }
     }
     return result;
@@ -126,31 +136,33 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
         if (map.has(p.provider_id)) {
           map.get(p.provider_id)!.type = "rent/buy";
         } else {
-          map.set(p.provider_id, { ...p, type, isMine: myProviderIds.has(p.provider_id), link: data.link });
+          map.set(p.provider_id, { ...p, type, isMine: !guestCountry && myProviderIds.has(p.provider_id), link: data.link });
         }
       }
     }
     return Array.from(map.values());
   };
 
-  // Other countries where my services have it
+  // Other countries where my services have it (skip in guest mode)
   const otherMyRows: { country: string; providers: ProviderInfo[] }[] = [];
-  for (const [country, data] of Object.entries(providers)) {
-    if (myCountrySet.has(country)) continue;
-    const myServices: ProviderInfo[] = [];
-    for (const type of ["flatrate", "free", "ads"]) {
-      const list = data[type as keyof CountryProviders] as ProviderInfo[] | undefined;
-      if (!list || !Array.isArray(list)) continue;
-      for (const p of list) {
-        if (myProviderIds.has(p.provider_id)) myServices.push({ ...p });
+  if (!guestCountry) {
+    for (const [country, data] of Object.entries(providers)) {
+      if (myCountrySet.has(country)) continue;
+      const myServices: ProviderInfo[] = [];
+      for (const type of ["flatrate", "free", "ads"]) {
+        const list = data[type as keyof CountryProviders] as ProviderInfo[] | undefined;
+        if (!list || !Array.isArray(list)) continue;
+        for (const p of list) {
+          if (myProviderIds.has(p.provider_id)) myServices.push({ ...p });
+        }
       }
+      if (myServices.length) otherMyRows.push({ country, providers: myServices });
     }
-    if (myServices.length) otherMyRows.push({ country, providers: myServices });
   }
 
   return (
     <div>
-      {myCountries.map((code) => {
+      {displayCountries.map((code) => {
         const data = providers[code];
         if (!data) {
           return (
@@ -165,15 +177,15 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
 
         return (
           <div key={code} className="mb-4">
-            <h3 className="text-base font-semibold mb-2">
+            <h3 className="text-sm sm:text-base font-semibold mb-2">
               Available in {countryFlag(code)} {countryNameMap[code] || code}
             </h3>
             {streaming.length > 0 && (
               <>
                 <h4 className="text-xs text-muted uppercase tracking-wider mb-2 mt-3">Stream</h4>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-2 mb-3">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(102px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-1.5 sm:gap-2 mb-3">
                   {streaming.map((p, i) => (
-                    <ProviderCard key={`${p.provider_id}-${i}`} provider={p} countryCode={code} streamingLinks={streamingLinks} />
+                    <ProviderCard key={`${p.provider_id}-${i}`} provider={p} countryCode={code} streamingLinks={streamingLinks} isGuest={!!guestCountry} />
                   ))}
                 </div>
               </>
@@ -181,9 +193,9 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
             {rentBuy.length > 0 && (
               <>
                 <h4 className="text-xs text-muted uppercase tracking-wider mb-2 mt-3">Rent / Buy</h4>
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-2 mb-3">
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(102px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-1.5 sm:gap-2 mb-3">
                   {rentBuy.map((p, i) => (
-                    <ProviderCard key={`${p.provider_id}-${i}`} provider={p} countryCode={code} streamingLinks={streamingLinks} />
+                    <ProviderCard key={`${p.provider_id}-${i}`} provider={p} countryCode={code} streamingLinks={streamingLinks} isGuest={!!guestCountry} />
                   ))}
                 </div>
               </>

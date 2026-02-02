@@ -99,11 +99,16 @@ export async function getHome(
   page: number,
   pageSize: number,
   providerIds: number[],
-  mediaType: MediaType = "mix"
+  mediaType: MediaType = "mix",
+  country?: string,
+  unfiltered = false
 ): Promise<HomeResponse> {
   const ids = providerIds.join(",");
+  const providerParam = ids ? `&provider_ids=${ids}` : (unfiltered ? "&provider_ids=," : "");
+  const countryParam = country ? `&country=${encodeURIComponent(country)}` : "";
+  const unfilteredParam = unfiltered ? "&unfiltered=1" : "";
   return apiFetch(
-    `/api/home?page=${page}&page_size=${pageSize}${ids ? `&provider_ids=${ids}` : ""}&media_type=${mediaType}`
+    `/api/home?page=${page}&page_size=${pageSize}${providerParam}${countryParam}${unfilteredParam}&media_type=${mediaType}`
   );
 }
 
@@ -113,12 +118,17 @@ export async function getSection(
   pages: number,
   providerIds: number[],
   cursor?: string,
-  mediaType: MediaType = "mix"
+  mediaType: MediaType = "mix",
+  country?: string,
+  unfiltered = false
 ): Promise<HomeSection & { next_cursor?: string }> {
   const ids = providerIds.join(",");
+  const providerParam = ids ? `&provider_ids=${ids}` : (unfiltered ? "&provider_ids=," : "");
   const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+  const countryParam = country ? `&country=${encodeURIComponent(country)}` : "";
+  const unfilteredParam = unfiltered ? "&unfiltered=1" : "";
   return apiFetch(
-    `/api/section?section_id=${encodeURIComponent(sectionId)}&page=${page}&pages=${pages}${ids ? `&provider_ids=${ids}` : ""}${cursorParam}&media_type=${mediaType}`
+    `/api/section?section_id=${encodeURIComponent(sectionId)}&page=${page}&pages=${pages}${providerParam}${cursorParam}${countryParam}${unfilteredParam}&media_type=${mediaType}`
   );
 }
 

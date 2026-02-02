@@ -15,7 +15,7 @@ function PersonCircle({ person, role }: { person: { name: string; profile_path?:
       ) : (
         <div className="w-14 h-14 rounded-full bg-panel-2 border-2 border-border" />
       )}
-      <span className="text-[0.7rem] text-text mt-1 leading-tight">{person.name}</span>
+      <span className="text-[0.7rem] text-text mt-1 leading-tight line-clamp-2">{person.name}</span>
       {role && <span className="text-[0.6rem] text-muted leading-tight">{role}</span>}
     </div>
   );
@@ -26,13 +26,13 @@ interface Props {
   onClose: () => void;
   countryNameMap: Record<string, string>;
   itemMediaType?: "movie" | "tv";
+  guestCountry?: string;
 }
 
-export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMediaType }: Props) {
+export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMediaType, guestCountry }: Props) {
   const [movie, setMovie] = useState<Movie | null>(null);
   const [providers, setProviders] = useState<Record<string, CountryProviders>>({});
   const [streamingLinks, setStreamingLinks] = useState<Record<string, StreamingLink[]>>({});
-  const [movieInfo, setMovieInfo] = useState<{ poster?: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [creditsOpen, setCreditsOpen] = useState(false);
 
@@ -48,7 +48,6 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMed
         setMovie(provData.movie);
         setProviders(provData.providers);
         setStreamingLinks(linksData?.streaming || {});
-        setMovieInfo(linksData?.movie_info || null);
       })
       .finally(() => setLoading(false));
   }, [movieId, itemMediaType]);
@@ -64,8 +63,10 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMed
   const crew = credits?.crew || [];
   const directors = crew.filter((c) => c.job === "Director");
   const topCast = cast.slice(0, 6);
+  const hasCredits = cast.length > 0 || crew.length > 0;
+  const hideCreditsButtonOnDesktop = cast.length <= 6 && crew.length === 0;
 
-  const posterUrl = movieInfo?.poster || (movie?.poster_path ? `${TMDB_IMG}/w300${movie.poster_path}` : "");
+  const posterUrl = movie?.poster_path ? `${TMDB_IMG}/w300${movie.poster_path}` : "";
 
   return (
     <>
@@ -85,38 +86,38 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMed
               exit={{ y: 40, scale: 0.97 }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
             >
-              <div className="flex justify-between items-center p-6 sm:p-8 pb-0 sm:pb-0">
-                <h2 className="font-display text-2xl">{movie?.title || ""}</h2>
+              <div className="flex justify-between items-center p-4 sm:p-8 pb-0 sm:pb-0">
+                <h2 className="font-display text-xl sm:text-2xl">{movie?.title || ""}</h2>
                 <button
                   onClick={onClose}
-                  className="w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors flex-shrink-0"
+                  className="w-8 h-8 sm:w-9 sm:h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors flex-shrink-0"
                 >
                   &times;
                 </button>
               </div>
 
-              <div className="flex-1 overflow-auto p-6 sm:p-8 pt-4 sm:pt-4">
+              <div className="flex-1 overflow-auto p-4 sm:p-8 pt-3 sm:pt-4">
               {loading ? (
                 <div className="flex justify-center py-16">
                   <Spinner />
                 </div>
               ) : movie ? (
                 <>
-                  <div className="flex gap-6 mb-6 max-sm:flex-col max-sm:items-center max-sm:text-center">
+                  <div className="flex items-start gap-3 sm:gap-6 mb-5 sm:mb-6">
                     {posterUrl && (
-                      <img src={posterUrl} alt="" className="w-[150px] rounded-lg flex-shrink-0 self-start" />
+                      <img src={posterUrl} alt="" className="w-[96px] sm:w-[150px] rounded-lg flex-shrink-0 self-start" />
                     )}
-                    <div>
-                      <p className="text-muted mb-2">
+                    <div className="min-w-0">
+                      <p className="text-muted text-sm sm:text-base mb-2">
                         {movie.release_date?.slice(0, 4)}
                         {movie.number_of_seasons != null && (
                           <span className="ml-2">&middot; {movie.number_of_seasons} season{movie.number_of_seasons !== 1 ? "s" : ""}</span>
                         )}
                       </p>
-                      <p className="text-sm text-muted leading-relaxed">{movie.overview}</p>
+                      <p className="text-xs sm:text-sm text-muted leading-relaxed">{movie.overview}</p>
 
                       {(directors.length > 0 || topCast.length > 0) && (
-                        <div className="flex flex-nowrap gap-5 mt-4 overflow-x-auto pb-1">
+                        <div className="hidden sm:flex flex-nowrap gap-5 mt-4 overflow-x-auto pb-1">
                           {directors.length > 0 && (
                             <div className="flex-shrink-0">
                               <h4 className="text-xs text-muted uppercase tracking-wider mb-2">
@@ -142,10 +143,10 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMed
                         </div>
                       )}
 
-                      {(cast.length > 6 || crew.length > 0) && (
+                      {hasCredits && (
                         <button
                           onClick={() => setCreditsOpen(true)}
-                          className="mt-3 w-full py-2 bg-panel-2 border border-border rounded-md text-sm text-text hover:bg-white/5 transition-colors text-center"
+                          className={`mt-3 w-full py-2 bg-panel-2 border border-border rounded-md text-xs sm:text-sm text-text hover:bg-white/5 transition-colors text-center ${hideCreditsButtonOnDesktop ? "sm:hidden" : ""}`}
                         >
                           Cast & Crew
                         </button>
@@ -157,6 +158,7 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMed
                     providers={providers}
                     streamingLinks={streamingLinks}
                     countryNameMap={countryNameMap}
+                    guestCountry={guestCountry}
                   />
                 </>
               ) : null}

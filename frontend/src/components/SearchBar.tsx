@@ -8,9 +8,10 @@ const TMDB_IMG = "https://image.tmdb.org/t/p";
 interface Props {
   onSelectMovie: (movieId: number, mediaType?: "movie" | "tv") => void;
   mediaType: MediaType;
+  showFilterToggle?: boolean;
 }
 
-export default function SearchBar({ onSelectMovie, mediaType }: Props) {
+export default function SearchBar({ onSelectMovie, mediaType, showFilterToggle = true }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Movie[]>([]);
   const [open, setOpen] = useState(false);
@@ -20,6 +21,7 @@ export default function SearchBar({ onSelectMovie, mediaType }: Props) {
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -44,8 +46,9 @@ export default function SearchBar({ onSelectMovie, mediaType }: Props) {
 
     setLoading(true);
 
-    const ids = filtered ? Array.from(providerIds) : [];
-    const url = filtered && ids.length
+    const canFilter = showFilterToggle;
+    const ids = filtered && canFilter ? Array.from(providerIds) : [];
+    const url = filtered && canFilter && ids.length
       ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}&media_type=${mediaType}`
       : `/api/search?q=${encodeURIComponent(q)}&media_type=${mediaType}`;
 
@@ -67,43 +70,47 @@ export default function SearchBar({ onSelectMovie, mediaType }: Props) {
   const handleInput = (value: string) => {
     setQuery(value);
     clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => doSearch(value.trim(), filterOn), 300);
+    timerRef.current = setTimeout(() => doSearch(value.trim(), showFilterToggle && filterOn), 300);
   };
 
   // Re-search when media type changes
   useEffect(() => {
     const q = query.trim();
-    if (q.length >= 2) doSearch(q, filterOn);
-  }, [mediaType]);
+    if (q.length >= 2) doSearch(q, showFilterToggle && filterOn);
+  }, [mediaType, showFilterToggle]);
 
   const handleFilterToggle = () => {
     const next = !filterOn;
     setFilterOn(next);
+    inputRef.current?.focus();
     const q = query.trim();
     if (q.length >= 2) doSearch(q, next);
   };
 
   return (
-    <div ref={containerRef} className="relative flex-1 min-w-0 max-w-[530px]">
-      <div className="flex items-center gap-2.5 border border-border rounded-full bg-panel px-5 h-[52px] focus-within:border-accent-2 transition-colors">
+    <div ref={containerRef} className="relative flex-1 min-w-0 max-w-[530px] max-sm:max-w-none max-sm:w-full">
+      <div className="flex items-center gap-1.5 sm:gap-2.5 border border-border rounded-full bg-panel px-3 sm:px-5 h-[48px] sm:h-[52px] focus-within:border-accent-2 transition-colors">
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={(e) => handleInput(e.target.value)}
           onFocus={() => results.length && setOpen(true)}
           placeholder={mediaType === "tv" ? "Search TV shows..." : mediaType === "movie" ? "Search movies..." : "Search movies & TV..."}
-          className="flex-1 bg-transparent text-text text-base outline-none placeholder:text-muted"
+          className="flex-1 bg-transparent text-text text-sm sm:text-base outline-none placeholder:text-muted"
         />
-        <button
-          onClick={handleFilterToggle}
-          className={`text-xs font-medium px-3 py-1.5 rounded-full border-2 transition-colors whitespace-nowrap ${
-            filterOn
-              ? "bg-accent/15 border-accent text-text"
-              : "bg-transparent border-transparent text-muted hover:border-border"
-          }`}
-        >
-          Only my services
-        </button>
+        {showFilterToggle && (
+          <button
+            onClick={handleFilterToggle}
+            className={`text-[0.65rem] sm:text-xs font-medium px-2 sm:px-3 py-1 sm:py-1.5 rounded-full border-2 transition-colors whitespace-nowrap ${
+              filterOn
+                ? "bg-accent/15 border-accent text-text"
+                : "bg-panel-2/70 border-border text-muted hover:border-accent/40 hover:text-text"
+            }`}
+          >
+            Only my services
+          </button>
+        )}
       </div>
 
       <AnimatePresence>
@@ -112,7 +119,7 @@ export default function SearchBar({ onSelectMovie, mediaType }: Props) {
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
-            className="absolute top-[calc(100%+0.5rem)] left-0 w-[min(480px,90vw)] bg-panel border border-border rounded-xl max-h-[440px] overflow-y-auto z-[140] shadow-[0_20px_40px_rgba(0,0,0,0.5)]"
+            className="absolute top-[calc(100%+0.5rem)] left-0 w-full sm:w-[min(480px,90vw)] bg-panel border border-border rounded-xl max-h-[440px] overflow-y-auto z-[140] shadow-[0_20px_40px_rgba(0,0,0,0.5)]"
           >
             {results.map((m) => (
               <div
@@ -147,8 +154,8 @@ export default function SearchBar({ onSelectMovie, mediaType }: Props) {
       </AnimatePresence>
 
       {open && !loading && results.length === 0 && query.trim().length >= 2 && (
-        <div className="absolute top-[calc(100%+0.5rem)] left-0 w-[min(480px,90vw)] bg-panel border border-border rounded-xl p-6 text-center text-sm text-muted z-[140]">
-          {filterOn ? "No matches on your services" : "No results found"}
+        <div className="absolute top-[calc(100%+0.5rem)] left-0 w-full sm:w-[min(480px,90vw)] bg-panel border border-border rounded-xl p-6 text-center text-sm text-muted z-[140]">
+          {showFilterToggle && filterOn ? "No matches on your services" : "No results found"}
         </div>
       )}
     </div>

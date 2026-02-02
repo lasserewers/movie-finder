@@ -19,6 +19,7 @@ export default function OnboardingModal({ open, regions, countryNameMap, initial
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const isEdit = !!(initialCountries && initialCountries.length > 0);
+  const canSubmit = isEdit ? selected.size > 0 : true;
 
   useEffect(() => {
     if (open) {
@@ -60,7 +61,7 @@ export default function OnboardingModal({ open, regions, countryNameMap, initial
             exit={{ scale: 0.95, y: 20 }}
             onClick={(e) => e.stopPropagation()}
           >
-            {isEdit && onClose && (
+            {onClose && (
               <button
                 onClick={onClose}
                 className="absolute top-4 right-4 w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors"
@@ -129,10 +130,10 @@ export default function OnboardingModal({ open, regions, countryNameMap, initial
 
             <button
               onClick={() => onDone(Array.from(selected))}
-              disabled={selected.size === 0}
-              className="w-full mt-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50"
+              disabled={!canSubmit}
+              className="w-full mt-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {selected.size === 0 ? "Select at least one country" : isEdit ? "Save" : "Next"}
+              {isEdit ? (selected.size === 0 ? "Select at least one country" : "Save") : (selected.size === 0 ? "Skip for now" : "Next")}
             </button>
           </motion.div>
         </motion.div>
