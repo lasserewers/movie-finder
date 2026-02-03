@@ -63,7 +63,7 @@ export default function Topbar({
         />
       </div>
       <div className="flex flex-1 justify-end max-sm:order-3 max-sm:basis-full">
-        <SearchBar onSelectMovie={onSelectMovie} mediaType={mediaType} showFilterToggle={!!user} />
+        <SearchBar onSelectMovie={onSelectMovie} mediaType={mediaType} showFilterToggle={!!user} onOpenSettings={onOpenSettings} />
       </div>
       <div className="flex-shrink-0 max-sm:order-2 max-sm:ml-auto">
         {user ? (

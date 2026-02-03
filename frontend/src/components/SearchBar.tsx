@@ -9,9 +9,10 @@ interface Props {
   onSelectMovie: (movieId: number, mediaType?: "movie" | "tv") => void;
   mediaType: MediaType;
   showFilterToggle?: boolean;
+  onOpenSettings?: () => void;
 }
 
-export default function SearchBar({ onSelectMovie, mediaType, showFilterToggle = true }: Props) {
+export default function SearchBar({ onSelectMovie, mediaType, showFilterToggle = true, onOpenSettings }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Movie[]>([]);
   const [open, setOpen] = useState(false);
@@ -80,6 +81,11 @@ export default function SearchBar({ onSelectMovie, mediaType, showFilterToggle =
   }, [mediaType, showFilterToggle]);
 
   const handleFilterToggle = () => {
+    // If user has no services and tries to enable filter, open settings instead
+    if (!filterOn && providerIds.size === 0 && onOpenSettings) {
+      onOpenSettings();
+      return;
+    }
     const next = !filterOn;
     setFilterOn(next);
     inputRef.current?.focus();

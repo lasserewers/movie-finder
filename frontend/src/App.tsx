@@ -43,6 +43,7 @@ function AppContent() {
   const [mediaType, setMediaType] = useState<MediaType>("mix");
   const [rowResetToken, setRowResetToken] = useState(0);
   const [showAllForUser, setShowAllForUser] = useState(false);
+  const [usingVpn, setUsingVpn] = useState(false);
   const [guestCountry, setGuestCountry] = useState(() => {
     try {
       return localStorage.getItem(GUEST_COUNTRY_STORAGE_KEY) || "";
@@ -71,6 +72,8 @@ function AppContent() {
     movie: null,
     tv: null,
   });
+  // Track if user was previously logged in (to detect logout)
+  const wasLoggedInRef = useRef(false);
 
   const [regions, setRegions] = useState<Region[]>([]);
   const [countryNameMap, setCountryNameMap] = useState<Record<string, string>>({});
@@ -128,6 +131,18 @@ function AppContent() {
     loadHomeRows(true);
   }, [homeInitialized, providerIds, mediaType, user, guestCountry, showAllForUser, countries]);
 
+  // Clear guest country on logout so geo-detection runs again
+  useEffect(() => {
+    if (user) {
+      wasLoggedInRef.current = true;
+    } else if (wasLoggedInRef.current) {
+      // User just logged out - clear guest country to trigger geo-detection
+      wasLoggedInRef.current = false;
+      localStorage.removeItem(GUEST_COUNTRY_STORAGE_KEY);
+      setGuestCountry("");
+    }
+  }, [user]);
+
   // Detect country from IP on first visit (no saved country)
   useEffect(() => {
     if (user) return;
@@ -161,8 +176,16 @@ function AppContent() {
   }, [user, countries, guestCountry]);
 
   useEffect(() => {
-    if (!user) setShowAllForUser(false);
-  }, [user]);
+    if (!user) {
+      setShowAllForUser(false);
+    } else if (providerIds.size === 0) {
+      // Default to "All content" when user has no services
+      setShowAllForUser(true);
+    } else {
+      // Default to "My services" when user has services
+      setShowAllForUser(false);
+    }
+  }, [user, providerIds.size]);
 
   // Prefetch next page in background
   const prefetchNextPage = useCallback(
@@ -330,7 +353,7 @@ function AppContent() {
       </div>
 
       <main className="page-container flex-1 pt-2 pb-16">
-        <div className="flex items-start justify-between gap-6 mb-6 max-sm:flex-col max-sm:items-stretch">
+        <div className="flex items-start justify-between gap-6 mb-6 max-sm:flex-col max-sm:items-stretch max-sm:gap-3">
           <HeroSection
             className="mb-0 flex-1"
             showGuestPrompt={!user}
@@ -351,46 +374,168 @@ function AppContent() {
               </select>
             )}
             {user && (
-              <button
-                onClick={() => setShowAllForUser((prev) => !prev)}
-                aria-pressed={!showAllForUser}
-                className={`h-[42px] w-[248px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 max-sm:w-full ${
-                  !showAllForUser
-                    ? "border-accent/60 bg-accent/10 text-text"
-                    : "border-border bg-panel text-text"
-                }`}
-              >
-                <span className="truncate">{showAllForUser ? "Showing everything" : "Showing only my services"}</span>
-                <span
-                  className={`relative h-5 w-9 flex-shrink-0 rounded-full border transition-colors ${
-                    !showAllForUser
-                      ? "bg-accent border-accent"
-                      : "bg-panel-2 border-border"
-                  }`}
-                >
-                  <span
-                    className={`absolute inset-y-0 my-auto left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                      !showAllForUser ? "translate-x-4" : ""
-                    }`}
-                  />
-                </span>
-              </button>
-            )}
-            <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[248px] max-sm:w-full">
-              {MEDIA_OPTIONS.map((opt) => (
+              <div className="flex items-center gap-2 max-sm:w-full">
+                {/* VPN toggle - same width as two icon buttons + gap (80 + 8 + 80 = 168px) */}
                 <button
-                  key={opt.value}
-                  onClick={() => handleMediaTypeChange(opt.value)}
-                  className={`flex-1 h-full text-sm font-medium transition-colors ${
-                    mediaType === opt.value
-                      ? "bg-accent/15 text-text"
-                      : "text-muted hover:text-text"
+                  onClick={() => setUsingVpn((prev) => !prev)}
+                  aria-pressed={usingVpn}
+                  className={`h-[42px] w-[168px] px-3 border rounded-full text-sm font-medium transition-colors flex items-center justify-between gap-2 max-sm:flex-1 max-sm:w-0 ${
+                    usingVpn
+                      ? "border-accent/60 bg-accent/10 text-text"
+                      : "border-border bg-panel text-muted"
                   }`}
                 >
-                  {opt.label}
+                  <span className="truncate">{usingVpn ? "Using VPN" : "Not using VPN"}</span>
+                  <span
+                    className={`relative h-5 w-9 flex-shrink-0 rounded-full border transition-colors ${
+                      usingVpn
+                        ? "bg-accent border-accent"
+                        : "bg-panel-2 border-border"
+                    }`}
+                  >
+                    <span
+                      className={`absolute inset-y-0 my-auto left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                        usingVpn ? "translate-x-4" : ""
+                      }`}
+                    />
+                  </span>
                 </button>
-              ))}
-            </div>
+                {/* Showing only my services toggle - same width as media toggle (270px) */}
+                <button
+                  onClick={() => {
+                    if (showAllForUser && providerIds.size === 0) {
+                      // User wants to switch to "My services" but has none - open settings
+                      setSettingsOpen(true);
+                    } else {
+                      setShowAllForUser((prev) => !prev);
+                    }
+                  }}
+                  aria-pressed={!showAllForUser}
+                  className={`h-[42px] w-[270px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 max-sm:flex-1 max-sm:w-0 ${
+                    !showAllForUser
+                      ? "border-accent/60 bg-accent/10 text-text"
+                      : "border-border bg-panel text-text"
+                  }`}
+                >
+                  <span className="truncate">{showAllForUser ? "All content" : "My services"}</span>
+                  <span
+                    className={`relative h-5 w-9 flex-shrink-0 rounded-full border transition-colors ${
+                      !showAllForUser
+                        ? "bg-accent border-accent"
+                        : "bg-panel-2 border-border"
+                    }`}
+                  >
+                    <span
+                      className={`absolute inset-y-0 my-auto left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                        !showAllForUser ? "translate-x-4" : ""
+                      }`}
+                    />
+                  </span>
+                </button>
+              </div>
+            )}
+            {user && (
+              <>
+                {/* Icon buttons - own row on mobile with text */}
+                <div className="hidden max-sm:flex items-center gap-2 w-full">
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    className="h-[42px] flex-1 border border-border rounded-full flex items-center justify-center gap-2 hover:border-accent-2 transition-colors bg-panel text-sm text-muted"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <path d="M8 21h8" />
+                      <path d="M12 17v4" />
+                    </svg>
+                    Services
+                  </button>
+                  <button
+                    onClick={() => setCountriesModalOpen(true)}
+                    className="h-[42px] flex-1 border border-border rounded-full flex items-center justify-center gap-2 hover:border-accent-2 transition-colors bg-panel text-sm text-muted"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="2" y1="12" x2="22" y2="12" />
+                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                    </svg>
+                    Countries
+                  </button>
+                </div>
+                {/* Desktop: icon buttons + media toggle in same row */}
+                <div className="flex items-center gap-2 max-sm:hidden">
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    className="h-[42px] w-[80px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors bg-panel"
+                    title="Manage services"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted">
+                      <rect x="2" y="3" width="20" height="14" rx="2" />
+                      <path d="M8 21h8" />
+                      <path d="M12 17v4" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setCountriesModalOpen(true)}
+                    className="h-[42px] w-[80px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors bg-panel"
+                    title="Manage countries"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="2" y1="12" x2="22" y2="12" />
+                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                    </svg>
+                  </button>
+                  <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[270px]">
+                    {MEDIA_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        onClick={() => handleMediaTypeChange(opt.value)}
+                        className={`flex-1 h-full text-sm font-medium transition-colors ${
+                          mediaType === opt.value
+                            ? "bg-accent/15 text-text"
+                            : "text-muted hover:text-text"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Mobile: media toggle on its own row */}
+                <div className="hidden max-sm:flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-full">
+                  {MEDIA_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => handleMediaTypeChange(opt.value)}
+                      className={`flex-1 h-full text-sm font-medium transition-colors ${
+                        mediaType === opt.value
+                          ? "bg-accent/15 text-text"
+                          : "text-muted hover:text-text"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {!user && (
+              <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[248px] max-sm:w-full">
+                {MEDIA_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => handleMediaTypeChange(opt.value)}
+                    className={`flex-1 h-full text-sm font-medium transition-colors ${
+                      mediaType === opt.value
+                        ? "bg-accent/15 text-text"
+                        : "text-muted hover:text-text"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
