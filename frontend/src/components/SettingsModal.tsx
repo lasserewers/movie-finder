@@ -81,8 +81,10 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
         next.delete(id);
       } else {
         // Add the provider and auto-expand to include variants
+        // Use allProviders (global list) to find variants even if not in current country
         next.add(id);
-        const expanded = expandIds(next, providers);
+        const providerList = allProviders.length > 0 ? allProviders : providers;
+        const expanded = expandIds(next, providerList);
         return expanded;
       }
       return next;
