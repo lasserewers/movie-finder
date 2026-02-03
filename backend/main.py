@@ -4,6 +4,8 @@ import time
 from datetime import date, timedelta
 from contextlib import asynccontextmanager
 
+import httpx
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -996,6 +998,31 @@ async def provider_list(country: str | None = None):
 @app.get("/api/regions")
 async def regions():
     return await tmdb.get_available_regions()
+
+
+@app.get("/api/geo")
+async def geo(request: Request):
+    """Detect user's country from IP address."""
+    # Get client IP - check forwarded headers first (for proxies/tunnels)
+    client_ip = (
+        request.headers.get("CF-Connecting-IP")  # Cloudflare
+        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or request.headers.get("X-Real-IP")
+        or (request.client.host if request.client else None)
+    )
+    if not client_ip or client_ip in ("127.0.0.1", "::1", "localhost"):
+        return {"country": "US"}
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            resp = await client.get(f"http://ip-api.com/json/{client_ip}?fields=countryCode")
+            if resp.status_code == 200:
+                data = resp.json()
+                country = data.get("countryCode", "US")
+                if country and len(country) == 2:
+                    return {"country": country.upper()}
+    except Exception:
+        pass
+    return {"country": "US"}
 
 
 @app.get("/api/config")

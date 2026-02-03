@@ -166,3 +166,12 @@ export async function getProviders(
 export async function getRegions(): Promise<Region[]> {
   return apiFetch("/api/regions");
 }
+
+export async function getGeoCountry(): Promise<string> {
+  try {
+    const data = await apiFetch<{ country: string }>("/api/geo");
+    return data.country || "US";
+  } catch {
+    return "US";
+  }
+}

@@ -13,7 +13,7 @@ import OnboardingModal from "./components/OnboardingModal";
 import { SkeletonRow } from "./components/Skeleton";
 import Spinner from "./components/Spinner";
 import { useInfiniteScroll } from "./hooks/useInfiniteScroll";
-import { getHome, getRegions, type HomeSection, type Region, type MediaType } from "./api/movies";
+import { getHome, getRegions, getGeoCountry, type HomeSection, type Region, type MediaType } from "./api/movies";
 
 const MEDIA_OPTIONS: { value: MediaType; label: string }[] = [
   { value: "mix", label: "All" },
@@ -45,10 +45,9 @@ function AppContent() {
   const [showAllForUser, setShowAllForUser] = useState(false);
   const [guestCountry, setGuestCountry] = useState(() => {
     try {
-      const saved = localStorage.getItem(GUEST_COUNTRY_STORAGE_KEY);
-      return saved || "US";
+      return localStorage.getItem(GUEST_COUNTRY_STORAGE_KEY) || "";
     } catch {
-      return "US";
+      return "";
     }
   });
 
@@ -100,6 +99,8 @@ function AppContent() {
   // Load home rows when config is ready or media type changes
   useEffect(() => {
     if (!homeInitialized) return;
+    // Wait for guest country detection before loading
+    if (!user && !guestCountry) return;
 
     // Build cache key from config values
     const providerKey = Array.from(providerIds).sort().join(",");
@@ -127,14 +128,26 @@ function AppContent() {
     loadHomeRows(true);
   }, [homeInitialized, providerIds, mediaType, user, guestCountry, showAllForUser, countries]);
 
-  // Persist guest country across refreshes; default stays US for first-time visitors.
+  // Detect country from IP on first visit (no saved country)
   useEffect(() => {
     if (user) return;
+    if (guestCountry) return; // Already have a country
+    getGeoCountry().then((country) => {
+      setGuestCountry(country);
+    });
+  }, [user, guestCountry]);
+
+  // Persist guest country across refreshes
+  useEffect(() => {
+    if (user) return;
+    if (!guestCountry) return; // Don't persist empty
     localStorage.setItem(GUEST_COUNTRY_STORAGE_KEY, guestCountry);
   }, [user, guestCountry]);
 
+  // Fallback if detected country isn't in available regions
   useEffect(() => {
     if (!regions.length) return;
+    if (!guestCountry) return;
     if (regions.some((r) => r.iso_3166_1 === guestCountry)) return;
     const fallback = regions.some((r) => r.iso_3166_1 === "US") ? "US" : regions[0].iso_3166_1;
     setGuestCountry(fallback);
@@ -293,7 +306,7 @@ function AppContent() {
 
   const sectionMap = new Map(sections.map((s) => [s.id, s]));
   const unfilteredMode = !user || showAllForUser;
-  const discoveryCountry = user ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY) : guestCountry;
+  const discoveryCountry = user ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY) : (guestCountry || DEFAULT_ONBOARDING_COUNTRY);
 
   if (authLoading) {
     return (
