@@ -13,6 +13,7 @@
 
   --font-display: "Fraunces", serif;
   --font-body: "Space Grotesk", "Segoe UI", sans-serif;
+  --font-emoji: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
 }
 
 html.light {
@@ -28,7 +29,7 @@ html.light {
 }
 
 body {
-  font-family: var(--font-body);
+  font-family: var(--font-body), var(--font-emoji);
   background: radial-gradient(
       1200px 600px at 20% -10%,
       rgba(229, 9, 20, 0.18),

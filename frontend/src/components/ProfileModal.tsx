@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../hooks/useAuth";
-import { changeEmail, changePassword } from "../api/auth";
+import { changeEmail, changePassword, deleteAccount } from "../api/auth";
 import { ApiError } from "../api/client";
 
 interface Props {
@@ -10,7 +10,7 @@ interface Props {
 }
 
 export default function ProfileModal({ open, onClose }: Props) {
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, logout } = useAuth();
 
   const [emailPassword, setEmailPassword] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -25,6 +25,11 @@ export default function ProfileModal({ open, onClose }: Props) {
   const [pwErr, setPwErr] = useState("");
   const [pwLoading, setPwLoading] = useState(false);
 
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deletePw, setDeletePw] = useState("");
+  const [deleteErr, setDeleteErr] = useState("");
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   const resetFields = () => {
     setEmailPassword("");
     setNewEmail("");
@@ -35,6 +40,9 @@ export default function ProfileModal({ open, onClose }: Props) {
     setConfirmPw("");
     setPwMsg("");
     setPwErr("");
+    setDeleteConfirm(false);
+    setDeletePw("");
+    setDeleteErr("");
   };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
@@ -74,6 +82,21 @@ export default function ProfileModal({ open, onClose }: Props) {
       setPwErr(err instanceof ApiError ? err.message : "Failed to update password");
     } finally {
       setPwLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDeleteErr("");
+    setDeleteLoading(true);
+    try {
+      await deleteAccount(deletePw);
+      logout();
+      onClose();
+    } catch (err) {
+      setDeleteErr(err instanceof ApiError ? err.message : "Failed to delete account");
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -194,6 +217,57 @@ export default function ProfileModal({ open, onClose }: Props) {
                 {pwLoading ? "..." : "Update password"}
               </button>
             </form>
+
+            {/* Delete Account */}
+            <div className="mt-10 pt-6 border-t border-border">
+              <h4 className="text-sm font-semibold text-red-400 mb-2">Delete account</h4>
+              {!deleteConfirm ? (
+                <button
+                  onClick={() => setDeleteConfirm(true)}
+                  className="w-full py-2.5 font-semibold rounded-lg border border-red-500/50 text-red-400 hover:bg-red-500/10 transition-colors text-sm"
+                >
+                  Delete my account
+                </button>
+              ) : (
+                <form onSubmit={handleDeleteAccount} className="flex flex-col gap-3">
+                  <p className="text-sm text-muted">
+                    This will permanently delete your account and all your data. This action cannot be undone.
+                  </p>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Enter your password to confirm"
+                    value={deletePw}
+                    onChange={(e) => setDeletePw(e.target.value)}
+                    autoComplete="current-password"
+                    className={inputClass}
+                  />
+                  {deleteErr && (
+                    <div className="text-sm text-red-400 bg-red-400/10 rounded-lg px-3 py-2">{deleteErr}</div>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteConfirm(false);
+                        setDeletePw("");
+                        setDeleteErr("");
+                      }}
+                      className="flex-1 py-2.5 font-semibold rounded-lg border border-border text-text hover:bg-white/5 transition-colors text-sm"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={deleteLoading}
+                      className="flex-1 py-2.5 font-semibold rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 text-sm"
+                    >
+                      {deleteLoading ? "..." : "Delete forever"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
             </div>
           </motion.div>
         </motion.div>

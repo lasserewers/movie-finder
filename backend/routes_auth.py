@@ -113,3 +113,26 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
         raise HTTPException(status_code=401, detail="User not found")
     set_auth_cookies(response, user.id)
     return {"ok": True}
+
+
+class DeleteAccountRequest(BaseModel):
+    password: str
+
+
+@router.post("/delete-account")
+async def delete_account(body: DeleteAccountRequest, response: Response, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    if not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=403, detail="Incorrect password")
+
+    # Delete user preferences first (foreign key constraint)
+    prefs_result = await db.execute(select(UserPreferences).where(UserPreferences.user_id == user.id))
+    prefs = prefs_result.scalar_one_or_none()
+    if prefs:
+        await db.delete(prefs)
+
+    # Delete user
+    await db.delete(user)
+    await db.commit()
+
+    clear_auth_cookies(response)
+    return {"ok": True}

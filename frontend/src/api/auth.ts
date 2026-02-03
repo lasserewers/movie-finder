@@ -45,3 +45,10 @@ export async function changePassword(currentPassword: string, newPassword: strin
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   });
 }
+
+export async function deleteAccount(password: string): Promise<void> {
+  await apiFetch("/api/auth/delete-account", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
