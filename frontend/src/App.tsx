@@ -104,7 +104,7 @@ function AppContent() {
     // Build cache key from config values
     const providerKey = Array.from(providerIds).sort().join(",");
     const countryKey = countries.join(",");
-    const newCacheKey = `${user?.id || "guest"}:${providerKey}:${countryKey}:${guestCountry}:${showAllForUser}`;
+    const newCacheKey = `${user?.email || "guest"}:${providerKey}:${countryKey}:${guestCountry}:${showAllForUser}`;
 
     // Clear cache if config changed
     if (cacheKeyRef.current !== newCacheKey) {
