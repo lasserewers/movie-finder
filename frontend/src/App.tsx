@@ -122,6 +122,8 @@ function AppContent() {
       return;
     }
 
+    // Clear sections immediately to show loading spinner
+    setSections([]);
     loadHomeRows(true);
   }, [homeInitialized, providerIds, mediaType, user, guestCountry, showAllForUser, countries]);
 
