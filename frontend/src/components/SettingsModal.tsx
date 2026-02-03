@@ -17,7 +17,7 @@ interface Props {
 }
 
 export default function SettingsModal({ open, onClose, onSaved, countryNameMap }: Props) {
-  const { providerIds, countries, allProviders, saveConfig, loadProviders } = useConfig();
+  const { providerIds, countries, allProviders, saveConfig, loadProviders, expandIds } = useConfig();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [search, setSearch] = useState("");
@@ -77,8 +77,14 @@ export default function SettingsModal({ open, onClose, onSaved, countryNameMap }
   const toggle = (id: number) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        // Add the provider and auto-expand to include variants
+        next.add(id);
+        const expanded = expandIds(next, providers);
+        return expanded;
+      }
       return next;
     });
   };

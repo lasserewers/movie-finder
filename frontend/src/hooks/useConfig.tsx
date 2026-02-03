@@ -19,6 +19,7 @@ interface ConfigContextValue {
   setTheme: (theme: string) => Promise<void>;
   loadProviders: (country?: string) => Promise<ProviderInfo[]>;
   expandedProviderIds: () => Set<number>;
+  expandIds: (ids: Set<number>, providers: ProviderInfo[]) => Set<number>;
 }
 
 const ConfigContext = createContext<ConfigContextValue | null>(null);
@@ -132,6 +133,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     return expandProviders(providerIds, allProviders);
   }, [providerIds, allProviders]);
 
+  const expandIds = useCallback((ids: Set<number>, providers: ProviderInfo[]) => {
+    return expandProviders(ids, providers);
+  }, []);
+
   return (
     <ConfigContext.Provider
       value={{
@@ -145,6 +150,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         setTheme,
         loadProviders,
         expandedProviderIds,
+        expandIds,
       }}
     >
       {children}
