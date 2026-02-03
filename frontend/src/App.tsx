@@ -337,7 +337,7 @@ function AppContent() {
             onLoginClick={() => setAuthModalOpen(true)}
           />
           <div className="flex flex-col items-end gap-2 flex-shrink-0 max-sm:items-stretch">
-            {!user && regions.length > 0 && (
+            {!user && regions.length > 0 && guestCountry && (
               <select
                 value={guestCountry}
                 onChange={(e) => setGuestCountry(e.target.value)}
