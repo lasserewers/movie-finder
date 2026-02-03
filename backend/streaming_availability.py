@@ -39,20 +39,24 @@ async def get_streaming_links(tmdb_id: int, media_type: str = "movie") -> dict:
         for opt in options:
             service = opt.get("service", {})
             price = opt.get("price", {})
+            expires_on = opt.get("expiresOn")
             entry = {
                 "service_id": service.get("id", ""),
                 "service_name": service.get("name", ""),
                 "type": opt.get("type", ""),
                 "link": opt.get("link", ""),
-                "quality": opt.get("quality", ""),
+                "quality": opt.get("quality") or None,
                 "audios": [a.get("language", "") for a in opt.get("audios", [])],
                 "subtitles": [s.get("locale", {}).get("language", "") for s in opt.get("subtitles", [])],
-                "expires_on": opt.get("expiresOn", 0),
             }
-            if price:
-                entry["price"] = price.get("formatted", "")
-                entry["price_amount"] = price.get("amount", 0)
-                entry["price_currency"] = price.get("currency", "")
+            if expires_on:
+                entry["expires_on"] = expires_on
+            if price and price.get("formatted"):
+                entry["price"] = price.get("formatted")
+            if price and price.get("amount"):
+                entry["price_amount"] = price.get("amount")
+            if price and price.get("currency"):
+                entry["price_currency"] = price.get("currency")
             entries.append(entry)
         if entries:
             streaming[country] = entries

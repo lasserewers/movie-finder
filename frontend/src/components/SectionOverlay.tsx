@@ -127,7 +127,7 @@ export default function SectionOverlay({
             </div>
 
             <div ref={panelRef} className="flex-1 overflow-auto p-6 sm:p-8 pt-4 sm:pt-4">
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-4">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3 sm:gap-4">
               {results.map((m, i) => (
                 <MovieCard
                   key={m.id}

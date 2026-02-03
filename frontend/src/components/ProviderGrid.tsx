@@ -12,10 +12,19 @@ function countryFlag(code: string) {
 
 interface DeepLink {
   link?: string;
-  quality?: string;
-  price?: string;
+  quality?: string | number;
+  price?: string | number;
   audios?: string[];
   expires_on?: number;
+}
+
+function toDeepLink(l: StreamingLink): DeepLink {
+  return {
+    link: l.link,
+    quality: l.quality,
+    audios: l.audios,
+    expires_on: l.expires_on,
+  };
 }
 
 function findDeepLink(
@@ -30,12 +39,12 @@ function findDeepLink(
   for (const l of links) {
     if (l.service_name.toLowerCase() !== norm) continue;
     if (["flatrate", "free", "ads"].includes(type) && ["subscription", "free", "addon"].includes(l.type))
-      return l;
+      return toDeepLink(l);
     if ((type === "rent" || type === "buy" || type === "rent/buy") && (l.type === "rent" || l.type === "buy"))
-      return l;
+      return toDeepLink(l);
   }
   for (const l of links) {
-    if (l.service_name.toLowerCase() === norm) return l;
+    if (l.service_name.toLowerCase() === norm) return toDeepLink(l);
   }
   return null;
 }
@@ -70,17 +79,18 @@ function ProviderCard({ provider, countryCode, streamingLinks, isGuest }: CardPr
       )}
       <span className="text-[0.68rem] sm:text-[0.8rem] leading-tight text-center">{provider.provider_name}</span>
       <span className="text-[0.56rem] sm:text-[0.65rem] text-muted uppercase">{typeLabel}</span>
-      {deep?.quality && QUALITY_LABELS[deep.quality] && (
+      {deep?.quality && typeof deep.quality === "string" && QUALITY_LABELS[deep.quality] && (
         <span className="text-[0.55rem] sm:text-[0.6rem] font-bold bg-panel-2 px-1.5 py-0.5 rounded">{QUALITY_LABELS[deep.quality]}</span>
       )}
-      {deep?.price && <span className="text-[0.62rem] sm:text-[0.7rem] font-semibold text-yellow-400">{deep.price}</span>}
-      {deep?.expires_on && (() => {
+      {(() => {
+        if (!deep?.expires_on) return null;
         const days = Math.ceil((deep.expires_on * 1000 - Date.now()) / 86400000);
-        return days > 0 && days <= 30 ? (
+        if (days <= 0 || days > 30) return null;
+        return (
           <span className="text-[0.55rem] sm:text-[0.6rem] font-semibold bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded">
             Leaving in {days}d
           </span>
-        ) : null;
+        );
       })()}
     </>
   );

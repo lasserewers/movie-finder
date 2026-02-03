@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { ConfigProvider, useConfig } from "./hooks/useConfig";
 import Topbar from "./components/Topbar";
@@ -58,6 +58,21 @@ function AppContent() {
   const [homeLoading, setHomeLoading] = useState(false);
   const [homeInitialized, setHomeInitialized] = useState(false);
 
+  // Cache for each media type to avoid refetching on toggle
+  const sectionsCacheRef = useRef<Record<MediaType, { sections: HomeSection[]; page: number; hasMore: boolean } | null>>({
+    mix: null,
+    movie: null,
+    tv: null,
+  });
+  // Track cache key to know when to invalidate
+  const cacheKeyRef = useRef<string>("");
+  // Prefetch cache for next page
+  const prefetchCacheRef = useRef<Record<MediaType, { page: number; data: HomeSection[]; hasMore: boolean } | null>>({
+    mix: null,
+    movie: null,
+    tv: null,
+  });
+
   const [regions, setRegions] = useState<Region[]>([]);
   const [countryNameMap, setCountryNameMap] = useState<Record<string, string>>({});
 
@@ -85,6 +100,28 @@ function AppContent() {
   // Load home rows when config is ready or media type changes
   useEffect(() => {
     if (!homeInitialized) return;
+
+    // Build cache key from config values
+    const providerKey = Array.from(providerIds).sort().join(",");
+    const countryKey = countries.join(",");
+    const newCacheKey = `${user?.id || "guest"}:${providerKey}:${countryKey}:${guestCountry}:${showAllForUser}`;
+
+    // Clear cache if config changed
+    if (cacheKeyRef.current !== newCacheKey) {
+      cacheKeyRef.current = newCacheKey;
+      sectionsCacheRef.current = { mix: null, movie: null, tv: null };
+      prefetchCacheRef.current = { mix: null, movie: null, tv: null };
+    }
+
+    // Check if we have cached data for this media type
+    const cached = sectionsCacheRef.current[mediaType];
+    if (cached) {
+      setSections(cached.sections);
+      setHomePage(cached.page);
+      setHomeHasMore(cached.hasMore);
+      return;
+    }
+
     loadHomeRows(true);
   }, [homeInitialized, providerIds, mediaType, user, guestCountry, showAllForUser, countries]);
 
@@ -112,11 +149,55 @@ function AppContent() {
     if (!user) setShowAllForUser(false);
   }, [user]);
 
+  // Prefetch next page in background
+  const prefetchNextPage = useCallback(
+    async (nextPage: number, currentMediaType: MediaType) => {
+      const unfiltered = !user || showAllForUser;
+      const country = unfiltered ? (user ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY) : guestCountry) : undefined;
+      const ids = unfiltered ? [] : Array.from(providerIds);
+      try {
+        const data = await getHome(nextPage, 6, ids, currentMediaType, country, unfiltered);
+        prefetchCacheRef.current[currentMediaType] = {
+          page: nextPage,
+          data: data.sections || [],
+          hasMore: data.has_more ?? false,
+        };
+      } catch {
+        // Prefetch failed, ignore
+      }
+    },
+    [user, showAllForUser, countries, guestCountry, providerIds]
+  );
+
   const loadHomeRows = useCallback(
     async (reset = false) => {
       if (!reset && homeLoading) return;
       const page = reset ? 1 : homePage;
       if (!reset && !homeHasMore) return;
+
+      // Check if we have prefetched data for this page
+      const prefetched = prefetchCacheRef.current[mediaType];
+      if (!reset && prefetched && prefetched.page === page) {
+        const prefetchedSections = prefetched.data;
+        const prefetchedHasMore = prefetched.hasMore;
+        prefetchCacheRef.current[mediaType] = null;
+
+        setSections((prev) => {
+          const existingIds = new Set(prev.map((s) => s.id));
+          const added = prefetchedSections.filter((s) => !existingIds.has(s.id));
+          const merged = [...prev, ...added];
+          sectionsCacheRef.current[mediaType] = { sections: merged, page: page + 1, hasMore: prefetchedHasMore };
+          return merged;
+        });
+        setHomeHasMore(prefetchedHasMore);
+        setHomePage(page + 1);
+
+        // Prefetch the next page
+        if (prefetchedHasMore) {
+          prefetchNextPage(page + 1, mediaType);
+        }
+        return;
+      }
 
       setHomeLoading(true);
       try {
@@ -124,24 +205,43 @@ function AppContent() {
         const country = unfiltered ? (user ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY) : guestCountry) : undefined;
         const ids = unfiltered ? [] : Array.from(providerIds);
         const data = await getHome(page, 6, ids, mediaType, country, unfiltered);
+        const newHasMore = data.has_more ?? false;
+        const newPage = data.next_page ?? page + 1;
+
         if (reset) {
-          setSections(data.sections || []);
+          const newSections = data.sections || [];
+          setSections(newSections);
+          setHomeHasMore(newHasMore);
+          setHomePage(newPage);
+          sectionsCacheRef.current[mediaType] = { sections: newSections, page: newPage, hasMore: newHasMore };
+
+          // Prefetch the next page after initial load
+          if (newHasMore) {
+            prefetchNextPage(newPage, mediaType);
+          }
         } else {
           setSections((prev) => {
             const existingIds = new Set(prev.map((s) => s.id));
-            const newSections = (data.sections || []).filter((s) => !existingIds.has(s.id));
-            return [...prev, ...newSections];
+            const added = (data.sections || []).filter((s) => !existingIds.has(s.id));
+            const merged = [...prev, ...added];
+            sectionsCacheRef.current[mediaType] = { sections: merged, page: newPage, hasMore: newHasMore };
+            return merged;
           });
+          setHomeHasMore(newHasMore);
+          setHomePage(newPage);
+
+          // Prefetch the next page
+          if (newHasMore) {
+            prefetchNextPage(newPage, mediaType);
+          }
         }
-        setHomeHasMore(data.has_more ?? false);
-        setHomePage(data.next_page ?? page + 1);
       } catch {
         setHomeHasMore(false);
       } finally {
         setHomeLoading(false);
       }
     },
-    [homeLoading, homePage, homeHasMore, providerIds, mediaType, user, guestCountry, showAllForUser, countries]
+    [homeLoading, homePage, homeHasMore, providerIds, mediaType, user, guestCountry, showAllForUser, countries, prefetchNextPage]
   );
 
   const sentinelRef = useInfiniteScroll(
@@ -238,24 +338,24 @@ function AppContent() {
             {user && (
               <button
                 onClick={() => setShowAllForUser((prev) => !prev)}
-                aria-pressed={showAllForUser}
+                aria-pressed={!showAllForUser}
                 className={`h-[42px] w-[248px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 max-sm:w-full ${
-                  showAllForUser
+                  !showAllForUser
                     ? "border-accent/60 bg-accent/10 text-text"
                     : "border-border bg-panel text-text"
                 }`}
               >
-                <span className="truncate">{showAllForUser ? "Showing everything" : "Only my services"}</span>
+                <span className="truncate">{showAllForUser ? "Showing everything" : "Showing only my services"}</span>
                 <span
-                  className={`relative h-5 w-9 rounded-full border transition-colors ${
-                    showAllForUser
+                  className={`relative h-5 w-9 flex-shrink-0 rounded-full border transition-colors ${
+                    !showAllForUser
                       ? "bg-accent border-accent"
                       : "bg-panel-2 border-border"
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                      showAllForUser ? "translate-x-4" : ""
+                    className={`absolute inset-y-0 my-auto left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                      !showAllForUser ? "translate-x-4" : ""
                     }`}
                   />
                 </span>
