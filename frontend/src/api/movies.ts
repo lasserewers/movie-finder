@@ -101,14 +101,20 @@ export async function getHome(
   providerIds: number[],
   mediaType: MediaType = "mix",
   country?: string,
-  unfiltered = false
+  unfiltered = false,
+  vpn = false,
+  includePaid = false,
+  countries?: string[]
 ): Promise<HomeResponse> {
   const ids = providerIds.join(",");
   const providerParam = ids ? `&provider_ids=${ids}` : (unfiltered ? "&provider_ids=," : "");
   const countryParam = country ? `&country=${encodeURIComponent(country)}` : "";
   const unfilteredParam = unfiltered ? "&unfiltered=1" : "";
+  const vpnParam = vpn ? "&vpn=1" : "";
+  const includePaidParam = includePaid ? "&include_paid=1" : "";
+  const countriesParam = countries && countries.length ? `&countries=${encodeURIComponent(countries.join(","))}` : "";
   return apiFetch(
-    `/api/home?page=${page}&page_size=${pageSize}${providerParam}${countryParam}${unfilteredParam}&media_type=${mediaType}`
+    `/api/home?page=${page}&page_size=${pageSize}${providerParam}${countryParam}${countriesParam}${unfilteredParam}${vpnParam}${includePaidParam}&media_type=${mediaType}`
   );
 }
 
@@ -120,15 +126,21 @@ export async function getSection(
   cursor?: string,
   mediaType: MediaType = "mix",
   country?: string,
-  unfiltered = false
+  unfiltered = false,
+  vpn = false,
+  includePaid = false,
+  countries?: string[]
 ): Promise<HomeSection & { next_cursor?: string }> {
   const ids = providerIds.join(",");
   const providerParam = ids ? `&provider_ids=${ids}` : (unfiltered ? "&provider_ids=," : "");
   const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
   const countryParam = country ? `&country=${encodeURIComponent(country)}` : "";
+  const countriesParam = countries && countries.length ? `&countries=${encodeURIComponent(countries.join(","))}` : "";
   const unfilteredParam = unfiltered ? "&unfiltered=1" : "";
+  const vpnParam = vpn ? "&vpn=1" : "";
+  const includePaidParam = includePaid ? "&include_paid=1" : "";
   return apiFetch(
-    `/api/section?section_id=${encodeURIComponent(sectionId)}&page=${page}&pages=${pages}${providerParam}${cursorParam}${countryParam}${unfilteredParam}&media_type=${mediaType}`
+    `/api/section?section_id=${encodeURIComponent(sectionId)}&page=${page}&pages=${pages}${providerParam}${cursorParam}${countryParam}${countriesParam}${unfilteredParam}${vpnParam}${includePaidParam}&media_type=${mediaType}`
   );
 }
 

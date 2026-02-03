@@ -12,6 +12,7 @@ interface Props {
   onOpenSettings: () => void;
   onOpenCountries: () => void;
   mediaType: MediaType;
+  vpnEnabled?: boolean;
 }
 
 export default function Topbar({
@@ -21,6 +22,7 @@ export default function Topbar({
   onOpenSettings,
   onOpenCountries,
   mediaType,
+  vpnEnabled = false,
 }: Props) {
   const { user } = useAuth();
   const { theme } = useConfig();
@@ -63,7 +65,13 @@ export default function Topbar({
         />
       </div>
       <div className="flex flex-1 justify-end max-sm:order-3 max-sm:basis-full">
-        <SearchBar onSelectMovie={onSelectMovie} mediaType={mediaType} showFilterToggle={!!user} onOpenSettings={onOpenSettings} />
+        <SearchBar
+          onSelectMovie={onSelectMovie}
+          mediaType={mediaType}
+          showFilterToggle={!!user}
+          onOpenSettings={onOpenSettings}
+          vpnEnabled={vpnEnabled}
+        />
       </div>
       <div className="flex-shrink-0 max-sm:order-2 max-sm:ml-auto">
         {user ? (

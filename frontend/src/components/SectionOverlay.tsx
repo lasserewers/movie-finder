@@ -12,7 +12,10 @@ interface Props {
   onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
   mediaType?: MediaType;
   country?: string;
+  countries?: string[];
   unfiltered?: boolean;
+  vpn?: boolean;
+  includePaid?: boolean;
 }
 
 export default function SectionOverlay({
@@ -21,7 +24,10 @@ export default function SectionOverlay({
   onSelectMovie,
   mediaType = "mix",
   country,
+  countries,
   unfiltered = false,
+  vpn = false,
+  includePaid = false,
 }: Props) {
   const { providerIds } = useConfig();
   const [results, setResults] = useState<Movie[]>([]);
@@ -46,7 +52,7 @@ export default function SectionOverlay({
     setResults([]);
     setHasMore(true);
     loadMore();
-  }, [section?.id, country, unfiltered]);
+  }, [section?.id, country, countries, unfiltered, vpn, includePaid]);
 
   const loadMore = useCallback(async () => {
     if (!section || loading) return;
@@ -65,7 +71,10 @@ export default function SectionOverlay({
         s.nextCursor || undefined,
         mediaType,
         country,
-        unfiltered
+        unfiltered,
+        vpn,
+        includePaid,
+        countries
       );
       const items = (data.results || []).filter((m) => {
         if (seenRef.current.has(m.id)) return false;
@@ -86,7 +95,7 @@ export default function SectionOverlay({
     } finally {
       setLoading(false);
     }
-  }, [section, loading, providerIds, results.length, mediaType, country, unfiltered]);
+  }, [section, loading, providerIds, results.length, mediaType, country, countries, unfiltered, vpn, includePaid]);
 
   const sentinelRef = useInfiniteScroll(loadMore, hasMore && !loading, panelRef.current);
 
@@ -116,7 +125,17 @@ export default function SectionOverlay({
             <div className="flex items-start justify-between p-6 sm:p-8 pb-0 sm:pb-0">
               <div>
                 <h3 className="font-display text-2xl">{section.title}</h3>
-                <p className="text-sm text-muted mt-1">{unfiltered ? `Popular in ${country || "US"}` : "Available on your services"}</p>
+                <p className="text-sm text-muted mt-1">
+                  {unfiltered
+                    ? `Popular in ${country || "US"}`
+                    : includePaid
+                      ? vpn
+                        ? "Available on your services (stream, rent, or buy) worldwide"
+                        : "Available on your services (stream, rent, or buy) in your countries"
+                      : vpn
+                        ? "Streamable on your services worldwide"
+                        : "Streamable on your services in your countries"}
+                </p>
               </div>
               <button
                 onClick={onClose}

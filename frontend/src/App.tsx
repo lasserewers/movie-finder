@@ -10,6 +10,7 @@ import AuthModal from "./components/AuthModal";
 import SettingsModal from "./components/SettingsModal";
 import ProfileModal from "./components/ProfileModal";
 import OnboardingModal from "./components/OnboardingModal";
+import VpnPromptModal from "./components/VpnPromptModal";
 import { SkeletonRow } from "./components/Skeleton";
 import Spinner from "./components/Spinner";
 import { useInfiniteScroll } from "./hooks/useInfiniteScroll";
@@ -21,7 +22,18 @@ const MEDIA_OPTIONS: { value: MediaType; label: string }[] = [
   { value: "tv", label: "TV Shows" },
 ];
 const GUEST_COUNTRY_STORAGE_KEY = "guest_country";
+const USER_VIEW_PREFS_STORAGE_PREFIX = "user_view_prefs:";
 const DEFAULT_ONBOARDING_COUNTRY = "US";
+type UserContentMode = "all" | "available" | "streamable";
+const USER_CONTENT_LABEL: Record<UserContentMode, string> = {
+  all: "All content",
+  available: "Available",
+  streamable: "Streamable",
+};
+
+function userViewPrefsKey(email: string) {
+  return `${USER_VIEW_PREFS_STORAGE_PREFIX}${email.trim().toLowerCase()}`;
+}
 
 function countryFlag(code: string) {
   return String.fromCodePoint(...[...code.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
@@ -36,14 +48,18 @@ function AppContent() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [countriesModalOpen, setCountriesModalOpen] = useState(false);
+  const [vpnPromptOpen, setVpnPromptOpen] = useState(false);
+  const [vpnPromptCountryCount, setVpnPromptCountryCount] = useState(1);
   const [isOnboarding, setIsOnboarding] = useState(false);
+  const [pendingVpnPrompt, setPendingVpnPrompt] = useState(false);
   const [selectedMovie, setSelectedMovie] = useState<number | null>(null);
   const [selectedMovieType, setSelectedMovieType] = useState<"movie" | "tv">("movie");
   const [selectedSection, setSelectedSection] = useState<HomeSection | null>(null);
   const [mediaType, setMediaType] = useState<MediaType>("mix");
   const [rowResetToken, setRowResetToken] = useState(0);
-  const [showAllForUser, setShowAllForUser] = useState(false);
+  const [userContentMode, setUserContentMode] = useState<UserContentMode>("streamable");
   const [usingVpn, setUsingVpn] = useState(false);
+  const [viewPrefsReady, setViewPrefsReady] = useState(false);
   const [guestCountry, setGuestCountry] = useState(() => {
     try {
       return localStorage.getItem(GUEST_COUNTRY_STORAGE_KEY) || "";
@@ -74,6 +90,7 @@ function AppContent() {
   });
   // Track if user was previously logged in (to detect logout)
   const wasLoggedInRef = useRef(false);
+  const hasStoredContentModePrefRef = useRef(false);
 
   const [regions, setRegions] = useState<Region[]>([]);
   const [countryNameMap, setCountryNameMap] = useState<Record<string, string>>({});
@@ -108,7 +125,7 @@ function AppContent() {
     // Build cache key from config values
     const providerKey = Array.from(providerIds).sort().join(",");
     const countryKey = countries.join(",");
-    const newCacheKey = `${user?.email || "guest"}:${providerKey}:${countryKey}:${guestCountry}:${showAllForUser}`;
+    const newCacheKey = `${user?.email || "guest"}:${providerKey}:${countryKey}:${guestCountry}:${userContentMode}:${usingVpn}`;
 
     // Clear cache if config changed
     if (cacheKeyRef.current !== newCacheKey) {
@@ -129,7 +146,7 @@ function AppContent() {
     // Clear sections immediately to show loading spinner
     setSections([]);
     loadHomeRows(true);
-  }, [homeInitialized, providerIds, mediaType, user, guestCountry, showAllForUser, countries]);
+  }, [homeInitialized, providerIds, mediaType, user, guestCountry, userContentMode, usingVpn, countries]);
 
   // Clear guest country on logout so geo-detection runs again
   useEffect(() => {
@@ -159,6 +176,47 @@ function AppContent() {
     localStorage.setItem(GUEST_COUNTRY_STORAGE_KEY, guestCountry);
   }, [user, guestCountry]);
 
+  // Load persisted user view prefs (VPN + content mode).
+  useEffect(() => {
+    if (!user?.email) {
+      hasStoredContentModePrefRef.current = false;
+      setViewPrefsReady(false);
+      setUsingVpn(false);
+      setUserContentMode("streamable");
+      return;
+    }
+
+    hasStoredContentModePrefRef.current = false;
+    let nextUsingVpn = false;
+    let nextMode: UserContentMode | null = null;
+
+    try {
+      const raw = localStorage.getItem(userViewPrefsKey(user.email));
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          usingVpn?: unknown;
+          contentMode?: unknown;
+          showAllForUser?: unknown;
+        };
+        if (typeof parsed.usingVpn === "boolean") nextUsingVpn = parsed.usingVpn;
+        if (parsed.contentMode === "all" || parsed.contentMode === "available" || parsed.contentMode === "streamable") {
+          nextMode = parsed.contentMode;
+          hasStoredContentModePrefRef.current = true;
+        } else if (typeof parsed.showAllForUser === "boolean") {
+          // Backward compatibility with previous boolean setting.
+          nextMode = parsed.showAllForUser ? "available" : "streamable";
+          hasStoredContentModePrefRef.current = true;
+        }
+      }
+    } catch {
+      // Ignore malformed localStorage values.
+    }
+
+    setUsingVpn(nextUsingVpn);
+    if (nextMode !== null) setUserContentMode(nextMode);
+    setViewPrefsReady(true);
+  }, [user?.email]);
+
   // Fallback if detected country isn't in available regions
   useEffect(() => {
     if (!regions.length) return;
@@ -177,24 +235,47 @@ function AppContent() {
 
   useEffect(() => {
     if (!user) {
-      setShowAllForUser(false);
-    } else if (providerIds.size === 0) {
-      // Default to "All content" when user has no services
-      setShowAllForUser(true);
-    } else {
-      // Default to "My services" when user has services
-      setShowAllForUser(false);
+      setUserContentMode("streamable");
+      return;
     }
-  }, [user, providerIds.size]);
+    if (!viewPrefsReady) return;
+    if (hasStoredContentModePrefRef.current) return;
+    if (providerIds.size === 0) {
+      // With no services, default to fully unfiltered content.
+      setUserContentMode("all");
+    } else {
+      // With services, default to stream-only.
+      setUserContentMode("streamable");
+    }
+  }, [user, providerIds.size, viewPrefsReady]);
+
+  // Persist VPN + content mode across logout/login.
+  useEffect(() => {
+    if (!user?.email || !viewPrefsReady) return;
+    try {
+      localStorage.setItem(
+        userViewPrefsKey(user.email),
+        JSON.stringify({
+          usingVpn,
+          contentMode: userContentMode,
+        })
+      );
+    } catch {
+      // Ignore localStorage write failures.
+    }
+  }, [user?.email, viewPrefsReady, usingVpn, userContentMode]);
 
   // Prefetch next page in background
   const prefetchNextPage = useCallback(
     async (nextPage: number, currentMediaType: MediaType) => {
-      const unfiltered = !user || showAllForUser;
-      const country = unfiltered ? (user ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY) : guestCountry) : undefined;
+      const isGuest = !user;
+      const unfiltered = isGuest || userContentMode === "all";
+      const includePaid = !!user && userContentMode === "available";
+      const country = unfiltered ? guestCountry : undefined;
+      const scopedCountries = user && !usingVpn ? countries : undefined;
       const ids = unfiltered ? [] : Array.from(providerIds);
       try {
-        const data = await getHome(nextPage, 6, ids, currentMediaType, country, unfiltered);
+        const data = await getHome(nextPage, 6, ids, currentMediaType, country, unfiltered, usingVpn, includePaid, scopedCountries);
         prefetchCacheRef.current[currentMediaType] = {
           page: nextPage,
           data: data.sections || [],
@@ -204,7 +285,7 @@ function AppContent() {
         // Prefetch failed, ignore
       }
     },
-    [user, showAllForUser, countries, guestCountry, providerIds]
+    [user, userContentMode, countries, guestCountry, providerIds, usingVpn]
   );
 
   const loadHomeRows = useCallback(
@@ -239,10 +320,13 @@ function AppContent() {
 
       setHomeLoading(true);
       try {
-        const unfiltered = !user || showAllForUser;
-        const country = unfiltered ? (user ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY) : guestCountry) : undefined;
+        const isGuest = !user;
+        const unfiltered = isGuest || userContentMode === "all";
+        const includePaid = !!user && userContentMode === "available";
+        const country = unfiltered ? guestCountry : undefined;
+        const scopedCountries = user && !usingVpn ? countries : undefined;
         const ids = unfiltered ? [] : Array.from(providerIds);
-        const data = await getHome(page, 6, ids, mediaType, country, unfiltered);
+        const data = await getHome(page, 6, ids, mediaType, country, unfiltered, usingVpn, includePaid, scopedCountries);
         const newHasMore = data.has_more ?? false;
         const newPage = data.next_page ?? page + 1;
 
@@ -279,7 +363,7 @@ function AppContent() {
         setHomeLoading(false);
       }
     },
-    [homeLoading, homePage, homeHasMore, providerIds, mediaType, user, guestCountry, showAllForUser, countries, prefetchNextPage]
+    [homeLoading, homePage, homeHasMore, providerIds, mediaType, user, guestCountry, userContentMode, countries, usingVpn, prefetchNextPage]
   );
 
   const sentinelRef = useInfiniteScroll(
@@ -303,6 +387,8 @@ function AppContent() {
     await saveConfig(Array.from(providerIds), chosenCountries);
     if (isOnboarding) {
       setIsOnboarding(false);
+      setPendingVpnPrompt(shouldOpenServices);
+      setVpnPromptCountryCount(Math.max(1, chosenCountries.length));
       if (shouldOpenServices) setSettingsOpen(true);
     }
   };
@@ -317,6 +403,19 @@ function AppContent() {
     loadHomeRows(true);
   };
 
+  const handleSettingsSaved = () => {
+    loadHomeRows(true);
+    if (pendingVpnPrompt) {
+      setPendingVpnPrompt(false);
+      setVpnPromptOpen(true);
+    }
+  };
+
+  const handleSettingsClose = () => {
+    setSettingsOpen(false);
+    if (pendingVpnPrompt) setPendingVpnPrompt(false);
+  };
+
   const handleSelectMovie = useCallback((id: number, mt?: "movie" | "tv") => {
     setSelectedMovie(id);
     setSelectedMovieType(mt || "movie");
@@ -328,8 +427,11 @@ function AppContent() {
   };
 
   const sectionMap = new Map(sections.map((s) => [s.id, s]));
-  const unfilteredMode = !user || showAllForUser;
-  const discoveryCountry = user ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY) : (guestCountry || DEFAULT_ONBOARDING_COUNTRY);
+  const unfilteredMode = !user || userContentMode === "all";
+  const includePaidMode = !!user && userContentMode === "available";
+  const discoveryCountry = user
+    ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY)
+    : (guestCountry || DEFAULT_ONBOARDING_COUNTRY);
 
   if (authLoading) {
     return (
@@ -349,22 +451,23 @@ function AppContent() {
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenCountries={() => setCountriesModalOpen(true)}
           mediaType={mediaType}
+          vpnEnabled={usingVpn}
         />
       </div>
 
       <main className="page-container flex-1 pt-2 pb-16">
-        <div className="flex items-start justify-between gap-6 mb-6 max-sm:flex-col max-sm:items-stretch max-sm:gap-3">
+        <div className="flex items-stretch justify-between gap-6 mb-6 max-sm:flex-col max-sm:gap-3">
           <HeroSection
-            className="mb-0 flex-1"
+            className="!mb-0 flex-1"
             showGuestPrompt={!user}
             onLoginClick={() => setAuthModalOpen(true)}
           />
-          <div className="flex flex-col items-end gap-2 flex-shrink-0 max-sm:items-stretch">
+          <div className="flex flex-col items-end justify-end gap-2 flex-shrink-0 max-sm:items-stretch max-sm:justify-start">
             {!user && regions.length > 0 && guestCountry && (
               <select
                 value={guestCountry}
                 onChange={(e) => setGuestCountry(e.target.value)}
-                className="h-[42px] w-[248px] px-3 border border-border rounded-full bg-panel text-text text-sm outline-none max-sm:w-full"
+                className="h-[42px] w-[270px] px-3 border border-border rounded-full bg-panel text-text text-sm outline-none max-sm:w-full"
               >
                 {regions.map((r) => (
                   <option key={r.iso_3166_1} value={r.iso_3166_1}>
@@ -394,40 +497,53 @@ function AppContent() {
                     }`}
                   >
                     <span
-                      className={`absolute inset-y-0 my-auto left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                      className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-white transition-transform ${
                         usingVpn ? "translate-x-4" : ""
                       }`}
                     />
                   </span>
                 </button>
-                {/* Showing only my services toggle - same width as media toggle (270px) */}
                 <button
                   onClick={() => {
-                    if (showAllForUser && providerIds.size === 0) {
-                      // User wants to switch to "My services" but has none - open settings
+                    const nextMode: UserContentMode =
+                      userContentMode === "all"
+                        ? "available"
+                        : userContentMode === "available"
+                          ? "streamable"
+                          : "all";
+                    if (providerIds.size === 0 && nextMode !== "all") {
                       setSettingsOpen(true);
-                    } else {
-                      setShowAllForUser((prev) => !prev);
+                      return;
                     }
+                    setUserContentMode(nextMode);
                   }}
-                  aria-pressed={!showAllForUser}
+                  aria-label={`Content mode: ${USER_CONTENT_LABEL[userContentMode]}`}
                   className={`h-[42px] w-[270px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 max-sm:flex-1 max-sm:w-0 ${
-                    !showAllForUser
+                    userContentMode === "streamable"
                       ? "border-accent/60 bg-accent/10 text-text"
-                      : "border-border bg-panel text-text"
+                      : userContentMode === "available"
+                        ? "border-accent/40 bg-accent/5 text-text"
+                        : "border-border bg-panel text-text"
                   }`}
                 >
-                  <span className="truncate">{showAllForUser ? "All content" : "My services"}</span>
+                  <span className="truncate">{USER_CONTENT_LABEL[userContentMode]}</span>
                   <span
-                    className={`relative h-5 w-9 flex-shrink-0 rounded-full border transition-colors ${
-                      !showAllForUser
-                        ? "bg-accent border-accent"
-                        : "bg-panel-2 border-border"
+                    className={`relative h-5 w-12 flex-shrink-0 rounded-full border overflow-hidden transition-colors ${
+                      userContentMode === "all"
+                        ? "bg-panel-2 border-border"
+                        : "bg-accent border-accent"
                     }`}
                   >
+                    <span className={`absolute left-[9px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${userContentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                    <span className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${userContentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                    <span className={`absolute right-[9px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${userContentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
                     <span
-                      className={`absolute inset-y-0 my-auto left-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
-                        !showAllForUser ? "translate-x-4" : ""
+                      className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-white transition-transform ${
+                        userContentMode === "available"
+                          ? "translate-x-[14px]"
+                          : userContentMode === "streamable"
+                            ? "translate-x-[28px]"
+                            : ""
                       }`}
                     />
                   </span>
@@ -520,7 +636,7 @@ function AppContent() {
               </>
             )}
             {!user && (
-              <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[248px] max-sm:w-full">
+              <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[270px] max-sm:w-full">
                 {MEDIA_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
@@ -565,7 +681,7 @@ function AppContent() {
             </div>
           )}
 
-          {!homeLoading && sections.length === 0 && user && (
+          {!homeLoading && sections.length === 0 && user && userContentMode !== "all" && (
             <div className="text-center text-muted py-12">
               Select streaming services to see available titles.
             </div>
@@ -591,13 +707,16 @@ function AppContent() {
         onSelectMovie={handleSelectMovie}
         mediaType={mediaType}
         country={unfilteredMode ? discoveryCountry : undefined}
+        countries={!unfilteredMode && !usingVpn ? countries : undefined}
         unfiltered={unfilteredMode}
+        vpn={usingVpn}
+        includePaid={includePaidMode}
       />
 
       <SettingsModal
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onSaved={() => loadHomeRows(true)}
+        onClose={handleSettingsClose}
+        onSaved={handleSettingsSaved}
         countryNameMap={countryNameMap}
       />
 
@@ -629,6 +748,16 @@ function AppContent() {
         open={authModalOpen}
         onClose={handleAuthClose}
         onSignupComplete={handleSignupComplete}
+      />
+
+      <VpnPromptModal
+        open={vpnPromptOpen}
+        onClose={() => setVpnPromptOpen(false)}
+        countryCount={vpnPromptCountryCount}
+        onSelect={(enabled) => {
+          setUsingVpn(enabled);
+          setVpnPromptOpen(false);
+        }}
       />
     </div>
   );

@@ -151,6 +151,8 @@ async def search_filtered(
     q: str = Query(..., min_length=1),
     provider_ids: str | None = None,
     media_type: str = "movie",
+    countries: str | None = None,
+    vpn: bool = False,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -158,17 +160,20 @@ async def search_filtered(
         media_type = "movie"
     target = 20
     max_pages = 4
+    prefs = await _get_user_prefs(db, user.id) if user else None
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
-    elif user:
-        prefs = await _get_user_prefs(db, user.id)
-        ids = set(prefs.provider_ids) if prefs else set()
+    elif prefs:
+        ids = set(prefs.provider_ids or [])
     else:
         ids = set()
+    user_countries = list(prefs.countries) if prefs and prefs.countries else []
+    requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
+    allowed_countries = (requested_countries or _normalize_country_codes(user_countries)) if not vpn else None
     if not ids:
         return {"results": [], "filtered": True}
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
-    flag_cache: dict[tuple[str, int], bool] = {}
+    flag_cache: dict[tuple[str, int, str], bool] = {}
 
     async def _search_and_filter(search_fn, mt: str):
         seen = set()
@@ -188,8 +193,8 @@ async def search_filtered(
                 break
             for m in raw:
                 _normalize_result(m)
-                if mt == "tv":
-                    m.setdefault("media_type", "tv")
+                # Search branch determines canonical media type for provider checks.
+                m["media_type"] = mt
                 mid = m.get("id")
                 if not mid or mid in seen:
                     continue
@@ -198,7 +203,15 @@ async def search_filtered(
             while buf and len(results) < target:
                 batch = buf[:chunk]
                 buf = buf[chunk:]
-                filtered = await _filter_results(batch, ids, semaphore, flag_cache, mt)
+                filtered = await _filter_results(
+                    batch,
+                    ids,
+                    semaphore,
+                    flag_cache,
+                    mt,
+                    include_paid=False,
+                    allowed_countries=allowed_countries,
+                )
                 for m in filtered:
                     results.append(m)
                     if len(results) >= target:
@@ -274,14 +287,28 @@ async def _get_watch_providers_cached(item_id: int, media_type: str = "movie") -
     return providers
 
 
+def _normalize_country_codes(countries: list[str] | None) -> set[str] | None:
+    if not countries:
+        return None
+    normalized = {
+        c.strip().upper()
+        for c in countries
+        if isinstance(c, str) and len(c.strip()) == 2 and c.strip().isalpha()
+    }
+    return normalized or None
+
+
 async def _item_has_provider(
     item_id: int,
     provider_ids: set[int],
     semaphore: asyncio.Semaphore,
-    flag_cache: dict[tuple[str, int], bool],
+    flag_cache: dict[tuple[str, int, str], bool],
     media_type: str = "movie",
+    include_paid: bool = False,
+    allowed_countries: set[str] | None = None,
+    country_scope_key: str = "*",
 ) -> bool:
-    cache_key = (media_type, item_id)
+    cache_key = (media_type, item_id, country_scope_key)
     if cache_key in flag_cache:
         return flag_cache[cache_key]
     async with semaphore:
@@ -290,8 +317,11 @@ async def _item_has_provider(
         except Exception:
             flag_cache[cache_key] = False
             return False
-    for region in providers.values():
-        for key in ("flatrate", "free", "ads"):
+    monetization_keys = ("flatrate", "free", "ads", "rent", "buy") if include_paid else ("flatrate", "free", "ads")
+    for region_code, region in providers.items():
+        if allowed_countries and str(region_code).upper() not in allowed_countries:
+            continue
+        for key in monetization_keys:
             for p in region.get(key, []):
                 if p.get("provider_id") in provider_ids:
                     flag_cache[cache_key] = True
@@ -304,8 +334,10 @@ async def _filter_results(
     results: list,
     provider_ids: set[int],
     semaphore: asyncio.Semaphore,
-    flag_cache: dict[tuple[str, int], bool],
+    flag_cache: dict[tuple[str, int, str], bool],
     media_type: str = "movie",
+    include_paid: bool = False,
+    allowed_countries: set[str] | None = None,
 ) -> list:
     seen = set()
     items = []
@@ -317,8 +349,22 @@ async def _filter_results(
         items.append(m)
     if not items:
         return []
+    country_scope_key = ",".join(sorted(allowed_countries)) if allowed_countries else "*"
+    country_scope_key = f"{country_scope_key}:{'all' if include_paid else 'stream'}"
     flags = await asyncio.gather(
-        *(_item_has_provider(m["id"], provider_ids, semaphore, flag_cache, m.get("media_type", media_type)) for m in items)
+        *(
+            _item_has_provider(
+                m["id"],
+                provider_ids,
+                semaphore,
+                flag_cache,
+                m.get("media_type", media_type),
+                include_paid=include_paid,
+                allowed_countries=allowed_countries,
+                country_scope_key=country_scope_key,
+            )
+            for m in items
+        )
     )
     return [m for m, ok in zip(items, flags) if ok]
 
@@ -742,7 +788,10 @@ async def home(
     page_size: int = 6,
     media_type: str = "mix",
     country: str | None = None,
+    countries: str | None = None,
     unfiltered: bool = False,
+    vpn: bool = False,
+    include_paid: bool = False,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -755,12 +804,13 @@ async def home(
         ids = set(prefs.provider_ids) if prefs.provider_ids else set()
     else:
         ids = set()
-    countries = list(prefs.countries) if prefs and prefs.countries else []
+    user_countries = list(prefs.countries) if prefs and prefs.countries else []
+    requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
 
     guest_country = _normalize_country_code(country)
     if unfiltered:
         if not guest_country:
-            fallback = countries[0] if countries else "US"
+            fallback = user_countries[0] if user_countries else "US"
             guest_country = _normalize_country_code(fallback) or "US"
         page = max(1, page)
         page_size = max(3, min(10, page_size))
@@ -773,14 +823,17 @@ async def home(
             return await _guest_home(page, page_size, media_type, guest_country)
         return {"sections": [], "filtered": True, "message": "Select streaming services to see available titles."}
 
+    allowed_countries = (requested_countries or _normalize_country_codes(user_countries)) if not vpn else None
+    section_countries = sorted(allowed_countries) if allowed_countries else user_countries
+    country_scope_key = ",".join(sorted(allowed_countries)) if allowed_countries else "*"
     page = max(1, page)
     page_size = max(3, min(10, page_size))
-    cache_key = f"{','.join(str(pid) for pid in sorted(ids))}:{','.join(countries)}:{page}:{page_size}:{media_type}"
+    cache_key = f"{','.join(str(pid) for pid in sorted(ids))}:{','.join(user_countries)}:{page}:{page_size}:{media_type}:vpn={int(vpn)}:paid={int(include_paid)}:scope={country_scope_key}"
     now = time.time()
     cached = HOME_CACHE.get(cache_key)
     if cached and (now - cached[0]) < HOME_CACHE_TTL:
         return cached[1]
-    sections_config = await _home_section_config(ids, countries, media_type)
+    sections_config = await _home_section_config(ids, section_countries, media_type)
     total_sections = len(sections_config)
     start = (page - 1) * page_size
     end = start + page_size
@@ -789,13 +842,21 @@ async def home(
     TARGET_ROW = 24
     MAX_PAGES = 3
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
-    flag_cache: dict[tuple[str, int], bool] = {}
+    flag_cache: dict[tuple[str, int, str], bool] = {}
 
     async def build_section(section: dict):
         if section.get("kind") == "recently_added":
             data = await _fetch_section_page(section, 1, media_type)
             raw = data.get("results", [])
-            filtered = await _filter_results(raw, ids, semaphore, flag_cache, media_type)
+            filtered = await _filter_results(
+                raw,
+                ids,
+                semaphore,
+                flag_cache,
+                media_type,
+                include_paid=include_paid,
+                allowed_countries=allowed_countries,
+            )
             results = filtered[:TARGET_ROW]
             return {
                 "id": section["id"],
@@ -814,7 +875,15 @@ async def home(
             raw = data.get("results", [])
             if not raw:
                 break
-            filtered = await _filter_results(raw, ids, semaphore, flag_cache, media_type)
+            filtered = await _filter_results(
+                raw,
+                ids,
+                semaphore,
+                flag_cache,
+                media_type,
+                include_paid=include_paid,
+                allowed_countries=allowed_countries,
+            )
             for m in filtered:
                 mid = m.get("id")
                 if not mid or mid in seen_ids:
@@ -874,7 +943,10 @@ async def section(
     cursor: str | None = None,
     media_type: str = "mix",
     country: str | None = None,
+    countries: str | None = None,
     unfiltered: bool = False,
+    vpn: bool = False,
+    include_paid: bool = False,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -887,12 +959,13 @@ async def section(
         ids = set(prefs.provider_ids) if prefs.provider_ids else set()
     else:
         ids = set()
-    countries = list(prefs.countries) if prefs and prefs.countries else []
+    user_countries = list(prefs.countries) if prefs and prefs.countries else []
+    requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
 
     guest_country = _normalize_country_code(country)
     if unfiltered:
         if not guest_country:
-            fallback = countries[0] if countries else "US"
+            fallback = user_countries[0] if user_countries else "US"
             guest_country = _normalize_country_code(fallback) or "US"
         page = max(1, page)
         return await _guest_section(section_id, page, pages, media_type, guest_country)
@@ -903,20 +976,23 @@ async def section(
             return await _guest_section(section_id, page, pages, media_type, guest_country)
         return {"id": section_id, "results": [], "filtered": True, "message": "Select streaming services first."}
 
-    cache_key = f"{section_id}:{','.join(str(pid) for pid in sorted(ids))}:{','.join(sorted(countries))}:{page}:{pages}:{cursor or ''}:{media_type}"
+    allowed_countries = (requested_countries or _normalize_country_codes(user_countries)) if not vpn else None
+    section_countries = sorted(allowed_countries) if allowed_countries else user_countries
+    country_scope_key = ",".join(sorted(allowed_countries)) if allowed_countries else "*"
+    cache_key = f"{section_id}:{','.join(str(pid) for pid in sorted(ids))}:{','.join(sorted(user_countries))}:{page}:{pages}:{cursor or ''}:{media_type}:vpn={int(vpn)}:paid={int(include_paid)}:scope={country_scope_key}"
     now = time.time()
     cached = SECTION_CACHE.get(cache_key)
     if cached and (now - cached[0]) < SECTION_CACHE_TTL:
         return cached[1]
 
-    sections = await _home_section_config(ids, countries, media_type)
+    sections = await _home_section_config(ids, section_countries, media_type)
     section_def = next((s for s in sections if s["id"] == section_id), None)
     if not section_def:
         return {"id": section_id, "results": [], "filtered": True, "message": "Unknown section."}
 
     if section_def.get("kind") == "recently_added":
         semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
-        flag_cache: dict[tuple[str, int], bool] = {}
+        flag_cache: dict[tuple[str, int, str], bool] = {}
         show_type = "series" if media_type == "tv" else ("movie" if media_type == "movie" else None)
         data = await streaming_availability.get_recently_added(
             section_def.get("catalogs", []),
@@ -925,7 +1001,15 @@ async def section(
             pages=pages,
             show_type=show_type,
         )
-        results = await _filter_results(data.get("results", []), ids, semaphore, flag_cache, media_type)
+        results = await _filter_results(
+            data.get("results", []),
+            ids,
+            semaphore,
+            flag_cache,
+            media_type,
+            include_paid=include_paid,
+            allowed_countries=allowed_countries,
+        )
         target = pages * 20
         if len(results) > target:
             results = results[:target]
@@ -942,7 +1026,7 @@ async def section(
 
     # Fetch raw results, filter each page, accumulate
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
-    flag_cache: dict[tuple[str, int], bool] = {}
+    flag_cache: dict[tuple[str, int, str], bool] = {}
     pages = max(1, min(5, pages))
     target_count = pages * 20
     max_scan_pages = pages * 5
@@ -960,7 +1044,15 @@ async def section(
         data = await _fetch_section_page(section_def, p, media_type)
         if not total_pages:
             total_pages = data.get("total_pages", 0)
-        filtered = await _filter_results(data.get("results", []), ids, semaphore, flag_cache, media_type)
+        filtered = await _filter_results(
+            data.get("results", []),
+            ids,
+            semaphore,
+            flag_cache,
+            media_type,
+            include_paid=include_paid,
+            allowed_countries=allowed_countries,
+        )
         for m in filtered:
             mid = m.get("id")
             if not mid or mid in seen_ids:

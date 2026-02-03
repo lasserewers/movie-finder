@@ -10,15 +10,22 @@ interface Props {
   mediaType: MediaType;
   showFilterToggle?: boolean;
   onOpenSettings?: () => void;
+  vpnEnabled?: boolean;
 }
 
-export default function SearchBar({ onSelectMovie, mediaType, showFilterToggle = true, onOpenSettings }: Props) {
+export default function SearchBar({
+  onSelectMovie,
+  mediaType,
+  showFilterToggle = true,
+  onOpenSettings,
+  vpnEnabled = false,
+}: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Movie[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [filterOn, setFilterOn] = useState(false);
-  const { providerIds } = useConfig();
+  const { providerIds, countries } = useConfig();
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const abortRef = useRef<AbortController | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -49,8 +56,12 @@ export default function SearchBar({ onSelectMovie, mediaType, showFilterToggle =
 
     const canFilter = showFilterToggle;
     const ids = filtered && canFilter ? Array.from(providerIds) : [];
+    const scopedCountries = filtered && canFilter && !vpnEnabled && countries.length
+      ? `&countries=${encodeURIComponent(countries.join(","))}`
+      : "";
+    const vpnParam = filtered && canFilter && vpnEnabled ? "&vpn=1" : "";
     const url = filtered && canFilter && ids.length
-      ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}&media_type=${mediaType}`
+      ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}&media_type=${mediaType}${vpnParam}${scopedCountries}`
       : `/api/search?q=${encodeURIComponent(q)}&media_type=${mediaType}`;
 
     fetch(url, { signal: controller.signal })
@@ -78,7 +89,7 @@ export default function SearchBar({ onSelectMovie, mediaType, showFilterToggle =
   useEffect(() => {
     const q = query.trim();
     if (q.length >= 2) doSearch(q, showFilterToggle && filterOn);
-  }, [mediaType, showFilterToggle]);
+  }, [mediaType, showFilterToggle, filterOn, vpnEnabled, countries, providerIds]);
 
   const handleFilterToggle = () => {
     // If user has no services and tries to enable filter, open settings instead
@@ -114,7 +125,7 @@ export default function SearchBar({ onSelectMovie, mediaType, showFilterToggle =
                 : "bg-panel-2/70 border-border text-muted hover:border-accent/40 hover:text-text"
             }`}
           >
-            Only my services
+            Only streamable
           </button>
         )}
       </div>
@@ -161,7 +172,7 @@ export default function SearchBar({ onSelectMovie, mediaType, showFilterToggle =
 
       {open && !loading && results.length === 0 && query.trim().length >= 2 && (
         <div className="absolute top-[calc(100%+0.5rem)] left-0 w-full sm:w-[min(480px,90vw)] bg-panel border border-border rounded-xl p-6 text-center text-sm text-muted z-[140]">
-          {showFilterToggle && filterOn ? "No matches on your services" : "No results found"}
+          {showFilterToggle && filterOn ? "No streamable matches on your services" : "No results found"}
         </div>
       )}
     </div>
