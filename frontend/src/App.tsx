@@ -44,6 +44,7 @@ function AppContent() {
   const { providerIds, countries, loadConfig, saveConfig } = useConfig();
 
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authInitialMode, setAuthInitialMode] = useState<"login" | "signup">("login");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
@@ -375,6 +376,11 @@ function AppContent() {
     setAuthModalOpen(false);
   };
 
+  const openAuthModal = (mode: "login" | "signup" = "login") => {
+    setAuthInitialMode(mode);
+    setAuthModalOpen(true);
+  };
+
   const handleSignupComplete = () => {
     setIsOnboarding(true);
     setOnboardingOpen(true);
@@ -446,7 +452,7 @@ function AppContent() {
       <div className="sticky top-0 z-[120] bg-bg border-b border-border/70">
         <Topbar
           onSelectMovie={handleSelectMovie}
-          onLoginClick={() => setAuthModalOpen(true)}
+          onLoginClick={() => openAuthModal("login")}
           onOpenProfile={() => setProfileOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenCountries={() => setCountriesModalOpen(true)}
@@ -460,7 +466,8 @@ function AppContent() {
           <HeroSection
             className="!mb-0 flex-1"
             showGuestPrompt={!user}
-            onLoginClick={() => setAuthModalOpen(true)}
+            onLoginClick={() => openAuthModal("login")}
+            onSignupClick={() => openAuthModal("signup")}
           />
           <div className="flex flex-col items-end justify-end gap-2 flex-shrink-0 max-sm:items-stretch max-sm:justify-start">
             {!user && regions.length > 0 && guestCountry && (
@@ -748,6 +755,7 @@ function AppContent() {
         open={authModalOpen}
         onClose={handleAuthClose}
         onSignupComplete={handleSignupComplete}
+        initialMode={authInitialMode}
       />
 
       <VpnPromptModal

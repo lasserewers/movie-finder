@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../hooks/useAuth";
 import { ApiError } from "../api/client";
@@ -7,9 +7,15 @@ interface Props {
   open: boolean;
   onClose?: () => void;
   onSignupComplete?: () => void;
+  initialMode?: "login" | "signup";
 }
 
-export default function AuthModal({ open, onClose, onSignupComplete }: Props) {
+export default function AuthModal({
+  open,
+  onClose,
+  onSignupComplete,
+  initialMode = "login",
+}: Props) {
   const { login, signup } = useAuth();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
@@ -17,6 +23,17 @@ export default function AuthModal({ open, onClose, onSignupComplete }: Props) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    // Always start from a clean auth state when opening the modal.
+    setMode(initialMode);
+    setEmail("");
+    setPassword("");
+    setConfirmPassword("");
+    setError("");
+    setLoading(false);
+  }, [open, initialMode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
