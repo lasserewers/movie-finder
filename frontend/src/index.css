@@ -118,3 +118,12 @@ html.light *::-webkit-scrollbar-thumb {
 html.light *::-webkit-scrollbar-thumb:hover {
   background: rgba(229, 9, 20, 0.6);
 }
+
+/* Prevent iOS zoom on input focus (requires 16px minimum) */
+@media screen and (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
