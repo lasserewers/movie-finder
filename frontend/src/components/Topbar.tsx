@@ -33,8 +33,13 @@ export default function Topbar({
     const ENTER_COMPACT_Y = 96;
     const EXIT_COMPACT_Y = 8;
     const TRANSITION_LOCK_MS = 320;
+    const MOBILE_BREAKPOINT = 640;
 
     const onScroll = () => {
+      if (window.innerWidth < MOBILE_BREAKPOINT) {
+        setCompact(false);
+        return;
+      }
       const now = performance.now();
       if (now < transitionLockUntilRef.current) return;
       const y = window.scrollY;
@@ -46,7 +51,11 @@ export default function Topbar({
     };
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
   }, []);
 
   return (
@@ -73,13 +82,13 @@ export default function Topbar({
           vpnEnabled={vpnEnabled}
         />
       </div>
-      <div className="flex-shrink-0 max-sm:order-2 max-sm:ml-auto">
+      <div className="relative z-[2] flex-shrink-0 max-sm:order-2 max-sm:ml-auto">
         {user ? (
           <UserMenu onOpenProfile={onOpenProfile} onOpenSettings={onOpenSettings} onOpenCountries={onOpenCountries} />
         ) : (
           <button
             onClick={onLoginClick}
-            className="px-2.5 h-[42px] sm:px-5 sm:h-[52px] border border-border rounded-full font-semibold text-[0.7rem] sm:text-sm text-text hover:border-accent-2 transition-colors flex-shrink-0"
+            className="px-2.5 h-[42px] sm:px-5 sm:h-[52px] border border-border rounded-full font-semibold text-[0.7rem] sm:text-sm text-text hover:border-accent-2 transition-colors flex-shrink-0 touch-manipulation"
           >
             Log in / Sign up
           </button>

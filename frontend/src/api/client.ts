@@ -3,6 +3,8 @@ function getCsrfToken(): string {
   return match ? match[1] : "";
 }
 
+const DEFAULT_TIMEOUT_MS = 20000;
+
 export async function apiFetch<T = unknown>(
   url: string,
   options: RequestInit = {}
@@ -17,7 +19,31 @@ export async function apiFetch<T = unknown>(
     headers["X-CSRF-Token"] = getCsrfToken();
   }
 
-  const res = await fetch(url, { ...options, headers });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const externalSignal = options.signal;
+  const onAbort = () => controller.abort();
+  if (externalSignal) externalSignal.addEventListener("abort", onAbort);
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers,
+      credentials: options.credentials ?? "same-origin",
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (externalSignal) externalSignal.removeEventListener("abort", onAbort);
+    window.clearTimeout(timeout);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError("Request timed out. Please try again.", 408);
+    }
+    throw err;
+  }
+
+  if (externalSignal) externalSignal.removeEventListener("abort", onAbort);
+  window.clearTimeout(timeout);
 
   if (res.status === 401) {
     // Let the auth context handle this
