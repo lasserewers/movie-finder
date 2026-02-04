@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { ConfigProvider, useConfig } from "./hooks/useConfig";
 import Topbar from "./components/Topbar";
@@ -432,7 +432,13 @@ function AppContent() {
     if (next === "mix") setRowResetToken((v) => v + 1);
   };
 
-  const sectionMap = new Map(sections.map((s) => [s.id, s]));
+  const sectionMap = useMemo(() => new Map(sections.map((s) => [s.id, s])), [sections]);
+  const handleSeeMore = useCallback(
+    (id: string) => {
+      setSelectedSection(sectionMap.get(id) || null);
+    },
+    [sectionMap]
+  );
   const unfilteredMode = !user || userContentMode === "all";
   const includePaidMode = !!user && userContentMode === "available";
   const discoveryCountry = user
@@ -668,7 +674,7 @@ function AppContent() {
               key={`${section.id}:${rowResetToken}`}
               section={section}
               onSelectMovie={handleSelectMovie}
-              onSeeMore={(id) => setSelectedSection(sectionMap.get(id) || null)}
+              onSeeMore={handleSeeMore}
               resetToken={rowResetToken}
               mediaType={mediaType}
             />

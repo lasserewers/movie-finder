@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import type { HomeSection } from "../api/movies";
 import MovieCard from "./MovieCard";
 
@@ -10,7 +10,7 @@ interface Props {
   mediaType?: "movie" | "tv" | "mix";
 }
 
-export default function MovieRow({ section, onSelectMovie, onSeeMore, resetToken = 0, mediaType = "mix" }: Props) {
+function MovieRow({ section, onSelectMovie, onSeeMore, resetToken = 0, mediaType = "mix" }: Props) {
   const hasMore = !!(section.next_cursor || section.next_page || (section.total_pages && section.total_pages > 1));
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -67,3 +67,5 @@ export default function MovieRow({ section, onSelectMovie, onSeeMore, resetToken
     </div>
   );
 }
+
+export default memo(MovieRow);

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { motion } from "framer-motion";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
@@ -14,7 +15,7 @@ interface Props {
   mediaType?: "movie" | "tv";
 }
 
-export default function MovieCard({
+function MovieCard({
   id,
   title,
   posterPath,
@@ -25,7 +26,7 @@ export default function MovieCard({
   fill = false,
   mediaType,
 }: Props) {
-  const src = posterUrl || (posterPath ? `${TMDB_IMG}/w300${posterPath}` : "");
+  const src = posterUrl || (posterPath ? `${TMDB_IMG}/w185${posterPath}` : "");
   const year = releaseDate?.slice(0, 4) || "";
 
   return (
@@ -40,6 +41,7 @@ export default function MovieCard({
             src={src}
             alt=""
             loading="lazy"
+            decoding="async"
             className="w-full aspect-[2/3] rounded-xl object-cover bg-panel-2 border border-white/5"
           />
         ) : (
@@ -56,3 +58,5 @@ export default function MovieCard({
     </motion.div>
   );
 }
+
+export default memo(MovieCard);
