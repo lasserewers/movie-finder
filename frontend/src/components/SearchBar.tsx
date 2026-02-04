@@ -53,6 +53,7 @@ export default function SearchBar({
     }
 
     setLoading(true);
+    const timeout = window.setTimeout(() => controller.abort(), 12000);
 
     const canFilter = showFilterToggle;
     const ids = filtered && canFilter ? Array.from(providerIds) : [];
@@ -60,20 +61,26 @@ export default function SearchBar({
       ? `&countries=${encodeURIComponent(countries.join(","))}`
       : "";
     const vpnParam = filtered && canFilter && vpnEnabled ? "&vpn=1" : "";
+    const limitParam = "&limit=10";
     const url = filtered && canFilter && ids.length
-      ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}&media_type=${mediaType}${vpnParam}${scopedCountries}`
-      : `/api/search?q=${encodeURIComponent(q)}&media_type=${mediaType}`;
+      ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}&media_type=${mediaType}${limitParam}${vpnParam}${scopedCountries}`
+      : `/api/search?q=${encodeURIComponent(q)}&media_type=${mediaType}${limitParam}`;
 
     fetch(url, { signal: controller.signal })
       .then((res) => res.json())
       .then((data) => {
+        window.clearTimeout(timeout);
         if (controller.signal.aborted) return;
         setResults(data.results?.slice(0, 10) || []);
         setOpen(true);
         setLoading(false);
       })
       .catch((err) => {
-        if (err.name === "AbortError") return;
+        window.clearTimeout(timeout);
+        if (err.name === "AbortError") {
+          if (abortRef.current === controller) setLoading(false);
+          return;
+        }
         setResults([]);
         setLoading(false);
       });

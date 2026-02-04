@@ -36,6 +36,8 @@ SECTION_CACHE_TTL = 10 * 60
 SECTION_CACHE: dict[str, tuple[float, dict]] = {}
 SECTION_CONFIG_CACHE: dict[str, tuple[float, list]] = {}
 SECTION_CONFIG_TTL = 10 * 60
+SEARCH_CACHE_TTL = 5 * 60
+SEARCH_CACHE: dict[str, tuple[float, dict]] = {}
 FILTER_CONCURRENCY = 30
 VALID_MEDIA_TYPES = ("movie", "tv", "mix")
 
@@ -121,13 +123,25 @@ app.include_router(auth_router)
 
 
 @app.get("/api/search")
-async def search(q: str = Query(..., min_length=1), media_type: str = "movie"):
+async def search(
+    q: str = Query(..., min_length=1),
+    media_type: str = "movie",
+    limit: int = Query(10, ge=1, le=20),
+):
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "movie"
+    q_norm = q.strip().lower()
+    cache_key = f"search:{media_type}:{limit}:{q_norm}"
+    now = time.time()
+    cached = SEARCH_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < SEARCH_CACHE_TTL:
+        return cached[1]
     if media_type == "tv":
         data = await tmdb.search_tv(q)
         for r in data.get("results", []):
             _normalize_result(r)
+        data["results"] = data.get("results", [])[:limit]
+        SEARCH_CACHE[cache_key] = (now, data)
         return data
     if media_type == "mix":
         movie_data, tv_data = await asyncio.gather(tmdb.search_movie(q), tmdb.search_tv(q))
@@ -137,12 +151,15 @@ async def search(q: str = Query(..., min_length=1), media_type: str = "movie"):
             _normalize_result(r)
         for r in tv_shows:
             _normalize_result(r)
-        combined = sorted(movies + tv_shows, key=lambda x: x.get("popularity", 0), reverse=True)
+        combined = sorted(movies + tv_shows, key=lambda x: x.get("popularity", 0), reverse=True)[:limit]
         movie_data["results"] = combined
+        SEARCH_CACHE[cache_key] = (now, movie_data)
         return movie_data
     data = await tmdb.search_movie(q)
     for r in data.get("results", []):
         _normalize_result(r)
+    data["results"] = data.get("results", [])[:limit]
+    SEARCH_CACHE[cache_key] = (now, data)
     return data
 
 
@@ -151,6 +168,7 @@ async def search_filtered(
     q: str = Query(..., min_length=1),
     provider_ids: str | None = None,
     media_type: str = "movie",
+    limit: int = Query(20, ge=1, le=20),
     countries: str | None = None,
     vpn: bool = False,
     user: User | None = Depends(get_optional_user),
@@ -158,7 +176,7 @@ async def search_filtered(
 ):
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "movie"
-    target = 20
+    target = limit
     max_pages = 4
     prefs = await _get_user_prefs(db, user.id) if user else None
     if provider_ids:
@@ -172,6 +190,15 @@ async def search_filtered(
     allowed_countries = (requested_countries or _normalize_country_codes(user_countries)) if not vpn else None
     if not ids:
         return {"results": [], "filtered": True}
+    country_scope_key = ",".join(sorted(allowed_countries)) if allowed_countries else "*"
+    cache_key = (
+        f"search_filtered:{q.strip().lower()}:{media_type}:{target}:"
+        f"{','.join(str(pid) for pid in sorted(ids))}:scope={country_scope_key}"
+    )
+    now = time.time()
+    cached = SEARCH_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < SEARCH_CACHE_TTL:
+        return cached[1]
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
     flag_cache: dict[tuple[str, int, str], bool] = {}
 
@@ -232,6 +259,7 @@ async def search_filtered(
         base = base_m or base_t or {"results": []}
         base["results"] = combined
         base["filtered"] = True
+        SEARCH_CACHE[cache_key] = (now, base)
         return base
 
     search_fn = tmdb.search_tv if media_type == "tv" else tmdb.search_movie
@@ -240,6 +268,7 @@ async def search_filtered(
         base = {"results": []}
     base["results"] = results
     base["filtered"] = True
+    SEARCH_CACHE[cache_key] = (now, base)
     return base
 
 

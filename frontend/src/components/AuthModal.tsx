@@ -77,7 +77,7 @@ export default function AuthModal({
           exit={{ opacity: 0 }}
           onClick={(e) => e.target === e.currentTarget && onClose?.()}
         >
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => onClose?.()} />
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm max-sm:backdrop-blur-0" onClick={() => onClose?.()} />
           <motion.div
             className="relative bg-panel border border-border rounded-2xl p-8 w-[min(92vw,400px)]"
             initial={{ scale: 0.95, y: 20 }}
