@@ -30,6 +30,7 @@ export default function SearchBar({
   const abortRef = useRef<AbortController | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const autoOpenRef = useRef(true);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -72,7 +73,7 @@ export default function SearchBar({
         window.clearTimeout(timeout);
         if (controller.signal.aborted) return;
         setResults(data.results?.slice(0, 10) || []);
-        setOpen(true);
+        if (autoOpenRef.current) setOpen(true);
         setLoading(false);
       })
       .catch((err) => {
@@ -89,13 +90,19 @@ export default function SearchBar({
   const handleInput = (value: string) => {
     setQuery(value);
     clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => doSearch(value.trim(), showFilterToggle && filterOn), 300);
+    timerRef.current = setTimeout(() => {
+      autoOpenRef.current = true;
+      doSearch(value.trim(), showFilterToggle && filterOn);
+    }, 300);
   };
 
-  // Re-search when media type changes
+  // Re-search when config changes - don't auto-open dropdown
   useEffect(() => {
     const q = query.trim();
-    if (q.length >= 2) doSearch(q, showFilterToggle && filterOn);
+    if (q.length >= 2) {
+      autoOpenRef.current = false;
+      doSearch(q, showFilterToggle && filterOn);
+    }
   }, [mediaType, showFilterToggle, filterOn, vpnEnabled, countries, providerIds]);
 
   const handleFilterToggle = () => {
@@ -108,7 +115,10 @@ export default function SearchBar({
     setFilterOn(next);
     inputRef.current?.focus();
     const q = query.trim();
-    if (q.length >= 2) doSearch(q, next);
+    if (q.length >= 2) {
+      autoOpenRef.current = true;
+      doSearch(q, next);
+    }
   };
 
   return (
