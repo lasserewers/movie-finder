@@ -127,3 +127,101 @@ html.light *::-webkit-scrollbar-thumb:hover {
     font-size: 16px !important;
   }
 }
+
+.advanced-year-range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.advanced-year-input::-webkit-outer-spin-button,
+.advanced-year-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.advanced-year-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.advanced-year-span-toggle-track {
+  position: relative;
+  display: inline-flex;
+  width: 40px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-panel-2) 78%, transparent);
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.advanced-year-span-toggle-knob {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text) 92%, transparent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transform: translate(0, -50%);
+  transition: transform 200ms ease-out;
+}
+
+.advanced-year-span-toggle-input:checked + .advanced-year-span-toggle-track {
+  border-color: rgba(229, 9, 20, 0.7);
+  background: rgba(229, 9, 20, 0.35);
+}
+
+.advanced-year-span-toggle-input:checked + .advanced-year-span-toggle-track .advanced-year-span-toggle-knob {
+  transform: translate(20px, -50%);
+}
+
+.advanced-year-range::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+}
+
+.advanced-year-range::-moz-range-track {
+  height: 100%;
+  background: transparent;
+}
+
+.advanced-year-range::-webkit-slider-thumb {
+  pointer-events: auto;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  border: 2px solid var(--color-panel);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.advanced-year-range::-moz-range-thumb {
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  border: 2px solid var(--color-panel);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+}
+
+html.light .advanced-year-range::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+}
+
+html.light .advanced-year-range::-moz-range-thumb {
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
+}

@@ -46,6 +46,10 @@ async def search_tv(query: str, page: int = 1) -> dict:
     return await _get("/search/tv", {"query": query, "page": page})
 
 
+async def search_person(query: str, page: int = 1) -> dict:
+    return await _get("/search/person", {"query": query, "page": page, "include_adult": "false"})
+
+
 async def get_watch_providers(movie_id: int) -> dict:
     data = await _get(f"/movie/{movie_id}/watch/providers")
     return data.get("results", {})

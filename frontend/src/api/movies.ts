@@ -106,6 +106,53 @@ export interface Region {
   english_name: string;
 }
 
+export interface GenreOption {
+  id: number;
+  name: string;
+}
+
+export interface PersonOption {
+  id: number;
+  name: string;
+  known_for_department?: string;
+  profile_path?: string;
+}
+
+export type ContentMode = "all" | "available" | "streamable";
+
+export interface AdvancedSearchParams {
+  page?: number;
+  limit?: number;
+  mediaType?: MediaType;
+  query?: string;
+  country?: string;
+  language?: string;
+  yearFrom?: number;
+  yearTo?: number;
+  genreIds?: number[];
+  excludeGenreIds?: number[];
+  actorIds?: number[];
+  directorIds?: number[];
+  minRating?: number;
+  minVotes?: number;
+  runtimeMin?: number;
+  runtimeMax?: number;
+  sortBy?: "popularity.desc" | "popularity.asc" | "release.desc" | "release.asc" | "rating.desc" | "rating.asc" | "votes.desc" | "votes.asc";
+  contentMode?: ContentMode;
+  providerIds?: number[];
+  countries?: string[];
+  vpn?: boolean;
+  includePaid?: boolean;
+}
+
+export interface AdvancedSearchResponse {
+  results: Movie[];
+  page: number;
+  next_page?: number;
+  total_pages?: number;
+  has_more?: boolean;
+}
+
 export async function searchMovies(
   q: string,
   mediaType: MediaType = "movie",
@@ -275,4 +322,45 @@ export async function getGeoCountry(): Promise<string> {
   } catch {
     return "US";
   }
+}
+
+export async function getGenres(mediaType: MediaType = "mix"): Promise<GenreOption[]> {
+  const data = await apiFetch<{ results?: GenreOption[] }>(`/api/genres?media_type=${mediaType}`);
+  return data.results || [];
+}
+
+export async function searchPeople(q: string, limit = 8): Promise<PersonOption[]> {
+  const data = await apiFetch<{ results?: PersonOption[] }>(
+    `/api/search_people?q=${encodeURIComponent(q)}&limit=${Math.max(1, Math.min(20, limit))}`
+  );
+  return data.results || [];
+}
+
+export async function searchAdvanced(params: AdvancedSearchParams): Promise<AdvancedSearchResponse> {
+  const query = new URLSearchParams();
+  query.set("page", String(Math.max(1, params.page || 1)));
+  query.set("limit", String(Math.max(1, Math.min(40, params.limit || 24))));
+  query.set("media_type", params.mediaType || "movie");
+  query.set("content_mode", params.contentMode || "all");
+
+  if (params.query && params.query.trim()) query.set("q", params.query.trim());
+  if (params.country) query.set("country", params.country);
+  if (params.language) query.set("language", params.language);
+  if (typeof params.yearFrom === "number") query.set("year_from", String(params.yearFrom));
+  if (typeof params.yearTo === "number") query.set("year_to", String(params.yearTo));
+  if (params.genreIds?.length) query.set("genre_ids", params.genreIds.join(","));
+  if (params.excludeGenreIds?.length) query.set("exclude_genre_ids", params.excludeGenreIds.join(","));
+  if (params.actorIds?.length) query.set("actor_ids", params.actorIds.join(","));
+  if (params.directorIds?.length) query.set("director_ids", params.directorIds.join(","));
+  if (typeof params.minRating === "number") query.set("min_rating", String(params.minRating));
+  if (typeof params.minVotes === "number") query.set("min_votes", String(params.minVotes));
+  if (typeof params.runtimeMin === "number") query.set("runtime_min", String(params.runtimeMin));
+  if (typeof params.runtimeMax === "number") query.set("runtime_max", String(params.runtimeMax));
+  if (params.sortBy) query.set("sort_by", params.sortBy);
+  if (params.providerIds?.length) query.set("provider_ids", params.providerIds.join(","));
+  if (params.countries?.length) query.set("countries", params.countries.join(","));
+  if (params.vpn) query.set("vpn", "1");
+  if (params.includePaid) query.set("include_paid", "1");
+
+  return apiFetch<AdvancedSearchResponse>(`/api/search_advanced?${query.toString()}`);
 }

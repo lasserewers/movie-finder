@@ -7,6 +7,7 @@ import MovieRow from "./components/MovieRow";
 import MovieOverlay from "./components/MovieOverlay";
 import SectionOverlay from "./components/SectionOverlay";
 import SearchOverlay from "./components/SearchOverlay";
+import AdvancedSearchModal from "./components/AdvancedSearchModal";
 import AuthModal from "./components/AuthModal";
 import SettingsModal from "./components/SettingsModal";
 import ProfileModal from "./components/ProfileModal";
@@ -60,6 +61,8 @@ function AppContent() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFiltered, setSearchFiltered] = useState(false);
+  const [advancedSearchOpen, setAdvancedSearchOpen] = useState(false);
+  const [advancedSearchInitialQuery, setAdvancedSearchInitialQuery] = useState("");
   const [mediaType, setMediaType] = useState<MediaType>("mix");
   const [rowResetToken, setRowResetToken] = useState(0);
   const [userContentMode, setUserContentMode] = useState<UserContentMode>("streamable");
@@ -437,6 +440,11 @@ function AppContent() {
     setSearchOpen(true);
   }, []);
 
+  const handleOpenAdvancedSearch = useCallback((initialQuery: string) => {
+    setAdvancedSearchInitialQuery(initialQuery);
+    setAdvancedSearchOpen(true);
+  }, []);
+
   const handleMediaTypeChange = (next: MediaType) => {
     setMediaType(next);
     if (next === "mix") setRowResetToken((v) => v + 1);
@@ -474,6 +482,7 @@ function AppContent() {
           onOpenCountries={() => setCountriesModalOpen(true)}
           vpnEnabled={usingVpn}
           onSearchSubmit={handleSearchSubmit}
+          onOpenAdvancedSearch={handleOpenAdvancedSearch}
         />
       </div>
 
@@ -746,6 +755,15 @@ function AppContent() {
         initialContentMode={searchFiltered ? "streamable" : "all"}
         onClose={() => setSearchOpen(false)}
         onSelectMovie={handleSelectMovie}
+      />
+
+      <AdvancedSearchModal
+        open={advancedSearchOpen}
+        initialQuery={advancedSearchInitialQuery}
+        onClose={() => setAdvancedSearchOpen(false)}
+        onSelectMovie={handleSelectMovie}
+        regions={regions}
+        isLoggedIn={!!user}
       />
 
       <SettingsModal

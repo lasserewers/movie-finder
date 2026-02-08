@@ -11,6 +11,7 @@ interface Props {
   onOpenCountries: () => void;
   vpnEnabled?: boolean;
   onSearchSubmit?: (query: string, filtered: boolean) => void;
+  onOpenAdvancedSearch?: (initialQuery: string) => void;
 }
 
 export default function Topbar({
@@ -21,6 +22,7 @@ export default function Topbar({
   onOpenCountries,
   vpnEnabled = false,
   onSearchSubmit,
+  onOpenAdvancedSearch,
 }: Props) {
   const { user } = useAuth();
   const { theme } = useConfig();
@@ -78,6 +80,7 @@ export default function Topbar({
           onOpenSettings={onOpenSettings}
           vpnEnabled={vpnEnabled}
           onSubmitSearch={onSearchSubmit}
+          onOpenAdvancedSearch={onOpenAdvancedSearch}
         />
       </div>
       <div className="relative z-[2] flex-shrink-0 max-sm:order-2 max-sm:ml-auto">

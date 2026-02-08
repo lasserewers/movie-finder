@@ -102,7 +102,7 @@ export default function MovieOverlay({
       <AnimatePresence>
         {movieId && (
           <motion.div
-            className="fixed inset-0 z-[300] grid place-items-center"
+            className="fixed inset-0 z-[320] grid place-items-center"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
