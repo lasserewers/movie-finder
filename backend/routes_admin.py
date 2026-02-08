@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .auth import get_current_admin, verify_password
 from .database import get_db
 from .models import User, UserPreferences
+from . import mailer
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -141,9 +143,12 @@ async def admin_update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    send_deactivated_email = False
     if body.is_active is not None:
         if body.is_active is False and user.id == admin.id:
             raise HTTPException(status_code=400, detail="You cannot disable your own account")
+        if user.is_active and body.is_active is False:
+            send_deactivated_email = True
         user.is_active = body.is_active
 
     if body.is_admin is not None:
@@ -158,6 +163,9 @@ async def admin_update_user(
         user.is_admin = body.is_admin
 
     await db.commit()
+
+    if send_deactivated_email:
+        asyncio.create_task(mailer.send_account_deactivated_email(user.email))
 
     prefs = await db.get(UserPreferences, user.id)
     return {"ok": True, "user": _serialize_user(user, prefs)}

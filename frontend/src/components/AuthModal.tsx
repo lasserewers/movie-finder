@@ -120,6 +120,18 @@ export default function AuthModal({
                   autoComplete={mode === "signup" ? "new-password" : "current-password"}
                   className="px-3 py-2.5 text-sm border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors"
                 />
+                {mode === "login" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose?.();
+                      window.location.href = "/reset-password";
+                    }}
+                    className="self-end text-xs text-accent-2 underline cursor-pointer mt-1"
+                  >
+                    Forgot password?
+                  </button>
+                )}
               </div>
               {mode === "signup" && (
                 <div className="flex flex-col gap-1">
