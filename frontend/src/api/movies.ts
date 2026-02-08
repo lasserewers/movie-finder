@@ -93,6 +93,7 @@ export interface CountryProviders {
 export interface StreamingLink {
   service_name: string;
   type: string;
+  provider_id?: number;
   link?: string;
   quality?: string;
   price?: string;
@@ -283,9 +284,13 @@ export async function getMovieProviders(
 }
 
 export async function getMovieLinks(
-  movieId: number
+  movieId: number,
+  countries?: string[]
 ): Promise<{ streaming?: Record<string, StreamingLink[]>; movie_info?: { poster?: string; backdrop?: string } }> {
-  return apiFetch(`/api/movie/${movieId}/links`);
+  const countriesParam = countries && countries.length
+    ? `?countries=${encodeURIComponent(countries.join(","))}`
+    : "";
+  return apiFetch(`/api/movie/${movieId}/links${countriesParam}`);
 }
 
 export async function getTvProviders(
@@ -295,9 +300,13 @@ export async function getTvProviders(
 }
 
 export async function getTvLinks(
-  tvId: number
+  tvId: number,
+  countries?: string[]
 ): Promise<{ streaming?: Record<string, StreamingLink[]>; movie_info?: { poster?: string; backdrop?: string } }> {
-  return apiFetch(`/api/tv/${tvId}/links`);
+  const countriesParam = countries && countries.length
+    ? `?countries=${encodeURIComponent(countries.join(","))}`
+    : "";
+  return apiFetch(`/api/tv/${tvId}/links${countriesParam}`);
 }
 
 export async function getPersonWorks(personId: number): Promise<PersonWorksResponse> {

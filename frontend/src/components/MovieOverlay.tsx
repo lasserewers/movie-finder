@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getMovieProviders, getMovieLinks, getTvProviders, getTvLinks, type Movie, type CountryProviders, type StreamingLink, type Person, type CrewMember } from "../api/movies";
+import { useConfig } from "../hooks/useConfig";
 import ProviderGrid from "./ProviderGrid";
 import CreditsModal from "./CreditsModal";
 import PersonWorksModal from "./PersonWorksModal";
@@ -51,6 +52,7 @@ export default function MovieOverlay({
   itemMediaType,
   guestCountry,
 }: Props) {
+  const { countries } = useConfig();
   const [movie, setMovie] = useState<Movie | null>(null);
   const [providers, setProviders] = useState<Record<string, CountryProviders>>({});
   const [streamingLinks, setStreamingLinks] = useState<Record<string, StreamingLink[]>>({});
@@ -65,14 +67,15 @@ export default function MovieOverlay({
     const isTV = itemMediaType === "tv";
     const provFn = isTV ? getTvProviders : getMovieProviders;
     const linksFn = isTV ? getTvLinks : getMovieLinks;
-    Promise.all([provFn(movieId), linksFn(movieId).catch(() => ({} as Awaited<ReturnType<typeof getMovieLinks>>))])
+    const linkCountries = guestCountry ? [guestCountry] : countries;
+    Promise.all([provFn(movieId), linksFn(movieId, linkCountries).catch(() => ({} as Awaited<ReturnType<typeof getMovieLinks>>))])
       .then(([provData, linksData]) => {
         setMovie(provData.movie);
         setProviders(provData.providers);
         setStreamingLinks(linksData?.streaming || {});
       })
       .finally(() => setLoading(false));
-  }, [movieId, itemMediaType]);
+  }, [movieId, itemMediaType, guestCountry, countries]);
 
   useEffect(() => {
     if (!movieId) {

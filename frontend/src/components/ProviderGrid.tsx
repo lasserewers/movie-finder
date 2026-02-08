@@ -21,6 +21,8 @@ interface DeepLink {
   expires_on?: number;
 }
 
+type ProviderWithType = ProviderInfo & { type: string; isMine?: boolean; link?: string };
+
 function normalizeLanguageCode(code: string): string {
   if (!code) return "";
   const normalized = code.trim().replace(/_/g, "-").toUpperCase();
@@ -30,13 +32,13 @@ function normalizeLanguageCode(code: string): string {
 }
 
 function collectProviderMeta(
-  name: string,
+  provider: ProviderWithType,
   countryCode: string,
-  type: string,
   streamingLinks: Record<string, StreamingLink[]>
 ): DeepLink | null {
   const links = streamingLinks[countryCode.toLowerCase()];
   if (!links?.length) return null;
+  const { provider_name: name, provider_id: providerId, type } = provider;
   const normalizeName = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
   const normName = normalizeName(name);
   const serviceMatches = links.filter((l) => {
@@ -64,11 +66,20 @@ function collectProviderMeta(
   const typedServiceMatches = offerTypes.length
     ? serviceMatches.filter((l) => offerTypes.includes(l.type))
     : serviceMatches;
+  const typedProviderIdMatches = typedLinks.filter((l) => {
+    if (typeof l.provider_id !== "number") return false;
+    return l.provider_id === providerId;
+  });
 
-  // Prefer same-service matches; fallback to country/type-level language data.
-  const matches = typedServiceMatches.length
-    ? typedServiceMatches
-    : (serviceMatches.length ? serviceMatches : typedLinks);
+  // Prefer exact provider_id matches, then name matches. Avoid fallback to
+  // arbitrary typed links, which can open the wrong service.
+  const matches = typedProviderIdMatches.length
+    ? typedProviderIdMatches
+    : typedServiceMatches.length
+      ? typedServiceMatches
+      : serviceMatches.length
+        ? serviceMatches
+        : [];
   if (!matches.length) return null;
 
   const audios = Array.from(new Set(matches.flatMap((m) => m.audios || []).filter(Boolean)));
@@ -221,7 +232,7 @@ function LanguageDropdown({
 }
 
 function ProviderCard({ provider, countryCode, streamingLinks, isGuest }: CardProps) {
-  const deep = collectProviderMeta(provider.provider_name, countryCode, provider.type, streamingLinks);
+  const deep = collectProviderMeta(provider, countryCode, streamingLinks);
   const href = deep?.link || provider.link || "";
   const typeLabel = provider.type === "flatrate" ? "stream" : provider.type;
   const audioFull = Array.from(new Set((deep?.audios || []).map(normalizeLanguageCode).filter(Boolean)));
@@ -344,16 +355,17 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
   };
 
   const buildAnyServiceProviders = (data: CountryProviders) => {
-    const map = new Map<number, ProviderInfo & { stream: boolean; rent: boolean; buy: boolean }>();
+    const map = new Map<number, ProviderInfo & { stream: boolean; rent: boolean; buy: boolean; link?: string }>();
     for (const type of ["flatrate", "free", "ads", "rent", "buy"]) {
       const list = data[type as keyof CountryProviders] as ProviderInfo[] | undefined;
       if (!list || !Array.isArray(list)) continue;
       for (const p of list) {
         const existing = map.get(p.provider_id);
-        const target = existing || { ...p, stream: false, rent: false, buy: false };
+        const target = existing || { ...p, stream: false, rent: false, buy: false, link: data.link };
         if (type === "flatrate" || type === "free" || type === "ads") target.stream = true;
         if (type === "rent") target.rent = true;
         if (type === "buy") target.buy = true;
+        if (!target.link && data.link) target.link = data.link;
         map.set(p.provider_id, target);
       }
     }
@@ -368,23 +380,24 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
         provider_name: p.provider_name,
         logo_path: p.logo_path,
         type,
+        link: p.link,
       };
     });
   };
 
   // Other countries where my services have it (skip in guest mode)
-  const otherMyRows: { country: string; providers: (ProviderInfo & { type: string })[] }[] = [];
+  const otherMyRows: { country: string; providers: (ProviderInfo & { type: string; link?: string })[] }[] = [];
   if (!guestCountry) {
     for (const [country, data] of Object.entries(providers)) {
       if (myCountrySet.has(country)) continue;
-      const myServicesMap = new Map<number, ProviderInfo & { type: string }>();
+      const myServicesMap = new Map<number, ProviderInfo & { type: string; link?: string }>();
       for (const type of ["flatrate", "free", "ads"]) {
         const list = data[type as keyof CountryProviders] as ProviderInfo[] | undefined;
         if (!list || !Array.isArray(list)) continue;
         for (const p of list) {
           if (!myProviderIds.has(p.provider_id)) continue;
           if (!myServicesMap.has(p.provider_id)) {
-            myServicesMap.set(p.provider_id, { ...p, type: "stream" });
+            myServicesMap.set(p.provider_id, { ...p, type: "stream", link: data.link });
           }
         }
       }
@@ -476,7 +489,8 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
                     <td className="px-3 py-2 border-b border-white/5">
                       <div className="flex flex-wrap gap-1">
                         {row.providers.map((p) => {
-                          const deep = collectProviderMeta(p.provider_name, row.country, p.type, streamingLinks);
+                          const deep = collectProviderMeta(p, row.country, streamingLinks);
+                          const href = deep?.link || p.link || "";
                           const audioFull = Array.from(new Set((deep?.audios || []).map(normalizeLanguageCode).filter(Boolean)));
                           const subtitleFull = Array.from(new Set((deep?.subtitles || []).map(normalizeLanguageCode).filter(Boolean)));
                           const hasLanguages = audioFull.length > 0 || subtitleFull.length > 0;
@@ -484,20 +498,20 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
                             <div
                               key={`${row.country}-${p.provider_id}`}
                               onClick={() => {
-                                if (!deep?.link) return;
-                                window.open(deep.link, "_blank", "noopener");
+                                if (!href) return;
+                                window.open(href, "_blank", "noopener");
                               }}
-                              role={deep?.link ? "button" : undefined}
-                              tabIndex={deep?.link ? 0 : undefined}
+                              role={href ? "button" : undefined}
+                              tabIndex={href ? 0 : undefined}
                               onKeyDown={(e) => {
-                                if (!deep?.link) return;
+                                if (!href) return;
                                 if (e.key === "Enter" || e.key === " ") {
                                   e.preventDefault();
-                                  window.open(deep.link, "_blank", "noopener");
+                                  window.open(href, "_blank", "noopener");
                                 }
                               }}
                               className={`inline-flex items-center gap-1 bg-green-500/10 border border-green-500/40 rounded px-2 py-0.5 text-xs ${
-                                deep?.link ? "cursor-pointer hover:bg-green-500/15" : ""
+                                href ? "cursor-pointer hover:bg-green-500/15" : ""
                               }`}
                             >
                               {p.logo_path && (
@@ -543,7 +557,8 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
                     <td className="px-3 py-2 border-b border-white/5">
                       <div className="flex flex-wrap gap-1">
                         {row.providers.map((p) => {
-                          const deep = collectProviderMeta(p.provider_name, row.country, p.type, streamingLinks);
+                          const deep = collectProviderMeta(p, row.country, streamingLinks);
+                          const href = deep?.link || p.link || "";
                           const audioFull = Array.from(new Set((deep?.audios || []).map(normalizeLanguageCode).filter(Boolean)));
                           const subtitleFull = Array.from(new Set((deep?.subtitles || []).map(normalizeLanguageCode).filter(Boolean)));
                           const hasLanguages = audioFull.length > 0 || subtitleFull.length > 0;
@@ -551,20 +566,20 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
                             <div
                               key={`${row.country}-${p.provider_id}`}
                               onClick={() => {
-                                if (!deep?.link) return;
-                                window.open(deep.link, "_blank", "noopener");
+                                if (!href) return;
+                                window.open(href, "_blank", "noopener");
                               }}
-                              role={deep?.link ? "button" : undefined}
-                              tabIndex={deep?.link ? 0 : undefined}
+                              role={href ? "button" : undefined}
+                              tabIndex={href ? 0 : undefined}
                               onKeyDown={(e) => {
-                                if (!deep?.link) return;
+                                if (!href) return;
                                 if (e.key === "Enter" || e.key === " ") {
                                   e.preventDefault();
-                                  window.open(deep.link, "_blank", "noopener");
+                                  window.open(href, "_blank", "noopener");
                                 }
                               }}
                               className={`inline-flex items-center gap-1.5 bg-panel-2 border border-border rounded px-2 py-0.5 text-xs ${
-                                deep?.link ? "cursor-pointer hover:bg-white/5" : ""
+                                href ? "cursor-pointer hover:bg-white/5" : ""
                               }`}
                             >
                               {p.logo_path && (

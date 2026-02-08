@@ -909,8 +909,16 @@ async def movie_providers(movie_id: int):
 
 
 @app.get("/api/movie/{movie_id}/links")
-async def movie_links(movie_id: int):
-    return await streaming_availability.get_streaming_links(movie_id)
+async def movie_links(movie_id: int, countries: str | None = None):
+    normalized_countries = (
+        sorted(_normalize_country_codes(countries.split(",")) or [])
+        if countries
+        else None
+    )
+    return await streaming_availability.get_streaming_links(
+        movie_id,
+        countries=normalized_countries,
+    )
 
 
 @app.get("/api/tv/{tv_id}/providers")
@@ -922,8 +930,17 @@ async def tv_providers(tv_id: int):
 
 
 @app.get("/api/tv/{tv_id}/links")
-async def tv_links(tv_id: int):
-    return await streaming_availability.get_streaming_links(tv_id, media_type="tv")
+async def tv_links(tv_id: int, countries: str | None = None):
+    normalized_countries = (
+        sorted(_normalize_country_codes(countries.split(",")) or [])
+        if countries
+        else None
+    )
+    return await streaming_availability.get_streaming_links(
+        tv_id,
+        media_type="tv",
+        countries=normalized_countries,
+    )
 
 
 def _normalize_person_credit_item(item: dict) -> dict | None:
