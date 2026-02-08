@@ -66,6 +66,17 @@ async def signup(body: SignupRequest, response: Response, db: AsyncSession = Dep
 
     prefs = UserPreferences(user_id=user.id)
     db.add(prefs)
+    add_audit_log(
+        db,
+        action="user.account_created",
+        message=(
+            "New account created and granted admin access as the first admin user."
+            if is_first_admin
+            else "New account created."
+        ),
+        actor_user=user,
+        target_user=user,
+    )
     await db.commit()
 
     asyncio.create_task(mailer.send_welcome_email(user.email))
@@ -94,8 +105,22 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     )
     if (admin_count or 0) == 0:
         user.is_admin = True
+        add_audit_log(
+            db,
+            action="system.admin_bootstrap",
+            message=f"System auto-promoted {user.email} to admin because no admins existed.",
+            actor_user=user,
+            target_user=user,
+        )
 
     user.last_login_at = datetime.now(timezone.utc)
+    add_audit_log(
+        db,
+        action="user.login",
+        message="User logged in.",
+        actor_user=user,
+        target_user=user,
+    )
     await db.commit()
 
     set_auth_cookies(response, user.id)
@@ -169,6 +194,13 @@ async def change_email(body: ChangeEmailRequest, user: User = Depends(get_curren
             expires_at=expires_at,
         )
     )
+    add_audit_log(
+        db,
+        action="user.email_change_requested",
+        message=f"User requested email change to {normalized_new_email}.",
+        actor_user=user,
+        target_user=user,
+    )
     await db.commit()
 
     asyncio.create_task(
@@ -232,6 +264,13 @@ async def forgot_password(body: ForgotPasswordRequest, request: Request, db: Asy
             expires_at=expires_at,
             request_ip=_client_ip(request),
         )
+    )
+    add_audit_log(
+        db,
+        action="user.password_reset_requested",
+        message="Password reset link requested.",
+        actor_user=user,
+        target_user=user,
     )
     await db.commit()
 
