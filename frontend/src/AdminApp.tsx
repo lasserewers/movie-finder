@@ -566,6 +566,16 @@ function AdminContent() {
                     const adminBusy = updatingKeys.has(adminKey);
                     const activeBusy = updatingKeys.has(activeKey);
                     const rowBusy = adminBusy || activeBusy;
+                    const statusLabel = !row.is_active
+                      ? "Disabled"
+                      : row.email_verified
+                        ? "Active"
+                        : "Unverified";
+                    const statusClassName = !row.is_active
+                      ? "border-red-500/40 bg-red-500/15 text-red-200"
+                      : row.email_verified
+                        ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
+                        : "border-amber-500/45 bg-amber-500/15 text-amber-200";
                     return (
                       <tr key={row.id} className="border-t border-border/70">
                         <td className="px-3 py-2">{row.email}</td>
@@ -586,13 +596,9 @@ function AdminContent() {
                         </td>
                         <td className="px-3 py-2">
                           <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
-                              row.is_active
-                                ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
-                                : "border-red-500/40 bg-red-500/15 text-red-200"
-                            }`}
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${statusClassName}`}
                           >
-                            {row.is_active ? "Active" : "Disabled"}
+                            {statusLabel}
                           </span>
                         </td>
                         <td className="px-3 py-2">

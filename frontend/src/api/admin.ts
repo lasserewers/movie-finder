@@ -13,6 +13,7 @@ export interface AdminUser {
   email: string;
   is_admin: boolean;
   is_active: boolean;
+  email_verified: boolean;
   created_at?: string | null;
   last_login_at?: string | null;
   provider_count: number;

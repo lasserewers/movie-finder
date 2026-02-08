@@ -24,6 +24,7 @@ def _serialize_user(user: User, prefs: UserPreferences | None) -> dict:
         "email": user.email,
         "is_admin": bool(user.is_admin),
         "is_active": bool(user.is_active),
+        "email_verified": bool(user.email_verified),
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
         "provider_count": len(provider_ids),
