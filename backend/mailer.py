@@ -34,6 +34,10 @@ def build_email_change_link(token: str) -> str:
     return f"{FRONTEND_BASE_URL}/confirm-email?token={token}"
 
 
+def build_signup_verification_link(token: str) -> str:
+    return f"{FRONTEND_BASE_URL}/confirm-signup-email?token={token}"
+
+
 def _render_email_html(
     *,
     preheader: str,
@@ -146,6 +150,30 @@ async def send_welcome_email(to_email: str) -> bool:
         ),
         cta_label="Open FullStreamer",
         cta_url=FRONTEND_BASE_URL,
+    )
+    return await send_email(to_email, subject, text_body, html_body)
+
+
+async def send_signup_verification_email(to_email: str, token: str, expires_minutes: int) -> bool:
+    link = build_signup_verification_link(token)
+    subject = "Confirm your FullStreamer email"
+    text_body = (
+        "Welcome to FullStreamer.\n\n"
+        "Please confirm your email address to finish creating your account.\n\n"
+        f"Confirm your email: {link}\n\n"
+        f"This link expires in {expires_minutes} minutes.\n\n"
+        "If you did not create this account, you can ignore this email."
+    )
+    html_body = _render_email_html(
+        preheader="Confirm your FullStreamer email",
+        title="Confirm Your Email",
+        subtitle="One more step before your account is ready.",
+        body_html=(
+            f"<p style=\"margin:0 0 12px 0;\">Click the button below to confirm your email address. The link expires in <strong>{expires_minutes} minutes</strong>.</p>"
+            "<p style=\"margin:0;\">If this wasn't you, ignore this message.</p>"
+        ),
+        cta_label="Confirm Email",
+        cta_url=link,
     )
     return await send_email(to_email, subject, text_body, html_body)
 

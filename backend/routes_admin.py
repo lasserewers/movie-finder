@@ -239,6 +239,8 @@ async def admin_update_user(
         user.is_active = body.is_active
 
     if body.is_admin is not None:
+        if body.is_admin is False and user.id == admin.id:
+            raise HTTPException(status_code=400, detail="You cannot remove your own admin access")
         if body.is_admin is False and user.is_admin:
             other_admins = await db.scalar(
                 select(func.count())

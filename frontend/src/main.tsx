@@ -6,6 +6,7 @@ import App from "./App";
 import AdminApp from "./AdminApp";
 import ResetPasswordApp from "./ResetPasswordApp";
 import ConfirmEmailApp from "./ConfirmEmailApp";
+import ConfirmSignupEmailApp from "./ConfirmSignupEmailApp";
 import { IOS_BRAVE } from "./utils/platform";
 
 if (IOS_BRAVE) {
@@ -19,11 +20,14 @@ const isResetPasswordRoute =
 const isConfirmEmailRoute =
   window.location.pathname === "/confirm-email" ||
   window.location.pathname.startsWith("/confirm-email/");
+const isConfirmSignupEmailRoute =
+  window.location.pathname === "/confirm-signup-email" ||
+  window.location.pathname.startsWith("/confirm-signup-email/");
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <MotionConfig reducedMotion={IOS_BRAVE ? "always" : "user"}>
-      {isAdminRoute ? <AdminApp /> : isResetPasswordRoute ? <ResetPasswordApp /> : isConfirmEmailRoute ? <ConfirmEmailApp /> : <App />}
+      {isAdminRoute ? <AdminApp /> : isResetPasswordRoute ? <ResetPasswordApp /> : isConfirmEmailRoute ? <ConfirmEmailApp /> : isConfirmSignupEmailRoute ? <ConfirmSignupEmailApp /> : <App />}
     </MotionConfig>
   </StrictMode>
 );

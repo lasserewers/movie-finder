@@ -5,6 +5,7 @@ export interface User {
   email: string;
   is_admin?: boolean;
   is_active?: boolean;
+  email_verified?: boolean;
   created_at?: string | null;
   last_login_at?: string | null;
 }
@@ -18,7 +19,7 @@ export async function checkAuth(): Promise<User | null> {
 }
 
 export async function login(email: string, password: string): Promise<User> {
-  const data = await apiFetch<{ id?: string; email: string; is_admin?: boolean; is_active?: boolean }>("/api/auth/login", {
+  const data = await apiFetch<{ id?: string; email: string; is_admin?: boolean; is_active?: boolean; email_verified?: boolean }>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
@@ -27,19 +28,73 @@ export async function login(email: string, password: string): Promise<User> {
     email: data.email,
     is_admin: !!data.is_admin,
     is_active: data.is_active !== false,
+    email_verified: data.email_verified !== false,
   };
 }
 
-export async function signup(email: string, password: string): Promise<User> {
-  const data = await apiFetch<{ id?: string; email: string; is_admin?: boolean; is_active?: boolean }>("/api/auth/signup", {
+export interface SignupResult {
+  email: string;
+  requiresEmailVerification: boolean;
+  user: User | null;
+}
+
+export async function signup(email: string, password: string): Promise<SignupResult> {
+  const data = await apiFetch<{
+    id?: string;
+    email: string;
+    is_admin?: boolean;
+    is_active?: boolean;
+    email_verified?: boolean;
+    requires_email_verification?: boolean;
+  }>("/api/auth/signup", {
     method: "POST",
     body: JSON.stringify({ email, password }),
+  });
+  if (data.requires_email_verification) {
+    return {
+      email: data.email,
+      requiresEmailVerification: true,
+      user: null,
+    };
+  }
+  return {
+    email: data.email,
+    requiresEmailVerification: false,
+    user: {
+      id: data.id || "",
+      email: data.email,
+      is_admin: !!data.is_admin,
+      is_active: data.is_active !== false,
+      email_verified: data.email_verified !== false,
+    },
+  };
+}
+
+export async function resendSignupVerification(email: string): Promise<void> {
+  await apiFetch("/api/auth/resend-verification", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function confirmSignupEmail(token: string): Promise<User> {
+  const data = await apiFetch<{
+    id?: string;
+    email: string;
+    is_admin?: boolean;
+    is_active?: boolean;
+    email_verified?: boolean;
+    auto_login?: boolean;
+  }>("/api/auth/confirm-signup-email", {
+    method: "POST",
+    body: JSON.stringify({ token }),
   });
   return {
     id: data.id || "",
     email: data.email,
     is_admin: !!data.is_admin,
     is_active: data.is_active !== false,
+    email_verified: data.email_verified !== false,
   };
 }
 

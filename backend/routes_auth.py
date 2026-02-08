@@ -11,16 +11,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .audit import add_audit_log
 from .database import get_db
-from .models import User, UserPreferences, PasswordResetToken, EmailChangeToken
+from .models import (
+    User,
+    UserPreferences,
+    PasswordResetToken,
+    EmailChangeToken,
+    EmailVerificationToken,
+)
 from . import mailer
 from .auth import (
     hash_password, verify_password, set_auth_cookies, clear_auth_cookies,
-    get_current_user, decode_token, verify_csrf,
+    get_current_user, decode_token,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 PASSWORD_RESET_TTL_MINUTES = max(5, int(os.environ.get("PASSWORD_RESET_TTL_MINUTES", "30")))
 EMAIL_CHANGE_TTL_MINUTES = max(5, int(os.environ.get("EMAIL_CHANGE_TTL_MINUTES", "60")))
+EMAIL_VERIFICATION_TTL_MINUTES = max(5, int(os.environ.get("EMAIL_VERIFICATION_TTL_MINUTES", "60")))
 
 
 def _client_ip(request: Request) -> str | None:
@@ -31,6 +38,36 @@ def _client_ip(request: Request) -> str | None:
         or (request.client.host if request.client else None)
     )
     return value or None
+
+
+async def _issue_email_verification_token(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    request_ip: str | None,
+) -> str:
+    now = datetime.now(timezone.utc)
+    token_plain = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token_plain.encode("utf-8")).hexdigest()
+    expires_at = now + timedelta(minutes=EMAIL_VERIFICATION_TTL_MINUTES)
+    await db.execute(
+        update(EmailVerificationToken)
+        .where(
+            EmailVerificationToken.user_id == user_id,
+            EmailVerificationToken.used_at.is_(None),
+            EmailVerificationToken.expires_at > now,
+        )
+        .values(used_at=now)
+    )
+    db.add(
+        EmailVerificationToken(
+            user_id=user_id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+            request_ip=request_ip,
+        )
+    )
+    return token_plain
 
 
 class SignupRequest(BaseModel):
@@ -44,7 +81,7 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/signup")
-async def signup(body: SignupRequest, response: Response, db: AsyncSession = Depends(get_db)):
+async def signup(body: SignupRequest, request: Request, db: AsyncSession = Depends(get_db)):
     existing = await db.execute(select(User).where(User.email == body.email.lower()))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -59,13 +96,19 @@ async def signup(body: SignupRequest, response: Response, db: AsyncSession = Dep
         password_hash=hash_password(body.password),
         is_admin=is_first_admin,
         is_active=True,
-        last_login_at=datetime.now(timezone.utc),
+        email_verified=False,
+        last_login_at=None,
     )
     db.add(user)
     await db.flush()
 
     prefs = UserPreferences(user_id=user.id)
     db.add(prefs)
+    verification_token = await _issue_email_verification_token(
+        db,
+        user_id=user.id,
+        request_ip=_client_ip(request),
+    )
     add_audit_log(
         db,
         action="user.account_created",
@@ -79,15 +122,135 @@ async def signup(body: SignupRequest, response: Response, db: AsyncSession = Dep
     )
     await db.commit()
 
-    asyncio.create_task(mailer.send_welcome_email(user.email))
+    asyncio.create_task(
+        mailer.send_signup_verification_email(
+            user.email,
+            verification_token,
+            EMAIL_VERIFICATION_TTL_MINUTES,
+        )
+    )
+    return {
+        "ok": True,
+        "email": user.email,
+        "requires_email_verification": True,
+    }
 
-    set_auth_cookies(response, user.id)
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+@router.post("/resend-verification")
+async def resend_verification(body: ResendVerificationRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    email = body.email.lower()
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if not user or user.email_verified or not user.is_active:
+        # Keep response generic to avoid exposing account state.
+        return {"ok": True}
+
+    verification_token = await _issue_email_verification_token(
+        db,
+        user_id=user.id,
+        request_ip=_client_ip(request),
+    )
+    add_audit_log(
+        db,
+        action="user.email_verification_resent",
+        message="Signup email verification link re-sent.",
+        actor_user=user,
+        target_user=user,
+    )
+    await db.commit()
+    asyncio.create_task(
+        mailer.send_signup_verification_email(
+            user.email,
+            verification_token,
+            EMAIL_VERIFICATION_TTL_MINUTES,
+        )
+    )
+    return {"ok": True}
+
+
+class ConfirmSignupEmailRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=512)
+
+
+@router.post("/confirm-signup-email")
+async def confirm_signup_email(
+    body: ConfirmSignupEmailRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    token_hash = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    row = (
+        await db.execute(
+            select(EmailVerificationToken, User)
+            .join(User, User.id == EmailVerificationToken.user_id)
+            .where(
+                EmailVerificationToken.token_hash == token_hash,
+            )
+        )
+    ).first()
+    if not row:
+        raise HTTPException(status_code=400, detail="Invalid or expired email verification token")
+
+    verification_token, user = row
+    newly_verified = False
+    confirmed_this_request = False
+    if verification_token.used_at is None:
+        if verification_token.expires_at <= now:
+            raise HTTPException(status_code=400, detail="Invalid or expired email verification token")
+
+        confirmed_this_request = True
+        verification_token.used_at = now
+        await db.execute(
+            update(EmailVerificationToken)
+            .where(
+                EmailVerificationToken.user_id == user.id,
+                EmailVerificationToken.used_at.is_(None),
+                EmailVerificationToken.id != verification_token.id,
+            )
+            .values(used_at=now)
+        )
+        newly_verified = not user.email_verified
+        if newly_verified:
+            user.email_verified = True
+            add_audit_log(
+                db,
+                action="user.email_verified",
+                message="User confirmed signup email.",
+                actor_user=user,
+                target_user=user,
+            )
+
+    auto_login = bool(user.is_active and user.email_verified)
+    if auto_login and confirmed_this_request:
+        user.last_login_at = now
+        add_audit_log(
+            db,
+            action="user.login",
+            message="User logged in after confirming signup email.",
+            actor_user=user,
+            target_user=user,
+        )
+
+    await db.commit()
+
+    if newly_verified:
+        asyncio.create_task(mailer.send_welcome_email(user.email))
+    if auto_login:
+        set_auth_cookies(response, user.id)
+
     return {
         "ok": True,
         "id": str(user.id),
         "email": user.email,
         "is_admin": bool(user.is_admin),
         "is_active": bool(user.is_active),
+        "email_verified": bool(user.email_verified),
+        "auto_login": auto_login,
     }
 
 
@@ -97,6 +260,8 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.email_verified:
+        raise HTTPException(status_code=403, detail="Please verify your email before logging in")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is disabled")
 
@@ -130,6 +295,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
         "email": user.email,
         "is_admin": bool(user.is_admin),
         "is_active": bool(user.is_active),
+        "email_verified": bool(user.email_verified),
     }
 
 
@@ -146,6 +312,7 @@ async def me(user: User = Depends(get_current_user)):
         "id": str(user.id),
         "is_admin": bool(user.is_admin),
         "is_active": bool(user.is_active),
+        "email_verified": bool(user.email_verified),
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
     }
@@ -403,6 +570,9 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if not user.email_verified:
+        clear_auth_cookies(response)
+        raise HTTPException(status_code=403, detail="Please verify your email before logging in")
     if not user.is_active:
         clear_auth_cookies(response)
         raise HTTPException(status_code=403, detail="Account is disabled")

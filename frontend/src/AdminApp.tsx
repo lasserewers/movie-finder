@@ -232,6 +232,10 @@ function AdminContent() {
   };
 
   const onRoleChange = async (target: AdminUser, nextRole: "admin" | "user") => {
+    if (target.id === user?.id && nextRole === "user") {
+      setDataError("You cannot remove your own admin access.");
+      return;
+    }
     const nextIsAdmin = nextRole === "admin";
     if (nextIsAdmin === target.is_admin) return;
     const action = nextIsAdmin ? "promote to admin" : "remove admin access";
@@ -579,7 +583,8 @@ function AdminContent() {
                           <select
                             value={row.is_admin ? "admin" : "user"}
                             onChange={(e) => onRoleChange(row, e.target.value as "admin" | "user")}
-                            disabled={adminBusy}
+                            disabled={adminBusy || row.id === user?.id}
+                            title={row.id === user?.id ? "You cannot remove your own admin access." : ""}
                             className="rounded-md px-2 py-1 text-xs border border-border bg-panel-2 text-text disabled:opacity-60 disabled:cursor-not-allowed"
                           >
                             <option value="user">{adminBusy ? "Saving..." : "User"}</option>

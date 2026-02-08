@@ -33,6 +33,7 @@ const USER_CONTENT_LABEL: Record<UserContentMode, string> = {
   available: "Available",
   streamable: "Streamable",
 };
+const SIGNUP_ONBOARDING_STORAGE_KEY = "signup_onboarding_pending";
 
 function userViewPrefsKey(email: string) {
   return `${USER_VIEW_PREFS_STORAGE_PREFIX}${email.trim().toLowerCase()}`;
@@ -436,6 +437,22 @@ function AppContent() {
       // Ignore URL rewrite failures.
     }
   }, [authLoading, user, openAuthModal]);
+
+  useEffect(() => {
+    if (authLoading || !user || onboardingOpen) return;
+    let shouldResumeSignup = false;
+    try {
+      shouldResumeSignup = localStorage.getItem(SIGNUP_ONBOARDING_STORAGE_KEY) === "1";
+      if (shouldResumeSignup) {
+        localStorage.removeItem(SIGNUP_ONBOARDING_STORAGE_KEY);
+      }
+    } catch {
+      shouldResumeSignup = false;
+    }
+    if (!shouldResumeSignup) return;
+    setIsOnboarding(true);
+    setOnboardingOpen(true);
+  }, [authLoading, user, onboardingOpen]);
 
   const handleSignupComplete = () => {
     setIsOnboarding(true);
