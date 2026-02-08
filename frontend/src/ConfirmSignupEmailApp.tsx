@@ -18,6 +18,13 @@ export default function ConfirmSignupEmailApp() {
   const [token] = useState(readTokenFromQuery);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
+  const goBack = () => {
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    window.location.href = "/";
+  };
 
   const hasToken = useMemo(() => token.length >= 16, [token]);
 
@@ -59,26 +66,14 @@ export default function ConfirmSignupEmailApp() {
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md rounded-2xl border border-border bg-panel/95 p-6 shadow-2xl">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6">
           <h1 className="font-display text-2xl">Email Confirmation</h1>
-          <button
-            type="button"
-            onClick={() => {
-              window.location.href = "/";
-            }}
-            className="text-sm text-muted hover:text-text"
-          >
-            Back
-          </button>
         </div>
 
         {status === "loading" && <p className="text-sm text-muted">Confirming your email...</p>}
         {status === "success" && (
           <div className="space-y-3">
             <p className="text-sm text-green-300">{message}</p>
-            <p className="text-sm text-muted">
-              You can return to the page where you started signing up and continue from there.
-            </p>
           </div>
         )}
         {status === "error" && <p className="text-sm text-red-300">{message}</p>}
@@ -92,6 +87,14 @@ export default function ConfirmSignupEmailApp() {
             className="mt-4 w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent/90"
           >
             Continue setting up your account
+          </button>
+        ) : status === "error" ? (
+          <button
+            type="button"
+            onClick={goBack}
+            className="mt-4 w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent/90"
+          >
+            Go back
           </button>
         ) : null}
       </div>
