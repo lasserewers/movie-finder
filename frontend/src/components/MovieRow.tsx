@@ -1,6 +1,7 @@
 import { memo, useLayoutEffect, useRef } from "react";
 import type { HomeSection } from "../api/movies";
 import MovieCard from "./MovieCard";
+import { IOS_BRAVE } from "../utils/platform";
 
 interface Props {
   section: HomeSection;
@@ -15,6 +16,7 @@ function MovieRow({ section, onSelectMovie, onSeeMore, resetToken = 0, mediaType
   const rowRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
+    if (IOS_BRAVE) return;
     if (mediaType !== "mix") return;
     const el = rowRef.current;
     if (!el) return;
@@ -50,7 +52,7 @@ function MovieRow({ section, onSelectMovie, onSeeMore, resetToken = 0, mediaType
         ref={rowRef}
         className="flex gap-2.5 sm:gap-4 overflow-x-auto overflow-y-visible pt-1 sm:pt-2 -mt-1 sm:-mt-2 pb-2 sm:pb-3 pl-1 pr-1 -ml-1 -mr-1 snap-x snap-mandatory scrollbar-thin"
       >
-        {section.results.slice(0, 24).map((m, i) => (
+        {section.results.slice(0, IOS_BRAVE ? 14 : 24).map((m, i) => (
           <MovieCard
             key={m.id}
             id={m.id}

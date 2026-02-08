@@ -70,6 +70,15 @@ html.ios-brave [class*="shadow-["] {
   box-shadow: none !important;
 }
 
+html.ios-brave *,
+html.ios-brave *::before,
+html.ios-brave *::after {
+  animation-duration: 0ms !important;
+  animation-delay: 0ms !important;
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
+}
+
 /* Layout container used by topbar + main */
 .page-container {
   width: 100%;

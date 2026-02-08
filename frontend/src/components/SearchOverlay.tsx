@@ -176,11 +176,9 @@ export default function SearchOverlay({
 
   const loadMore = useCallback(async () => {
     if (!open || loadingRef.current) {
-      console.log("[loadMore] bail: open=%s loadingRef=%s", open, loadingRef.current);
       return;
     }
     if (!hasMoreRef.current) {
-      console.log("[loadMore] bail: hasMoreRef=false");
       return;
     }
     const trimmed = query.trim();
@@ -192,7 +190,6 @@ export default function SearchOverlay({
     try {
       const target = resultsRef.current === 0 ? INITIAL_BATCH : MORE_BATCH;
       const pageLimit = localMediaType === "mix" ? 40 : PAGE_LIMIT;
-      console.log("[loadMore] start: page=%d target=%d pageLimit=%d resultsRef=%d version=%d", pageRef.current, target, pageLimit, resultsRef.current, version);
       const newlyAdded: Movie[] = [];
 
       if (bufferRef.current.length > 0) {
@@ -350,7 +347,6 @@ export default function SearchOverlay({
 
       // If a reset happened while we were fetching, discard these results
       if (version !== versionRef.current) {
-        console.log("[loadMore] stale version, discarding results");
         return;
       }
 
@@ -367,14 +363,9 @@ export default function SearchOverlay({
           : fetchedPages === 0
             ? hasMoreRef.current
             : lastPageCount >= pageLimit);
-      console.log("[loadMore] done: added=%d buffer=%d lastPageCount=%d pageLimit=%d totalPages=%s nextPage=%d fetchedPages=%d nextHasMore=%s totalResults=%d",
-        newlyAdded.length, bufferRef.current.length, lastPageCount, pageLimit,
-        totalPagesRef.current, page, fetchedPages, nextHasMore,
-        (resultsRef.current || 0) + newlyAdded.length);
       hasMoreRef.current = nextHasMore;
       setHasMore(nextHasMore);
     } catch (err) {
-      console.error("[loadMore] error:", err);
       if (version !== versionRef.current) return;
       hasMoreRef.current = false;
       setHasMore(false);

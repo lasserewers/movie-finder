@@ -3,6 +3,7 @@ import SearchBar from "./SearchBar";
 import UserMenu from "./UserMenu";
 import { useAuth } from "../hooks/useAuth";
 import { useConfig } from "../hooks/useConfig";
+import { IOS_BRAVE } from "../utils/platform";
 interface Props {
   onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
   onLoginClick: () => void;
@@ -33,6 +34,10 @@ export default function Topbar({
   const transitionLockUntilRef = useRef(0);
 
   useEffect(() => {
+    if (IOS_BRAVE) {
+      setCompact(false);
+      return;
+    }
     const ENTER_COMPACT_Y = 96;
     const EXIT_COMPACT_Y = 8;
     const TRANSITION_LOCK_MS = 320;

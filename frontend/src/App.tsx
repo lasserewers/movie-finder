@@ -17,6 +17,7 @@ import { SkeletonRow } from "./components/Skeleton";
 import Spinner from "./components/Spinner";
 import { useInfiniteScroll } from "./hooks/useInfiniteScroll";
 import { getHome, getRegions, getGeoCountry, type HomeSection, type Region, type MediaType } from "./api/movies";
+import { IOS_BRAVE } from "./utils/platform";
 
 const MEDIA_OPTIONS: { value: MediaType; label: string }[] = [
   { value: "mix", label: "All" },
@@ -82,6 +83,7 @@ function AppContent() {
   const [homeLoading, setHomeLoading] = useState(false);
   const [homeInitialized, setHomeInitialized] = useState(false);
   const [mainScrollEl, setMainScrollEl] = useState<HTMLElement | null>(null);
+  const useScopedMainScroll = !IOS_BRAVE;
 
   // Cache for each media type to avoid refetching on toggle
   const sectionsCacheRef = useRef<Record<MediaType, { sections: HomeSection[]; page: number; hasMore: boolean } | null>>({
@@ -132,10 +134,12 @@ function AppContent() {
     const currentUserKey = user?.email?.trim().toLowerCase() || (user ? "__logged_in__" : null);
     if (previousUserKeyRef.current === null && currentUserKey !== null) {
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-      mainScrollEl?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      if (useScopedMainScroll) {
+        mainScrollEl?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      }
     }
     previousUserKeyRef.current = currentUserKey;
-  }, [authLoading, user?.email, user, mainScrollEl]);
+  }, [authLoading, user?.email, user, mainScrollEl, useScopedMainScroll]);
 
   // Load home rows when config is ready or media type changes
   useEffect(() => {
@@ -289,6 +293,7 @@ function AppContent() {
   // Prefetch next page in background
   const prefetchNextPage = useCallback(
     async (nextPage: number, currentMediaType: MediaType) => {
+      if (IOS_BRAVE) return;
       const isGuest = !user;
       const unfiltered = isGuest || userContentMode === "all";
       const includePaid = !!user && userContentMode === "available";
@@ -341,13 +346,14 @@ function AppContent() {
 
       setHomeLoading(true);
       try {
+        const homePageSize = IOS_BRAVE ? 4 : 6;
         const isGuest = !user;
         const unfiltered = isGuest || userContentMode === "all";
         const includePaid = !!user && userContentMode === "available";
         const country = unfiltered ? guestCountry : undefined;
         const scopedCountries = user && !usingVpn ? countries : undefined;
         const ids = unfiltered ? [] : Array.from(providerIds);
-        const data = await getHome(page, 6, ids, mediaType, country, unfiltered, usingVpn, includePaid, scopedCountries);
+        const data = await getHome(page, homePageSize, ids, mediaType, country, unfiltered, usingVpn, includePaid, scopedCountries);
         const newHasMore = data.has_more ?? false;
         const newPage = data.next_page ?? page + 1;
 
@@ -390,7 +396,7 @@ function AppContent() {
   const sentinelRef = useInfiniteScroll(
     () => loadHomeRows(false),
     homeHasMore && !homeLoading,
-    mainScrollEl
+    useScopedMainScroll ? mainScrollEl : undefined
   );
 
   const handleAuthClose = () => {
@@ -511,8 +517,8 @@ function AppContent() {
   }
 
   return (
-    <div className="h-[100dvh] overflow-hidden flex flex-col">
-      <div className="z-[120] bg-bg border-b border-border/70 flex-shrink-0">
+    <div className={useScopedMainScroll ? "h-[100dvh] overflow-hidden flex flex-col" : "min-h-screen flex flex-col"}>
+      <div className={`z-[120] bg-bg border-b border-border/70 ${useScopedMainScroll ? "flex-shrink-0" : "sticky top-0"}`}>
         <Topbar
           onSelectMovie={handleSelectMovie}
           onLoginClick={() => openAuthModal("login")}
@@ -522,13 +528,19 @@ function AppContent() {
           vpnEnabled={usingVpn}
           onSearchSubmit={handleSearchSubmit}
           onOpenAdvancedSearch={handleOpenAdvancedSearch}
-          scrollContainer={mainScrollEl}
+          scrollContainer={useScopedMainScroll ? mainScrollEl : null}
         />
       </div>
 
       <main
-        ref={setMainScrollEl}
-        className={`flex-1 min-h-0 ${hasBlockingOverlay ? "overflow-hidden" : "overflow-y-auto"}`}
+        ref={useScopedMainScroll ? setMainScrollEl : undefined}
+        className={`flex-1 ${useScopedMainScroll ? "min-h-0" : ""} ${
+          useScopedMainScroll
+            ? hasBlockingOverlay
+              ? "overflow-hidden"
+              : "overflow-y-auto"
+            : ""
+        }`}
       >
         <div className="page-container pt-2 pb-16">
           <div className="flex items-stretch justify-between gap-6 mb-6 max-sm:flex-col max-sm:gap-3">

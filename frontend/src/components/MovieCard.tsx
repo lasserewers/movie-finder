@@ -1,5 +1,6 @@
 import { memo } from "react";
 import { motion } from "framer-motion";
+import { IOS_BRAVE } from "../utils/platform";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
 
@@ -28,13 +29,9 @@ function MovieCard({
 }: Props) {
   const src = posterUrl || (posterPath ? `${TMDB_IMG}/w185${posterPath}` : "");
   const year = releaseDate?.slice(0, 4) || "";
-
-  return (
-    <motion.div
-      className={`flex flex-col gap-1.5 cursor-pointer snap-start ${fill ? "w-full" : "w-[112px] min-[430px]:w-[126px] sm:w-[180px] flex-shrink-0"}`}
-      whileHover={{ y: -4, scale: 1.02, transition: { duration: 0.15 } }}
-      onClick={() => onClick(id, mediaType)}
-    >
+  const className = `flex flex-col gap-1.5 cursor-pointer snap-start ${fill ? "w-full" : "w-[112px] min-[430px]:w-[126px] sm:w-[180px] flex-shrink-0"}`;
+  const content = (
+    <>
       <div className="relative">
         {src ? (
           <img
@@ -55,6 +52,24 @@ function MovieCard({
       </div>
       <span className="text-[0.78rem] sm:text-[0.85rem] text-text leading-tight line-clamp-2">{title}</span>
       <span className="text-[0.68rem] sm:text-xs text-muted">{year}</span>
+    </>
+  );
+
+  if (IOS_BRAVE) {
+    return (
+      <div className={className} onClick={() => onClick(id, mediaType)}>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <motion.div
+      className={className}
+      whileHover={{ y: -4, scale: 1.02, transition: { duration: 0.15 } }}
+      onClick={() => onClick(id, mediaType)}
+    >
+      {content}
     </motion.div>
   );
 }
