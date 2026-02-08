@@ -28,6 +28,10 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 PASSWORD_RESET_TTL_MINUTES = max(5, int(os.environ.get("PASSWORD_RESET_TTL_MINUTES", "30")))
 EMAIL_CHANGE_TTL_MINUTES = max(5, int(os.environ.get("EMAIL_CHANGE_TTL_MINUTES", "60")))
 EMAIL_VERIFICATION_TTL_MINUTES = max(5, int(os.environ.get("EMAIL_VERIFICATION_TTL_MINUTES", "60")))
+EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS = max(
+    0,
+    int(os.environ.get("EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS", "120")),
+)
 
 
 def _client_ip(request: Request) -> str | None:
@@ -68,6 +72,31 @@ async def _issue_email_verification_token(
         )
     )
     return token_plain
+
+
+async def _verification_resend_cooldown_remaining_seconds(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+) -> int:
+    if EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS <= 0:
+        return 0
+    now = datetime.now(timezone.utc)
+    latest_active_token = await db.scalar(
+        select(EmailVerificationToken)
+        .where(
+            EmailVerificationToken.user_id == user_id,
+            EmailVerificationToken.used_at.is_(None),
+            EmailVerificationToken.expires_at > now,
+        )
+        .order_by(EmailVerificationToken.created_at.desc())
+        .limit(1)
+    )
+    if not latest_active_token or not latest_active_token.created_at:
+        return 0
+    elapsed_seconds = int((now - latest_active_token.created_at).total_seconds())
+    remaining = EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS - elapsed_seconds
+    return remaining if remaining > 0 else 0
 
 
 class SignupRequest(BaseModel):
@@ -147,7 +176,15 @@ async def resend_verification(body: ResendVerificationRequest, request: Request,
     user = result.scalar_one_or_none()
     if not user or user.email_verified or not user.is_active:
         # Keep response generic to avoid exposing account state.
-        return {"ok": True}
+        return {"ok": True, "email_sent": False, "cooldown_seconds_remaining": 0}
+
+    cooldown_remaining = await _verification_resend_cooldown_remaining_seconds(db, user_id=user.id)
+    if cooldown_remaining > 0:
+        return {
+            "ok": True,
+            "email_sent": False,
+            "cooldown_seconds_remaining": cooldown_remaining,
+        }
 
     verification_token = await _issue_email_verification_token(
         db,
@@ -169,7 +206,11 @@ async def resend_verification(body: ResendVerificationRequest, request: Request,
             EMAIL_VERIFICATION_TTL_MINUTES,
         )
     )
-    return {"ok": True}
+    return {
+        "ok": True,
+        "email_sent": True,
+        "cooldown_seconds_remaining": EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS,
+    }
 
 
 class ConfirmSignupEmailRequest(BaseModel):

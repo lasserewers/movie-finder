@@ -70,11 +70,20 @@ export async function signup(email: string, password: string): Promise<SignupRes
   };
 }
 
-export async function resendSignupVerification(email: string): Promise<void> {
-  await apiFetch("/api/auth/resend-verification", {
+export async function resendSignupVerification(
+  email: string
+): Promise<{ emailSent: boolean; cooldownSecondsRemaining: number }> {
+  const data = await apiFetch<{
+    email_sent?: boolean;
+    cooldown_seconds_remaining?: number;
+  }>("/api/auth/resend-verification", {
     method: "POST",
     body: JSON.stringify({ email }),
   });
+  return {
+    emailSent: data.email_sent === true,
+    cooldownSecondsRemaining: Math.max(0, data.cooldown_seconds_remaining || 0),
+  };
 }
 
 export async function confirmSignupEmail(token: string): Promise<User> {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../hooks/useAuth";
 import { ApiError } from "../api/client";
@@ -31,6 +31,8 @@ export default function AuthModal({
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
+  const submitInFlightRef = useRef(false);
+  const resendInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -46,6 +48,8 @@ export default function AuthModal({
     setLoading(false);
     setResendLoading(false);
     setResendCooldownSeconds(0);
+    submitInFlightRef.current = false;
+    resendInFlightRef.current = false;
   }, [open, initialMode]);
 
   useEffect(() => {
@@ -70,6 +74,8 @@ export default function AuthModal({
       setError("Passwords do not match");
       return;
     }
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
 
     setLoading(true);
     try {
@@ -107,22 +113,32 @@ export default function AuthModal({
       }
     } finally {
       setLoading(false);
+      submitInFlightRef.current = false;
     }
   };
 
   const handleResendVerification = async () => {
-    if (!pendingVerificationEmail || resendCooldownSeconds > 0 || resendLoading) return;
+    if (!pendingVerificationEmail || resendCooldownSeconds > 0 || resendLoading || resendInFlightRef.current) return;
+    resendInFlightRef.current = true;
     setError("");
     setInfo("");
     setResendLoading(true);
     try {
-      await resendSignupVerification(pendingVerificationEmail);
-      setInfo("Verification email sent again. Check your inbox and spam folder.");
-      setResendCooldownSeconds(RESEND_COOLDOWN_SECONDS);
+      const result = await resendSignupVerification(pendingVerificationEmail);
+      const cooldown = Math.max(0, result.cooldownSecondsRemaining || RESEND_COOLDOWN_SECONDS);
+      if (result.emailSent) {
+        setInfo("Verification email sent again. Check your inbox and spam folder.");
+      } else if (cooldown > 0) {
+        setInfo(`Please wait ${formatCountdown(cooldown)} before requesting another link.`);
+      }
+      if (cooldown > 0) {
+        setResendCooldownSeconds(cooldown);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not resend verification email.");
     } finally {
       setResendLoading(false);
+      resendInFlightRef.current = false;
     }
   };
 
