@@ -102,7 +102,7 @@ export default function SearchOverlay({
   useEffect(() => {
     if (!open) return;
     justOpenedRef.current = true;
-    setLocalVpn(vpnEnabled);
+    setLocalVpn(filtered ? vpnEnabled : false);
     setContentMode(initialContentMode ?? (filtered ? "streamable" : "all"));
     setSortKey("relevance");
     resetState();

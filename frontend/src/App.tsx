@@ -745,11 +745,7 @@ function AppContent() {
         mediaType={mediaType}
         vpnEnabled={usingVpn}
         isLoggedIn={!!user}
-        initialContentMode={
-          !user ? "all"
-            : searchFiltered ? "streamable"
-            : userContentMode
-        }
+        initialContentMode={searchFiltered ? "streamable" : "all"}
         onClose={() => setSearchOpen(false)}
         onSelectMovie={handleSelectMovie}
       />
