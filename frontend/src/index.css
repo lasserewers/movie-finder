@@ -79,6 +79,12 @@ html.ios-brave *::after {
   transition-delay: 0ms !important;
 }
 
+html.ios-brave button,
+html.ios-brave [role="button"],
+html.ios-brave a {
+  touch-action: manipulation;
+}
+
 /* Layout container used by topbar + main */
 .page-container {
   width: 100%;

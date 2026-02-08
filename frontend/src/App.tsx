@@ -84,6 +84,7 @@ function AppContent() {
   const [homeInitialized, setHomeInitialized] = useState(false);
   const [mainScrollEl, setMainScrollEl] = useState<HTMLElement | null>(null);
   const useScopedMainScroll = !IOS_BRAVE;
+  const autoLoadCategories = !IOS_BRAVE;
 
   // Cache for each media type to avoid refetching on toggle
   const sectionsCacheRef = useRef<Record<MediaType, { sections: HomeSection[]; page: number; hasMore: boolean } | null>>({
@@ -395,7 +396,7 @@ function AppContent() {
 
   const sentinelRef = useInfiniteScroll(
     () => loadHomeRows(false),
-    homeHasMore && !homeLoading,
+    autoLoadCategories && homeHasMore && !homeLoading,
     useScopedMainScroll ? mainScrollEl : undefined
   );
 
@@ -763,9 +764,21 @@ function AppContent() {
             </>
           )}
 
-          {(homeLoading || homeHasMore) && sections.length > 0 && (
+          {autoLoadCategories && (homeLoading || homeHasMore) && sections.length > 0 && (
             <div ref={sentinelRef} className="flex justify-center py-6">
               <Spinner />
+            </div>
+          )}
+
+          {!autoLoadCategories && sections.length > 0 && homeHasMore && (
+            <div className="flex justify-center py-6">
+              <button
+                onClick={() => void loadHomeRows(false)}
+                disabled={homeLoading}
+                className="h-[42px] px-5 border border-border rounded-full text-sm text-muted hover:text-text hover:border-accent-2 transition-colors disabled:opacity-45 disabled:cursor-not-allowed"
+              >
+                {homeLoading ? "Loading..." : "Load More Categories"}
+              </button>
             </div>
           )}
 
