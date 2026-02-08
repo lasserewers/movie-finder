@@ -12,7 +12,7 @@ load_dotenv()
 from fastapi import FastAPI, Query, Depends, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2442,6 +2442,15 @@ async def set_config(data: dict, user: User = Depends(get_current_user), db: Asy
 
     await db.commit()
     return {"ok": True}
+
+
+@app.get("/admin", include_in_schema=False)
+@app.get("/admin/{subpath:path}", include_in_schema=False)
+async def admin_frontend(subpath: str = ""):
+    index_file = FRONTEND_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return JSONResponse(status_code=404, content={"detail": "Frontend build not found"})
 
 
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
