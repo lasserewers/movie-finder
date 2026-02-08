@@ -29,7 +29,6 @@ interface Props {
   open: boolean;
   query: string;
   filtered: boolean;
-  mediaType: MediaType;
   vpnEnabled?: boolean;
   isLoggedIn?: boolean;
   initialContentMode?: ContentMode;
@@ -41,7 +40,6 @@ export default function SearchOverlay({
   open,
   query,
   filtered,
-  mediaType,
   vpnEnabled = false,
   isLoggedIn = false,
   initialContentMode,
@@ -72,6 +70,7 @@ export default function SearchOverlay({
   const [contentMode, setContentMode] = useState<ContentMode>(
     initialContentMode ?? (filtered ? "streamable" : "all")
   );
+  const [localMediaType, setLocalMediaType] = useState<MediaType>("mix");
 
   const effectiveFiltered = contentMode !== "all";
   const effectiveIncludePaid = contentMode === "available";
@@ -105,6 +104,7 @@ export default function SearchOverlay({
     setLocalVpn(filtered ? vpnEnabled : false);
     setContentMode(initialContentMode ?? (filtered ? "streamable" : "all"));
     setSortKey("relevance");
+    setLocalMediaType("mix");
     resetState();
     const trimmed = query.trim();
     if (trimmed.length < 2) {
@@ -117,7 +117,7 @@ export default function SearchOverlay({
       return;
     }
     loadMore();
-  }, [open, query, mediaType, resetState]);
+  }, [open, query, resetState]);
 
   // Re-fetch when user changes local controls while overlay is already open
   useEffect(() => {
@@ -140,7 +140,7 @@ export default function SearchOverlay({
       return;
     }
     loadMore();
-  }, [contentMode, localVpn, countries, providerIds]);
+  }, [contentMode, localVpn, localMediaType, countries, providerIds]);
 
   useEffect(() => {
     resultsRef.current = results.length;
@@ -191,7 +191,7 @@ export default function SearchOverlay({
     setLoading(true);
     try {
       const target = resultsRef.current === 0 ? INITIAL_BATCH : MORE_BATCH;
-      const pageLimit = mediaType === "mix" ? 40 : PAGE_LIMIT;
+      const pageLimit = localMediaType === "mix" ? 40 : PAGE_LIMIT;
       console.log("[loadMore] start: page=%d target=%d pageLimit=%d resultsRef=%d version=%d", pageRef.current, target, pageLimit, resultsRef.current, version);
       const newlyAdded: Movie[] = [];
 
@@ -208,7 +208,7 @@ export default function SearchOverlay({
 
       const fetchPage = async (limit: number) => {
         const ids = Array.from(providerIds);
-        if (mediaType === "mix") {
+        if (localMediaType === "mix") {
           if (effectiveFiltered) {
             const [movieData, tvData] = await Promise.all([
               searchFilteredPage(trimmed, page, ids, "movie", limit, countries, localVpn, effectiveIncludePaid),
@@ -241,14 +241,14 @@ export default function SearchOverlay({
             trimmed,
             page,
             ids,
-            mediaType,
+            localMediaType,
             limit,
             countries,
             localVpn,
             effectiveIncludePaid
           );
         }
-        return await searchPage(trimmed, page, mediaType, limit);
+        return await searchPage(trimmed, page, localMediaType, limit);
       };
 
       while (remaining > 0) {
@@ -270,7 +270,7 @@ export default function SearchOverlay({
             try {
               const fallbackLimit = Math.min(pageLimit, 20);
               let fallbackItems: Movie[] = [];
-              if (mediaType === "mix") {
+              if (localMediaType === "mix") {
                 const [movieFallback, tvFallback] = effectiveFiltered
                   ? await Promise.all([
                       searchFiltered(trimmed, Array.from(providerIds), "movie", {
@@ -296,18 +296,18 @@ export default function SearchOverlay({
                 ].sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
               } else {
                 const fallback = effectiveFiltered
-                  ? await searchFiltered(trimmed, Array.from(providerIds), mediaType, {
+                  ? await searchFiltered(trimmed, Array.from(providerIds), localMediaType, {
                       limit: fallbackLimit,
                       countries,
                       vpn: localVpn,
                       includePaid: effectiveIncludePaid,
                     })
-                  : await searchMovies(trimmed, mediaType, fallbackLimit);
+                  : await searchMovies(trimmed, localMediaType, fallbackLimit);
                 fallbackItems = fallback.results || [];
               }
               if (version !== versionRef.current) return;
               const items = fallbackItems.filter((m) => {
-                const key = `${m.media_type || mediaType}:${m.id}`;
+                const key = `${m.media_type || localMediaType}:${m.id}`;
                 if (seenRef.current.has(key)) return false;
                 seenRef.current.add(key);
                 return true;
@@ -333,7 +333,7 @@ export default function SearchOverlay({
         }
 
         for (const m of pageResults) {
-          const key = `${m.media_type || mediaType}:${m.id}`;
+          const key = `${m.media_type || localMediaType}:${m.id}`;
           if (seenRef.current.has(key)) continue;
           seenRef.current.add(key);
           if (remaining > 0) {
@@ -384,7 +384,7 @@ export default function SearchOverlay({
         setLoading(false);
       }
     }
-  }, [open, query, effectiveFiltered, effectiveIncludePaid, providerIds, mediaType, countries, localVpn]);
+  }, [open, query, effectiveFiltered, effectiveIncludePaid, providerIds, localMediaType, countries, localVpn]);
 
   const handleScroll = useCallback(
     (event: UIEvent<HTMLDivElement>) => {
@@ -467,6 +467,23 @@ export default function SearchOverlay({
 
             {/* Toolbar */}
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-6 sm:px-8 pt-4 pb-2">
+              {/* Media type segmented control */}
+              <div className="flex h-[36px] border border-border rounded-full overflow-hidden bg-panel">
+                {([["mix", "All"], ["movie", "Movies"], ["tv", "TV Shows"]] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    onClick={() => setLocalMediaType(value)}
+                    className={`px-3 sm:px-4 text-sm transition-colors whitespace-nowrap ${
+                      localMediaType === value
+                        ? "bg-accent/15 text-text font-medium"
+                        : "text-muted hover:text-text"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
               {/* Row 1 on mobile: sort + load more | Row on desktop: sort + load more + spacer + vpn + content */}
               <div className="flex items-center gap-2 max-sm:w-full">
                 <select

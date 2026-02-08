@@ -3,15 +3,12 @@ import SearchBar from "./SearchBar";
 import UserMenu from "./UserMenu";
 import { useAuth } from "../hooks/useAuth";
 import { useConfig } from "../hooks/useConfig";
-import type { MediaType } from "../api/movies";
-
 interface Props {
   onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
   onLoginClick: () => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenCountries: () => void;
-  mediaType: MediaType;
   vpnEnabled?: boolean;
   onSearchSubmit?: (query: string, filtered: boolean) => void;
 }
@@ -22,7 +19,6 @@ export default function Topbar({
   onOpenProfile,
   onOpenSettings,
   onOpenCountries,
-  mediaType,
   vpnEnabled = false,
   onSearchSubmit,
 }: Props) {
@@ -78,7 +74,6 @@ export default function Topbar({
       <div className="flex flex-1 justify-end max-sm:order-3 max-sm:basis-full">
         <SearchBar
           onSelectMovie={onSelectMovie}
-          mediaType={mediaType}
           showFilterToggle={!!user}
           onOpenSettings={onOpenSettings}
           vpnEnabled={vpnEnabled}

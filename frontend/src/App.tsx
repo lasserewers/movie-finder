@@ -472,7 +472,6 @@ function AppContent() {
           onOpenProfile={() => setProfileOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenCountries={() => setCountriesModalOpen(true)}
-          mediaType={mediaType}
           vpnEnabled={usingVpn}
           onSearchSubmit={handleSearchSubmit}
         />
@@ -742,7 +741,6 @@ function AppContent() {
         open={searchOpen}
         query={searchQuery}
         filtered={searchFiltered}
-        mediaType={mediaType}
         vpnEnabled={usingVpn}
         isLoggedIn={!!user}
         initialContentMode={searchFiltered ? "streamable" : "all"}

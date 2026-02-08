@@ -1,13 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { type Movie, type MediaType } from "../api/movies";
+import { type Movie } from "../api/movies";
 import { useConfig } from "../hooks/useConfig";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
 
 interface Props {
   onSelectMovie: (movieId: number, mediaType?: "movie" | "tv") => void;
-  mediaType: MediaType;
   showFilterToggle?: boolean;
   onOpenSettings?: () => void;
   vpnEnabled?: boolean;
@@ -16,7 +15,6 @@ interface Props {
 
 export default function SearchBar({
   onSelectMovie,
-  mediaType,
   showFilterToggle = true,
   onOpenSettings,
   vpnEnabled = false,
@@ -66,8 +64,8 @@ export default function SearchBar({
     const vpnParam = filtered && canFilter && vpnEnabled ? "&vpn=1" : "";
     const limitParam = "&limit=10";
     const url = filtered && canFilter && ids.length
-      ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}&media_type=${mediaType}${limitParam}${vpnParam}${scopedCountries}`
-      : `/api/search?q=${encodeURIComponent(q)}&media_type=${mediaType}${limitParam}`;
+      ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}&media_type=mix${limitParam}${vpnParam}${scopedCountries}`
+      : `/api/search?q=${encodeURIComponent(q)}&media_type=mix${limitParam}`;
 
     fetch(url, { signal: controller.signal })
       .then((res) => res.json())
@@ -105,7 +103,7 @@ export default function SearchBar({
       autoOpenRef.current = false;
       doSearch(q, showFilterToggle && filterOn);
     }
-  }, [mediaType, showFilterToggle, filterOn, vpnEnabled, countries, providerIds]);
+  }, [showFilterToggle, filterOn, vpnEnabled, countries, providerIds]);
 
   const handleFilterToggle = () => {
     // If user has no services and tries to enable filter, open settings instead
@@ -140,7 +138,7 @@ export default function SearchBar({
             onSubmitSearch?.(q, showFilterToggle && filterOn);
           }}
           onFocus={() => results.length && setOpen(true)}
-          placeholder={mediaType === "tv" ? "Search TV shows..." : mediaType === "movie" ? "Search movies..." : "Search movies & TV..."}
+          placeholder="Search movies & TV..."
           className="flex-1 bg-transparent text-text text-sm sm:text-base outline-none placeholder:text-muted"
         />
         {onSubmitSearch && (
