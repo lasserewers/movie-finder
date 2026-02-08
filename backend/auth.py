@@ -103,6 +103,8 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled")
     return user
 
 
@@ -118,7 +120,16 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(get_db)
     if not user_id:
         return None
     result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
-    return result.scalar_one_or_none()
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        return None
+    return user
+
+
+async def get_current_admin(user: User = Depends(get_current_user)) -> User:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
 
 
 def verify_csrf(request: Request):

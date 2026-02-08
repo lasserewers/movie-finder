@@ -80,6 +80,21 @@ export default function UserMenu({ onOpenProfile, onOpenSettings, onOpenCountrie
             </svg>
             Manage services
           </button>
+          {user.is_admin && (
+            <button
+              onClick={() => {
+                setOpen(false);
+                window.location.href = "/admin";
+              }}
+              className="w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-muted hover:text-text flex items-center gap-2.5"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 3h18v18H3z" />
+                <path d="M8 8h8v8H8z" />
+              </svg>
+              Admin center
+            </button>
+          )}
           <div className="px-4 py-2.5 flex items-center justify-between">
             <span className="text-sm text-muted flex items-center gap-2.5">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

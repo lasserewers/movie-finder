@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db
@@ -30,9 +31,17 @@ async def signup(body: SignupRequest, response: Response, db: AsyncSession = Dep
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
 
+    admin_count = await db.scalar(
+        select(func.count()).select_from(User).where(User.is_admin.is_(True))
+    )
+    is_first_admin = (admin_count or 0) == 0
+
     user = User(
         email=body.email.lower(),
         password_hash=hash_password(body.password),
+        is_admin=is_first_admin,
+        is_active=True,
+        last_login_at=datetime.now(timezone.utc),
     )
     db.add(user)
     await db.flush()
@@ -42,7 +51,13 @@ async def signup(body: SignupRequest, response: Response, db: AsyncSession = Dep
     await db.commit()
 
     set_auth_cookies(response, user.id)
-    return {"ok": True, "email": user.email}
+    return {
+        "ok": True,
+        "id": str(user.id),
+        "email": user.email,
+        "is_admin": bool(user.is_admin),
+        "is_active": bool(user.is_active),
+    }
 
 
 @router.post("/login")
@@ -51,9 +66,26 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled")
+
+    admin_count = await db.scalar(
+        select(func.count()).select_from(User).where(User.is_admin.is_(True))
+    )
+    if (admin_count or 0) == 0:
+        user.is_admin = True
+
+    user.last_login_at = datetime.now(timezone.utc)
+    await db.commit()
 
     set_auth_cookies(response, user.id)
-    return {"ok": True, "email": user.email}
+    return {
+        "ok": True,
+        "id": str(user.id),
+        "email": user.email,
+        "is_admin": bool(user.is_admin),
+        "is_active": bool(user.is_active),
+    }
 
 
 @router.post("/logout")
@@ -64,7 +96,14 @@ async def logout(response: Response):
 
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)):
-    return {"email": user.email, "id": str(user.id)}
+    return {
+        "email": user.email,
+        "id": str(user.id),
+        "is_admin": bool(user.is_admin),
+        "is_active": bool(user.is_active),
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+    }
 
 
 class ChangeEmailRequest(BaseModel):
@@ -111,6 +150,9 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if not user.is_active:
+        clear_auth_cookies(response)
+        raise HTTPException(status_code=403, detail="Account is disabled")
     set_auth_cookies(response, user.id)
     return {"ok": True}
 

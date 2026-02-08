@@ -1,7 +1,12 @@
 import { apiFetch } from "./client";
 
 export interface User {
+  id: string;
   email: string;
+  is_admin?: boolean;
+  is_active?: boolean;
+  created_at?: string | null;
+  last_login_at?: string | null;
 }
 
 export async function checkAuth(): Promise<User | null> {
@@ -13,19 +18,29 @@ export async function checkAuth(): Promise<User | null> {
 }
 
 export async function login(email: string, password: string): Promise<User> {
-  const data = await apiFetch<{ email: string }>("/api/auth/login", {
+  const data = await apiFetch<{ id?: string; email: string; is_admin?: boolean; is_active?: boolean }>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  return { email: data.email };
+  return {
+    id: data.id || "",
+    email: data.email,
+    is_admin: !!data.is_admin,
+    is_active: data.is_active !== false,
+  };
 }
 
 export async function signup(email: string, password: string): Promise<User> {
-  const data = await apiFetch<{ email: string }>("/api/auth/signup", {
+  const data = await apiFetch<{ id?: string; email: string; is_admin?: boolean; is_active?: boolean }>("/api/auth/signup", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  return { email: data.email };
+  return {
+    id: data.id || "",
+    email: data.email,
+    is_admin: !!data.is_admin,
+    is_active: data.is_active !== false,
+  };
 }
 
 export async function logout(): Promise<void> {

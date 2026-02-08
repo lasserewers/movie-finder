@@ -4,10 +4,52 @@ function getCsrfToken(): string {
 }
 
 const DEFAULT_TIMEOUT_MS = 20000;
+const AUTH_REFRESH_PATH = "/api/auth/refresh";
+
+type ApiRequestInit = RequestInit & {
+  _retry401?: boolean;
+};
+
+let refreshPromise: Promise<boolean> | null = null;
+
+function isRefreshEligible(url: string): boolean {
+  return !(
+    url.startsWith("/api/auth/login") ||
+    url.startsWith("/api/auth/signup") ||
+    url.startsWith("/api/auth/logout") ||
+    url.startsWith("/api/auth/refresh")
+  );
+}
+
+async function refreshAccessToken(): Promise<boolean> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    try {
+      const res = await fetch(AUTH_REFRESH_PATH, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": getCsrfToken(),
+        },
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      return res.ok;
+    } catch {
+      return false;
+    } finally {
+      window.clearTimeout(timeout);
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
 
 export async function apiFetch<T = unknown>(
   url: string,
-  options: RequestInit = {}
+  options: ApiRequestInit = {}
 ): Promise<T> {
   const method = (options.method || "GET").toUpperCase();
   const headers: Record<string, string> = {
@@ -46,7 +88,12 @@ export async function apiFetch<T = unknown>(
   window.clearTimeout(timeout);
 
   if (res.status === 401) {
-    // Let the auth context handle this
+    if (!options._retry401 && isRefreshEligible(url)) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        return apiFetch<T>(url, { ...options, _retry401: true });
+      }
+    }
     throw new ApiError("Unauthorized", 401);
   }
 
