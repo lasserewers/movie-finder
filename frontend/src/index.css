@@ -53,6 +53,23 @@ html.light body {
     var(--color-bg);
 }
 
+/* Brave on iOS can lag heavily with fixed backgrounds, blur overlays, and deep shadows. */
+html.ios-brave body {
+  background: var(--color-bg);
+  background-attachment: scroll;
+}
+
+html.ios-brave .backdrop-blur-sm,
+html.ios-brave .backdrop-blur-md {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html.ios-brave .shadow-2xl,
+html.ios-brave [class*="shadow-["] {
+  box-shadow: none !important;
+}
+
 /* Layout container used by topbar + main */
 .page-container {
   width: 100%;
