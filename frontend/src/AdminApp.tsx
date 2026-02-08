@@ -240,10 +240,7 @@ function AdminContent() {
     if (nextIsAdmin === target.is_admin) return;
     const action = nextIsAdmin ? "promote to admin" : "remove admin access";
     const ok = window.confirm(`Are you sure you want to ${action} for ${target.email}?`);
-    if (!ok) {
-      setUsers((prev) => [...prev]);
-      return;
-    }
+    if (!ok) return;
     await onUpdateUserField(target, "is_admin", nextIsAdmin);
   };
 
@@ -252,17 +249,13 @@ function AdminContent() {
     if (nextIsActive === target.is_active) return;
     const action = nextIsActive ? "re-enable" : "disable";
     const ok = window.confirm(`Are you sure you want to ${action} ${target.email}?`);
-    if (!ok) {
-      setUsers((prev) => [...prev]);
-      return;
-    }
+    if (!ok) return;
     if (!nextIsActive) {
       const reasonInput = window.prompt(
         `Write the reason for disabling ${target.email}. This will be sent by email.`,
         ""
       );
       if (reasonInput === null) {
-        setUsers((prev) => [...prev]);
         return;
       }
       const reason = reasonInput.trim();
@@ -572,6 +565,7 @@ function AdminContent() {
                     const activeKey = `${row.id}:is_active`;
                     const adminBusy = updatingKeys.has(adminKey);
                     const activeBusy = updatingKeys.has(activeKey);
+                    const rowBusy = adminBusy || activeBusy;
                     return (
                       <tr key={row.id} className="border-t border-border/70">
                         <td className="px-3 py-2">{row.email}</td>
@@ -580,28 +574,26 @@ function AdminContent() {
                         <td className="px-3 py-2 text-muted">{row.countries.length ? row.countries.join(", ") : "-"}</td>
                         <td className="px-3 py-2 text-muted">{row.provider_count}</td>
                         <td className="px-3 py-2">
-                          <select
-                            value={row.is_admin ? "admin" : "user"}
-                            onChange={(e) => onRoleChange(row, e.target.value as "admin" | "user")}
-                            disabled={adminBusy || row.id === user?.id}
-                            title={row.id === user?.id ? "You cannot remove your own admin access." : ""}
-                            className="rounded-md px-2 py-1 text-xs border border-border bg-panel-2 text-text disabled:opacity-60 disabled:cursor-not-allowed"
+                          <span
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
+                              row.is_admin
+                                ? "border-sky-500/40 bg-sky-500/15 text-sky-200"
+                                : "border-border bg-panel-2 text-muted"
+                            }`}
                           >
-                            <option value="user">{adminBusy ? "Saving..." : "User"}</option>
-                            <option value="admin">{adminBusy ? "Saving..." : "Admin"}</option>
-                          </select>
+                            {row.is_admin ? "Admin" : "User"}
+                          </span>
                         </td>
                         <td className="px-3 py-2">
-                          <select
-                            value={row.is_active ? "active" : "disabled"}
-                            onChange={(e) => onStatusChange(row, e.target.value as "active" | "disabled")}
-                            disabled={activeBusy || row.id === user.id}
-                            title={row.id === user.id ? "You cannot disable your own account." : ""}
-                            className="rounded-md px-2 py-1 text-xs border border-border bg-panel-2 text-text disabled:opacity-60 disabled:cursor-not-allowed"
+                          <span
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
+                              row.is_active
+                                ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
+                                : "border-red-500/40 bg-red-500/15 text-red-200"
+                            }`}
                           >
-                            <option value="active">{activeBusy ? "Saving..." : "Active"}</option>
-                            <option value="disabled">{activeBusy ? "Saving..." : "Disabled"}</option>
-                          </select>
+                            {row.is_active ? "Active" : "Disabled"}
+                          </span>
                         </td>
                         <td className="px-3 py-2">
                           <select
@@ -609,6 +601,22 @@ function AdminContent() {
                             onChange={(e) => {
                               const action = e.target.value;
                               e.currentTarget.value = "";
+                              if (action === "promote_admin") {
+                                void onRoleChange(row, "admin");
+                                return;
+                              }
+                              if (action === "remove_admin") {
+                                void onRoleChange(row, "user");
+                                return;
+                              }
+                              if (action === "disable_user") {
+                                void onStatusChange(row, "disabled");
+                                return;
+                              }
+                              if (action === "reactivate_user") {
+                                void onStatusChange(row, "active");
+                                return;
+                              }
                               if (action === "reset_password") {
                                 onOpenPasswordResetAction(row);
                                 return;
@@ -617,9 +625,24 @@ function AdminContent() {
                                 onOpenDeleteAction(row);
                               }
                             }}
-                            className="rounded-md px-2 py-1 text-xs border border-border bg-panel-2 text-text"
+                            disabled={rowBusy}
+                            className="rounded-md px-2 py-1 text-xs border border-border bg-panel-2 text-text disabled:opacity-60 disabled:cursor-not-allowed"
                           >
-                            <option value="">Choose</option>
+                            <option value="">{rowBusy ? "Updating..." : "Choose"}</option>
+                            {row.is_admin ? (
+                              <option value="remove_admin" disabled={row.id === user.id}>
+                                Remove admin access
+                              </option>
+                            ) : (
+                              <option value="promote_admin">Promote to admin</option>
+                            )}
+                            {row.is_active ? (
+                              <option value="disable_user" disabled={row.id === user.id}>
+                                Disable user
+                              </option>
+                            ) : (
+                              <option value="reactivate_user">Reactivate user</option>
+                            )}
                             <option value="reset_password">Reset password</option>
                             <option value="delete_user" disabled={row.id === user.id}>
                               Delete user

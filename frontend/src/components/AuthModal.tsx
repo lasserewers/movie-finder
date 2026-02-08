@@ -4,6 +4,8 @@ import { useAuth } from "../hooks/useAuth";
 import { ApiError } from "../api/client";
 import { resendSignupVerification } from "../api/auth";
 
+const RESEND_COOLDOWN_SECONDS = 120;
+
 interface Props {
   open: boolean;
   onClose?: () => void;
@@ -27,6 +29,7 @@ export default function AuthModal({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
+  const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -40,7 +43,22 @@ export default function AuthModal({
     setError("");
     setLoading(false);
     setResendLoading(false);
+    setResendCooldownSeconds(0);
   }, [open, initialMode]);
+
+  useEffect(() => {
+    if (!open || !pendingVerificationEmail || resendCooldownSeconds <= 0) return;
+    const timer = window.setInterval(() => {
+      setResendCooldownSeconds((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [open, pendingVerificationEmail, resendCooldownSeconds]);
+
+  const formatCountdown = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,6 +77,7 @@ export default function AuthModal({
           setPendingVerificationEmail(result.email || email.trim().toLowerCase());
           setInfo("Verification email sent. Check your inbox and spam folder.");
           setError("");
+          setResendCooldownSeconds(RESEND_COOLDOWN_SECONDS);
         } else {
           onClose?.();
           onSignupComplete?.();
@@ -75,13 +94,14 @@ export default function AuthModal({
   };
 
   const handleResendVerification = async () => {
-    if (!pendingVerificationEmail) return;
+    if (!pendingVerificationEmail || resendCooldownSeconds > 0 || resendLoading) return;
     setError("");
     setInfo("");
     setResendLoading(true);
     try {
       await resendSignupVerification(pendingVerificationEmail);
       setInfo("Verification email sent again. Check your inbox and spam folder.");
+      setResendCooldownSeconds(RESEND_COOLDOWN_SECONDS);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not resend verification email.");
     } finally {
@@ -95,6 +115,7 @@ export default function AuthModal({
     setInfo("");
     setError("");
     setConfirmPassword("");
+    setResendCooldownSeconds(0);
   };
 
   return (
@@ -146,10 +167,14 @@ export default function AuthModal({
                 <button
                   type="button"
                   onClick={handleResendVerification}
-                  disabled={resendLoading}
+                  disabled={resendLoading || resendCooldownSeconds > 0}
                   className="w-full py-2.5 font-semibold rounded-lg border border-border text-text hover:border-accent-2 transition-colors disabled:opacity-50"
                 >
-                  {resendLoading ? "Sending..." : "Resend verification email"}
+                  {resendLoading
+                    ? "Sending..."
+                    : resendCooldownSeconds > 0
+                      ? `Resend in ${formatCountdown(resendCooldownSeconds)}`
+                      : "Resend verification email"}
                 </button>
                 <button
                   type="button"
@@ -160,6 +185,7 @@ export default function AuthModal({
                     setMode("login");
                     setPassword("");
                     setConfirmPassword("");
+                    setResendCooldownSeconds(0);
                   }}
                   className="w-full py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors"
                 >

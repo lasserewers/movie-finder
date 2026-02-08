@@ -90,7 +90,7 @@ export default function ConfirmSignupEmailApp() {
           }}
           className="mt-4 w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent/90"
         >
-          Return to FullStreamer
+          Continue setting up your account
         </button>
       </div>
     </div>

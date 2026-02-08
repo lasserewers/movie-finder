@@ -199,7 +199,13 @@ async def confirm_signup_email(
     verification_token, user = row
     newly_verified = False
     confirmed_this_request = False
-    if verification_token.used_at is None:
+    if verification_token.used_at is not None:
+        if not user.email_verified:
+            raise HTTPException(
+                status_code=400,
+                detail="This verification link has been replaced. Please use the latest email.",
+            )
+    else:
         if verification_token.expires_at <= now:
             raise HTTPException(status_code=400, detail="Invalid or expired email verification token")
 
@@ -228,13 +234,6 @@ async def confirm_signup_email(
     auto_login = bool(user.is_active and user.email_verified)
     if auto_login and confirmed_this_request:
         user.last_login_at = now
-        add_audit_log(
-            db,
-            action="user.login",
-            message="User logged in after confirming signup email.",
-            actor_user=user,
-            target_user=user,
-        )
 
     await db.commit()
 
@@ -279,13 +278,6 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
         )
 
     user.last_login_at = datetime.now(timezone.utc)
-    add_audit_log(
-        db,
-        action="user.login",
-        message="User logged in.",
-        actor_user=user,
-        target_user=user,
-    )
     await db.commit()
 
     set_auth_cookies(response, user.id)
