@@ -81,6 +81,7 @@ function AppContent() {
   const [homeHasMore, setHomeHasMore] = useState(true);
   const [homeLoading, setHomeLoading] = useState(false);
   const [homeInitialized, setHomeInitialized] = useState(false);
+  const [mainScrollEl, setMainScrollEl] = useState<HTMLElement | null>(null);
 
   // Cache for each media type to avoid refetching on toggle
   const sectionsCacheRef = useRef<Record<MediaType, { sections: HomeSection[]; page: number; hasMore: boolean } | null>>({
@@ -98,6 +99,7 @@ function AppContent() {
   });
   // Track if user was previously logged in (to detect logout)
   const wasLoggedInRef = useRef(false);
+  const previousUserKeyRef = useRef<string | null>(null);
   const hasStoredContentModePrefRef = useRef(false);
 
   const [regions, setRegions] = useState<Region[]>([]);
@@ -123,6 +125,17 @@ function AppContent() {
       setHomeInitialized(true);
     }
   }, [user, authLoading]);
+
+  // Ensure post-login starts at the top instead of retaining previous scroll.
+  useEffect(() => {
+    if (authLoading) return;
+    const currentUserKey = user?.email?.trim().toLowerCase() || (user ? "__logged_in__" : null);
+    if (previousUserKeyRef.current === null && currentUserKey !== null) {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      mainScrollEl?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    }
+    previousUserKeyRef.current = currentUserKey;
+  }, [authLoading, user?.email, user, mainScrollEl]);
 
   // Load home rows when config is ready or media type changes
   useEffect(() => {
@@ -376,7 +389,8 @@ function AppContent() {
 
   const sentinelRef = useInfiniteScroll(
     () => loadHomeRows(false),
-    homeHasMore && !homeLoading
+    homeHasMore && !homeLoading,
+    mainScrollEl
   );
 
   const handleAuthClose = () => {
@@ -462,6 +476,31 @@ function AppContent() {
   const discoveryCountry = user
     ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY)
     : (guestCountry || DEFAULT_ONBOARDING_COUNTRY);
+  const hasBlockingOverlay =
+    selectedMovie !== null ||
+    selectedSection !== null ||
+    searchOpen ||
+    advancedSearchOpen ||
+    settingsOpen ||
+    profileOpen ||
+    onboardingOpen ||
+    countriesModalOpen ||
+    authModalOpen ||
+    vpnPromptOpen;
+
+  useEffect(() => {
+    if (hasBlockingOverlay) {
+      document.documentElement.classList.add("overflow-hidden");
+      document.body.classList.add("overflow-hidden");
+    } else {
+      document.documentElement.classList.remove("overflow-hidden");
+      document.body.classList.remove("overflow-hidden");
+    }
+    return () => {
+      document.documentElement.classList.remove("overflow-hidden");
+      document.body.classList.remove("overflow-hidden");
+    };
+  }, [hasBlockingOverlay]);
 
   if (authLoading) {
     return (
@@ -472,8 +511,8 @@ function AppContent() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <div className="sticky top-0 z-[120] bg-bg border-b border-border/70">
+    <div className="h-[100dvh] overflow-hidden flex flex-col">
+      <div className="z-[120] bg-bg border-b border-border/70 flex-shrink-0">
         <Topbar
           onSelectMovie={handleSelectMovie}
           onLoginClick={() => openAuthModal("login")}
@@ -483,11 +522,16 @@ function AppContent() {
           vpnEnabled={usingVpn}
           onSearchSubmit={handleSearchSubmit}
           onOpenAdvancedSearch={handleOpenAdvancedSearch}
+          scrollContainer={mainScrollEl}
         />
       </div>
 
-      <main className="page-container flex-1 pt-2 pb-16">
-        <div className="flex items-stretch justify-between gap-6 mb-6 max-sm:flex-col max-sm:gap-3">
+      <main
+        ref={setMainScrollEl}
+        className={`flex-1 min-h-0 ${hasBlockingOverlay ? "overflow-hidden" : "overflow-y-auto"}`}
+      >
+        <div className="page-container pt-2 pb-16">
+          <div className="flex items-stretch justify-between gap-6 mb-6 max-sm:flex-col max-sm:gap-3">
           <HeroSection
             className="!mb-0 flex-1"
             showGuestPrompt={!user}
@@ -685,9 +729,9 @@ function AppContent() {
               </div>
             )}
           </div>
-        </div>
+          </div>
 
-        <section className="flex flex-col gap-6 sm:gap-10">
+          <section className="flex flex-col gap-6 sm:gap-10">
           {sections.map((section) => (
             <MovieRow
               key={`${section.id}:${rowResetToken}`}
@@ -718,12 +762,13 @@ function AppContent() {
               Select streaming services to see available titles.
             </div>
           )}
-        </section>
-      </main>
+          </section>
 
-      <footer className="text-center py-6 text-muted text-sm">
-        Streaming data provided by JustWatch via TMDB
-      </footer>
+          <footer className="text-center py-6 text-muted text-sm">
+            Streaming data provided by JustWatch via TMDB
+          </footer>
+        </div>
+      </main>
 
       <MovieOverlay
         movieId={selectedMovie}

@@ -12,6 +12,7 @@ interface Props {
   vpnEnabled?: boolean;
   onSearchSubmit?: (query: string, filtered: boolean) => void;
   onOpenAdvancedSearch?: (initialQuery: string) => void;
+  scrollContainer?: HTMLElement | null;
 }
 
 export default function Topbar({
@@ -23,10 +24,12 @@ export default function Topbar({
   vpnEnabled = false,
   onSearchSubmit,
   onOpenAdvancedSearch,
+  scrollContainer,
 }: Props) {
   const { user } = useAuth();
   const { theme } = useConfig();
   const [compact, setCompact] = useState(false);
+  const [searchDraft, setSearchDraft] = useState("");
   const transitionLockUntilRef = useRef(0);
 
   useEffect(() => {
@@ -35,6 +38,8 @@ export default function Topbar({
     const TRANSITION_LOCK_MS = 320;
     const MOBILE_BREAKPOINT = 640;
 
+    const getScrollY = () => (scrollContainer ? scrollContainer.scrollTop : window.scrollY);
+
     const onScroll = () => {
       if (window.innerWidth < MOBILE_BREAKPOINT) {
         setCompact(false);
@@ -42,7 +47,7 @@ export default function Topbar({
       }
       const now = performance.now();
       if (now < transitionLockUntilRef.current) return;
-      const y = window.scrollY;
+      const y = getScrollY();
       setCompact((prev) => {
         const next = prev ? y > EXIT_COMPACT_Y : y > ENTER_COMPACT_Y;
         if (next !== prev) transitionLockUntilRef.current = now + TRANSITION_LOCK_MS;
@@ -50,13 +55,21 @@ export default function Topbar({
       });
     };
     onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
+    if (scrollContainer) {
+      scrollContainer.addEventListener("scroll", onScroll, { passive: true });
+    } else {
+      window.addEventListener("scroll", onScroll, { passive: true });
+    }
     window.addEventListener("resize", onScroll);
     return () => {
-      window.removeEventListener("scroll", onScroll);
+      if (scrollContainer) {
+        scrollContainer.removeEventListener("scroll", onScroll);
+      } else {
+        window.removeEventListener("scroll", onScroll);
+      }
       window.removeEventListener("resize", onScroll);
     };
-  }, []);
+  }, [scrollContainer]);
 
   return (
     <header className={`page-container flex items-center justify-between gap-4 relative z-[90] transition-[padding] duration-300 max-sm:flex-wrap max-sm:items-center max-sm:gap-x-1.5 max-sm:gap-y-2 ${compact ? "pt-2 pb-2" : "pt-6 pb-4"}`}>
@@ -80,18 +93,36 @@ export default function Topbar({
           onOpenSettings={onOpenSettings}
           vpnEnabled={vpnEnabled}
           onSubmitSearch={onSearchSubmit}
-          onOpenAdvancedSearch={onOpenAdvancedSearch}
+          onQueryChange={setSearchDraft}
         />
       </div>
-      <div className="relative z-[2] flex-shrink-0 max-sm:order-2 max-sm:ml-auto">
+      <div className="relative z-[2] flex-shrink-0 flex items-center gap-2 max-sm:gap-1.5 max-sm:order-2 max-sm:ml-auto">
+        {onOpenAdvancedSearch && (
+          <button
+            onClick={() => onOpenAdvancedSearch(searchDraft.trim())}
+            className="w-[44px] h-[44px] sm:w-[52px] sm:h-[52px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors text-muted hover:text-text"
+            aria-label="Open advanced search"
+            title="Advanced Search"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="sm:w-[22px] sm:h-[22px]">
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <circle cx="9" cy="6" r="2" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <circle cx="15" cy="12" r="2" />
+              <line x1="4" y1="18" x2="20" y2="18" />
+              <circle cx="11" cy="18" r="2" />
+            </svg>
+          </button>
+        )}
         {user ? (
           <UserMenu onOpenProfile={onOpenProfile} onOpenSettings={onOpenSettings} onOpenCountries={onOpenCountries} />
         ) : (
           <button
             onClick={onLoginClick}
-            className="px-2.5 h-[42px] sm:px-5 sm:h-[52px] border border-border rounded-full font-semibold text-[0.7rem] sm:text-sm text-text hover:border-accent-2 transition-colors flex-shrink-0 touch-manipulation"
+            className="px-2 h-[42px] sm:px-5 sm:h-[52px] border border-border rounded-full font-semibold text-[0.68rem] sm:text-sm text-text hover:border-accent-2 transition-colors flex-shrink-0 touch-manipulation whitespace-nowrap"
           >
-            Log in / Sign up
+            <span className="sm:hidden">Log in</span>
+            <span className="hidden sm:inline">Log in / Sign up</span>
           </button>
         )}
       </div>

@@ -75,12 +75,6 @@ export default function MovieOverlay({
   }, [movieId, itemMediaType]);
 
   useEffect(() => {
-    if (movieId) document.body.classList.add("overflow-hidden");
-    else document.body.classList.remove("overflow-hidden");
-    return () => document.body.classList.remove("overflow-hidden");
-  }, [movieId]);
-
-  useEffect(() => {
     if (!movieId) {
       setCreditsOpen(false);
       setSelectedPersonId(null);

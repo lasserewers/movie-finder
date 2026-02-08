@@ -99,12 +99,6 @@ export default function SectionOverlay({
 
   const sentinelRef = useInfiniteScroll(loadMore, hasMore && !loading, panelRef.current);
 
-  useEffect(() => {
-    if (section) document.body.classList.add("overflow-hidden");
-    else document.body.classList.remove("overflow-hidden");
-    return () => document.body.classList.remove("overflow-hidden");
-  }, [section]);
-
   return (
     <AnimatePresence>
       {section && (

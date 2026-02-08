@@ -422,12 +422,6 @@ export default function SearchOverlay({
     }
   }, [open, sortKey, results.length, loadMore]);
 
-  useEffect(() => {
-    if (open) document.body.classList.add("overflow-hidden");
-    else document.body.classList.remove("overflow-hidden");
-    return () => document.body.classList.remove("overflow-hidden");
-  }, [open]);
-
   return (
     <AnimatePresence>
       {open && (

@@ -11,7 +11,7 @@ interface Props {
   onOpenSettings?: () => void;
   vpnEnabled?: boolean;
   onSubmitSearch?: (query: string, filtered: boolean) => void;
-  onOpenAdvancedSearch?: (initialQuery: string) => void;
+  onQueryChange?: (query: string) => void;
 }
 
 export default function SearchBar({
@@ -20,7 +20,7 @@ export default function SearchBar({
   onOpenSettings,
   vpnEnabled = false,
   onSubmitSearch,
-  onOpenAdvancedSearch,
+  onQueryChange,
 }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Movie[]>([]);
@@ -91,6 +91,7 @@ export default function SearchBar({
 
   const handleInput = (value: string) => {
     setQuery(value);
+    onQueryChange?.(value);
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       autoOpenRef.current = true;
@@ -173,20 +174,6 @@ export default function SearchBar({
           </button>
         )}
       </div>
-      {onOpenAdvancedSearch && (
-        <div className="mt-2.5 flex justify-end">
-          <button
-            onClick={() => {
-              setOpen(false);
-              onOpenAdvancedSearch(query.trim());
-            }}
-            className="h-8 px-3 border border-border rounded-full text-[0.68rem] font-medium tracking-wide text-muted hover:text-text hover:border-accent-2 transition-colors"
-            aria-label="Open advanced search"
-          >
-            Advanced Search
-          </button>
-        </div>
-      )}
 
       <AnimatePresence>
         {open && results.length > 0 && (
