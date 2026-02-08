@@ -105,11 +105,16 @@ export default function Topbar({
         {onOpenAdvancedSearch && (
           <button
             onClick={() => onOpenAdvancedSearch(searchDraft.trim())}
-            className="w-[44px] h-[44px] sm:w-[52px] sm:h-[52px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors text-muted hover:text-text"
+            className="h-[44px] sm:h-[52px] px-2.5 sm:px-3.5 border border-border rounded-full flex items-center justify-center gap-1.5 sm:gap-2 hover:border-accent-2 transition-colors text-muted hover:text-text"
             aria-label="Open advanced search"
             title="Advanced Search"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="sm:w-[22px] sm:h-[22px]">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="sm:w-[18px] sm:h-[18px]">
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <span className="h-4 w-px bg-border/80" aria-hidden="true" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="sm:w-[18px] sm:h-[18px]">
               <line x1="4" y1="6" x2="20" y2="6" />
               <circle cx="9" cy="6" r="2" />
               <line x1="4" y1="12" x2="20" y2="12" />
