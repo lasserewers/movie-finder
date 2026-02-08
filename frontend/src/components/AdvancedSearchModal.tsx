@@ -119,6 +119,10 @@ function toOptionalInt(value: string): number | undefined {
   return parsed;
 }
 
+function sanitizeYearDraft(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 4);
+}
+
 function yearToPercent(year: number, min: number, max: number): number {
   const span = Math.max(1, max - min);
   return ((year - min) / span) * 100;
@@ -303,6 +307,8 @@ export default function AdvancedSearchModal({
   const [directorLookupLoading, setDirectorLookupLoading] = useState(false);
   const [localVpn, setLocalVpn] = useState(false);
   const [contentMode, setContentMode] = useState<ContentMode>("all");
+  const [yearSpanStartDraft, setYearSpanStartDraft] = useState(String(YEAR_MIN));
+  const [yearSpanEndDraft, setYearSpanEndDraft] = useState(String(YEAR_MAX));
   const didInitializeRef = useRef(false);
 
   const selectedActorIds = useMemo(() => new Set(filters.actors.map((person) => person.id)), [filters.actors]);
@@ -318,6 +324,30 @@ export default function AdvancedSearchModal({
   const timelineDisabled = !filters.useYearSpan || exactYearChosen;
   const filteredMode = isLoggedIn && contentMode !== "all";
   const missingProvidersForFilteredMode = filteredMode && providerIds.size === 0;
+
+  const commitYearSpanStart = useCallback((rawValue: string) => {
+    const parsed = Number.parseInt(rawValue, 10);
+    if (!Number.isFinite(parsed)) {
+      setYearSpanStartDraft(String(yearSpanStart));
+      return;
+    }
+    const clamped = Math.max(YEAR_MIN, Math.min(YEAR_MAX, parsed));
+    const nextStart = Math.min(clamped, yearSpanEnd);
+    setFilters((prev) => ({ ...prev, yearSpanStart: nextStart, yearSpanEnd }));
+    setYearSpanStartDraft(String(nextStart));
+  }, [yearSpanStart, yearSpanEnd]);
+
+  const commitYearSpanEnd = useCallback((rawValue: string) => {
+    const parsed = Number.parseInt(rawValue, 10);
+    if (!Number.isFinite(parsed)) {
+      setYearSpanEndDraft(String(yearSpanEnd));
+      return;
+    }
+    const clamped = Math.max(YEAR_MIN, Math.min(YEAR_MAX, parsed));
+    const nextEnd = Math.max(clamped, yearSpanStart);
+    setFilters((prev) => ({ ...prev, yearSpanStart, yearSpanEnd: nextEnd }));
+    setYearSpanEndDraft(String(nextEnd));
+  }, [yearSpanStart, yearSpanEnd]);
 
   const loadGenres = useCallback(async () => {
     setGenresLoading(true);
@@ -451,6 +481,11 @@ export default function AdvancedSearchModal({
     setLocalVpn(false);
     setContentMode("all");
   }, [open]);
+
+  useEffect(() => {
+    setYearSpanStartDraft(String(yearSpanStart));
+    setYearSpanEndDraft(String(yearSpanEnd));
+  }, [yearSpanStart, yearSpanEnd]);
 
   useEffect(() => {
     if (!open) return;
@@ -659,22 +694,18 @@ export default function AdvancedSearchModal({
                           <label className="space-y-1">
                             <span className="text-[11px] uppercase tracking-wide text-muted">From</span>
                             <input
-                              type="number"
-                              min={YEAR_MIN}
-                              max={YEAR_MAX}
-                              step={1}
+                              type="text"
                               inputMode="numeric"
-                              value={yearSpanStart}
+                              pattern="[0-9]*"
+                              value={yearSpanStartDraft}
                               disabled={timelineDisabled}
-                              onChange={(event) =>
-                                setFilters((prev) => {
-                                  const next = Number.parseInt(event.target.value, 10);
-                                  if (!Number.isFinite(next)) return prev;
-                                  const clamped = Math.max(YEAR_MIN, Math.min(YEAR_MAX, next));
-                                  const start = Math.min(clamped, Math.max(prev.yearSpanStart, prev.yearSpanEnd));
-                                  return { ...prev, yearSpanStart: start };
-                                })
-                              }
+                              onChange={(event) => setYearSpanStartDraft(sanitizeYearDraft(event.target.value))}
+                              onBlur={() => commitYearSpanStart(yearSpanStartDraft)}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return;
+                                event.preventDefault();
+                                commitYearSpanStart(yearSpanStartDraft);
+                              }}
                               className={`advanced-year-input w-full h-[38px] px-3 border rounded-lg text-sm outline-none ${
                                 timelineDisabled
                                   ? "bg-panel-2 border-border/60 text-muted cursor-not-allowed"
@@ -685,22 +716,18 @@ export default function AdvancedSearchModal({
                           <label className="space-y-1">
                             <span className="text-[11px] uppercase tracking-wide text-muted">To</span>
                             <input
-                              type="number"
-                              min={YEAR_MIN}
-                              max={YEAR_MAX}
-                              step={1}
+                              type="text"
                               inputMode="numeric"
-                              value={yearSpanEnd}
+                              pattern="[0-9]*"
+                              value={yearSpanEndDraft}
                               disabled={timelineDisabled}
-                              onChange={(event) =>
-                                setFilters((prev) => {
-                                  const next = Number.parseInt(event.target.value, 10);
-                                  if (!Number.isFinite(next)) return prev;
-                                  const clamped = Math.max(YEAR_MIN, Math.min(YEAR_MAX, next));
-                                  const end = Math.max(clamped, Math.min(prev.yearSpanStart, prev.yearSpanEnd));
-                                  return { ...prev, yearSpanEnd: end };
-                                })
-                              }
+                              onChange={(event) => setYearSpanEndDraft(sanitizeYearDraft(event.target.value))}
+                              onBlur={() => commitYearSpanEnd(yearSpanEndDraft)}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return;
+                                event.preventDefault();
+                                commitYearSpanEnd(yearSpanEndDraft);
+                              }}
                               className={`advanced-year-input w-full h-[38px] px-3 border rounded-lg text-sm outline-none ${
                                 timelineDisabled
                                   ? "bg-panel-2 border-border/60 text-muted cursor-not-allowed"
