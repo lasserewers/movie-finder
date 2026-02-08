@@ -404,10 +404,38 @@ function AppContent() {
     setAuthModalOpen(false);
   };
 
-  const openAuthModal = (mode: "login" | "signup" = "login") => {
+  const openAuthModal = useCallback((mode: "login" | "signup" = "login") => {
     setAuthInitialMode(mode);
     setAuthModalOpen(true);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (authLoading || user) return;
+    let mode: "login" | "signup" | null = null;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const authParam = params.get("auth");
+      if (authParam === "login" || authParam === "signup") {
+        mode = authParam;
+      }
+    } catch {
+      mode = null;
+    }
+    if (!mode) return;
+    openAuthModal(mode);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("auth");
+      const nextSearch = url.searchParams.toString();
+      window.history.replaceState(
+        {},
+        "",
+        `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`
+      );
+    } catch {
+      // Ignore URL rewrite failures.
+    }
+  }, [authLoading, user, openAuthModal]);
 
   const handleSignupComplete = () => {
     setIsOnboarding(true);

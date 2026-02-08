@@ -107,7 +107,7 @@ export default function ResetPasswordApp() {
             <button
               type="button"
               onClick={() => {
-                window.location.href = "/";
+                window.location.href = "/?auth=login";
               }}
               className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent/90"
             >
