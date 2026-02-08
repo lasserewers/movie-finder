@@ -4,12 +4,13 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .auth import get_current_admin, verify_password
+from .auth import get_current_admin, verify_password, hash_password
+from .audit import add_audit_log
 from .database import get_db
-from .models import User, UserPreferences
+from .models import User, UserPreferences, AuditLog
 from . import mailer
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -27,7 +28,18 @@ def _serialize_user(user: User, prefs: UserPreferences | None) -> dict:
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
         "provider_count": len(provider_ids),
         "countries": countries,
-        "theme": (prefs.theme if prefs and prefs.theme else "dark"),
+    }
+
+
+def _serialize_log(log: AuditLog) -> dict:
+    return {
+        "id": str(log.id),
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+        "action": log.action,
+        "message": log.message,
+        "reason": log.reason,
+        "actor_email": log.actor_email,
+        "target_email": log.target_email,
     }
 
 
@@ -40,6 +52,11 @@ class AdminUserUpdateRequest(BaseModel):
 class AdminUserDeleteRequest(BaseModel):
     admin_password: str = Field(min_length=1, max_length=128)
     action_reason: str = Field(min_length=3, max_length=500)
+
+
+class AdminUserResetPasswordRequest(BaseModel):
+    admin_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 @router.get("/me")
@@ -131,6 +148,48 @@ async def admin_users(
     }
 
 
+@router.get("/logs")
+async def admin_logs(
+    q: str | None = Query(None, max_length=120),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    _admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    normalized_query = (q or "").strip().lower()
+    filter_expr = None
+    if normalized_query:
+        pattern = f"%{normalized_query}%"
+        filter_expr = or_(
+            AuditLog.actor_email.ilike(pattern),
+            AuditLog.target_email.ilike(pattern),
+        )
+
+    total_stmt = select(func.count()).select_from(AuditLog)
+    if filter_expr is not None:
+        total_stmt = total_stmt.where(filter_expr)
+    total = int((await db.scalar(total_stmt)) or 0)
+
+    stmt = (
+        select(AuditLog)
+        .order_by(AuditLog.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    if filter_expr is not None:
+        stmt = stmt.where(filter_expr)
+
+    logs = (await db.execute(stmt)).scalars().all()
+    has_more = page * page_size < total
+    return {
+        "results": [_serialize_log(log) for log in logs],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "has_more": has_more,
+    }
+
+
 @router.patch("/users/{user_id}")
 async def admin_update_user(
     user_id: uuid.UUID,
@@ -148,6 +207,7 @@ async def admin_update_user(
     send_deactivated_email = False
     deactivation_reason: str | None = None
     send_reactivated_email = False
+    changed_any = False
     normalized_reason = (body.action_reason or "").strip()
     if body.is_active is not None:
         if body.is_active is False and user.id == admin.id:
@@ -157,12 +217,29 @@ async def admin_update_user(
                 raise HTTPException(status_code=400, detail="Reason is required when disabling an account")
             send_deactivated_email = True
             deactivation_reason = normalized_reason
-        if (not user.is_active) and body.is_active is True:
+            add_audit_log(
+                db,
+                action="admin.user_deactivated",
+                message=f"Admin deactivated account for {user.email}.",
+                actor_user=admin,
+                target_user=user,
+                reason=normalized_reason,
+            )
+            changed_any = True
+        elif (not user.is_active) and body.is_active is True:
             send_reactivated_email = True
+            add_audit_log(
+                db,
+                action="admin.user_reactivated",
+                message=f"Admin reactivated account for {user.email}.",
+                actor_user=admin,
+                target_user=user,
+            )
+            changed_any = True
         user.is_active = body.is_active
 
     if body.is_admin is not None:
-        if body.is_admin is False:
+        if body.is_admin is False and user.is_admin:
             other_admins = await db.scalar(
                 select(func.count())
                 .select_from(User)
@@ -170,7 +247,23 @@ async def admin_update_user(
             )
             if (other_admins or 0) == 0:
                 raise HTTPException(status_code=400, detail="System must keep at least one admin")
-        user.is_admin = body.is_admin
+        if body.is_admin != user.is_admin:
+            user.is_admin = body.is_admin
+            add_audit_log(
+                db,
+                action="admin.user_role_updated",
+                message=(
+                    f"Admin granted admin role to {user.email}."
+                    if body.is_admin
+                    else f"Admin removed admin role from {user.email}."
+                ),
+                actor_user=admin,
+                target_user=user,
+            )
+            changed_any = True
+
+    if not changed_any:
+        raise HTTPException(status_code=400, detail="No effective changes provided")
 
     await db.commit()
 
@@ -181,6 +274,33 @@ async def admin_update_user(
 
     prefs = await db.get(UserPreferences, user.id)
     return {"ok": True, "user": _serialize_user(user, prefs)}
+
+
+@router.post("/users/{user_id}/reset-password")
+async def admin_reset_user_password(
+    user_id: uuid.UUID,
+    body: AdminUserResetPasswordRequest,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(body.admin_password, admin.password_hash):
+        raise HTTPException(status_code=403, detail="Incorrect admin password")
+
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.password_hash = hash_password(body.new_password)
+    add_audit_log(
+        db,
+        action="admin.user_password_reset",
+        message=f"Admin reset password for {user.email}.",
+        actor_user=admin,
+        target_user=user,
+    )
+    await db.commit()
+    asyncio.create_task(mailer.send_password_changed_email(user.email))
+    return {"ok": True}
 
 
 @router.delete("/users/{user_id}")
@@ -212,6 +332,16 @@ async def admin_delete_user(
             raise HTTPException(status_code=400, detail="System must keep at least one admin")
 
     user_email = user.email
+    user_id_value = user.id
+    add_audit_log(
+        db,
+        action="admin.user_deleted",
+        message=f"Admin deleted account for {user_email}.",
+        actor_user=admin,
+        target_user_id=user_id_value,
+        target_email=user_email,
+        reason=normalized_reason,
+    )
     await db.delete(user)
     await db.commit()
     asyncio.create_task(mailer.send_account_deleted_email(user_email, normalized_reason))

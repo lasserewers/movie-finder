@@ -9,7 +9,7 @@ import httpx
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, Query, Depends, Request, Response
+from fastapi import FastAPI, Query, Depends, Request, Response, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -113,7 +113,10 @@ async def csrf_middleware(request: Request, call_next):
         path = request.url.path
         if path not in ("/api/auth/login", "/api/auth/signup", "/api/auth/logout"):
             if request.cookies.get("access_token"):
-                verify_csrf(request)
+                try:
+                    verify_csrf(request)
+                except HTTPException as exc:
+                    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return await call_next(request)
 
 

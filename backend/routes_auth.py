@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .audit import add_audit_log
 from .database import get_db
 from .models import User, UserPreferences, PasswordResetToken, EmailChangeToken
 from . import mailer
@@ -185,6 +186,13 @@ async def change_password(body: ChangePasswordRequest, user: User = Depends(get_
     if not verify_password(body.current_password, user.password_hash):
         raise HTTPException(status_code=403, detail="Incorrect password")
     user.password_hash = hash_password(body.new_password)
+    add_audit_log(
+        db,
+        action="user.password_changed",
+        message="User changed password from profile settings.",
+        actor_user=user,
+        target_user=user,
+    )
     await db.commit()
     asyncio.create_task(mailer.send_password_changed_email(user.email))
     return {"ok": True}
@@ -274,6 +282,13 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
         )
         .values(used_at=now)
     )
+    add_audit_log(
+        db,
+        action="user.password_reset_completed",
+        message="Password reset flow completed with a valid reset token.",
+        actor_user=user,
+        target_user=user,
+    )
     await db.commit()
     asyncio.create_task(mailer.send_password_changed_email(user.email))
     return {"ok": True}
@@ -325,6 +340,13 @@ async def confirm_email_change(body: ConfirmEmailChangeRequest, db: AsyncSession
         )
         .values(used_at=now)
     )
+    add_audit_log(
+        db,
+        action="user.email_changed",
+        message=f"User confirmed email change from {old_email} to {user.email}.",
+        actor_user=user,
+        target_user=user,
+    )
     await db.commit()
     return {"ok": True, "email": user.email, "previous_email": old_email}
 
@@ -358,6 +380,7 @@ async def delete_account(body: DeleteAccountRequest, response: Response, user: U
     if not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=403, detail="Incorrect password")
     user_email = user.email
+    user_id = user.id
 
     # Delete user preferences first (foreign key constraint)
     prefs_result = await db.execute(select(UserPreferences).where(UserPreferences.user_id == user.id))
@@ -367,6 +390,15 @@ async def delete_account(body: DeleteAccountRequest, response: Response, user: U
 
     # Delete user
     await db.delete(user)
+    add_audit_log(
+        db,
+        action="user.account_deleted_self",
+        message="User deleted their own account.",
+        actor_user_id=user_id,
+        actor_email=user_email,
+        target_user_id=user_id,
+        target_email=user_email,
+    )
     await db.commit()
 
     asyncio.create_task(mailer.send_account_self_deleted_email(user_email))

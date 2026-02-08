@@ -6,13 +6,17 @@ import {
   getAdminMe,
   getAdminOverview,
   getAdminUsers,
+  getAdminLogs,
   deleteAdminUser,
+  resetAdminUserPassword,
   updateAdminUser,
+  type AdminAuditLog,
   type AdminOverview,
   type AdminUser,
 } from "./api/admin";
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100];
+const LOG_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
 function formatDate(value?: string | null): string {
   if (!value) return "-";
@@ -63,8 +67,24 @@ function AdminContent() {
   const [deleteReason, setDeleteReason] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [passwordTarget, setPasswordTarget] = useState<AdminUser | null>(null);
+  const [passwordAdminPassword, setPasswordAdminPassword] = useState("");
+  const [passwordNew, setPasswordNew] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [logs, setLogs] = useState<AdminAuditLog[]>([]);
+  const [logQueryInput, setLogQueryInput] = useState("");
+  const [logQuery, setLogQuery] = useState("");
+  const [logPage, setLogPage] = useState(1);
+  const [logPageSize, setLogPageSize] = useState(50);
+  const [logTotal, setLogTotal] = useState(0);
+  const [logHasMore, setLogHasMore] = useState(false);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logError, setLogError] = useState("");
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
+  const logTotalPages = useMemo(() => Math.max(1, Math.ceil(logTotal / logPageSize)), [logTotal, logPageSize]);
 
   const verifyAdmin = useCallback(async () => {
     if (!user?.id) {
@@ -119,6 +139,23 @@ function AdminContent() {
     }
   }, [isAdmin, query, page, pageSize]);
 
+  const loadLogs = useCallback(async () => {
+    if (!isAdmin) return;
+    setLogLoading(true);
+    setLogError("");
+    try {
+      const pageData = await getAdminLogs(logQuery, logPage, logPageSize);
+      setLogs(pageData.results);
+      setLogTotal(pageData.total);
+      setLogHasMore(pageData.has_more);
+    } catch (err) {
+      const e = err as ApiError;
+      setLogError(e.message || "Failed to load audit logs.");
+    } finally {
+      setLogLoading(false);
+    }
+  }, [isAdmin, logQuery, logPage, logPageSize]);
+
   useEffect(() => {
     verifyAdmin();
   }, [verifyAdmin]);
@@ -127,6 +164,11 @@ function AdminContent() {
     if (!isAdmin) return;
     loadData();
   }, [isAdmin, loadData]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    loadLogs();
+  }, [isAdmin, loadLogs]);
 
   const onLogin = async (e: FormEvent) => {
     e.preventDefault();
@@ -147,6 +189,12 @@ function AdminContent() {
     e.preventDefault();
     setPage(1);
     setQuery(queryInput.trim());
+  };
+
+  const onLogSearch = (e: FormEvent) => {
+    e.preventDefault();
+    setLogPage(1);
+    setLogQuery(logQueryInput.trim());
   };
 
   const onUpdateUserField = async (
@@ -170,6 +218,7 @@ function AdminContent() {
       if (field === "is_admin" && user?.id === target.id && !result.user.is_admin) {
         setIsAdmin(false);
       }
+      void loadLogs();
     } catch (err) {
       const e = err as ApiError;
       setDataError(e.message || "Failed to update user.");
@@ -242,12 +291,60 @@ function AdminContent() {
       setDeletePassword("");
       setDeleteReason("");
       await loadData();
+      await loadLogs();
     } catch (err) {
       const e = err as ApiError;
       setDeleteError(e.message || "Failed to delete user.");
     } finally {
       setDeleteLoading(false);
     }
+  };
+
+  const onResetPasswordConfirmed = async () => {
+    if (!passwordTarget) return;
+    if (!passwordAdminPassword.trim()) {
+      setPasswordError("Admin password is required.");
+      return;
+    }
+    if (passwordNew.length < 8) {
+      setPasswordError("New password must be at least 8 characters.");
+      return;
+    }
+    if (passwordNew !== passwordConfirm) {
+      setPasswordError("New password and confirmation do not match.");
+      return;
+    }
+    setPasswordError("");
+    setPasswordLoading(true);
+    try {
+      await resetAdminUserPassword(passwordTarget.id, passwordAdminPassword, passwordNew);
+      setPasswordTarget(null);
+      setPasswordAdminPassword("");
+      setPasswordNew("");
+      setPasswordConfirm("");
+      await loadLogs();
+    } catch (err) {
+      const e = err as ApiError;
+      setPasswordError(e.message || "Failed to reset user password.");
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  const onOpenDeleteAction = (target: AdminUser) => {
+    if (target.id === user?.id) return;
+    setDeleteTarget(target);
+    setDeletePassword("");
+    setDeleteReason("");
+    setDeleteError("");
+  };
+
+  const onOpenPasswordResetAction = (target: AdminUser) => {
+    setPasswordTarget(target);
+    setPasswordAdminPassword("");
+    setPasswordNew("");
+    setPasswordConfirm("");
+    setPasswordError("");
   };
 
   if (authLoading) {
@@ -447,7 +544,6 @@ function AdminContent() {
                   <th className="px-3 py-2 font-medium text-muted">Last login</th>
                   <th className="px-3 py-2 font-medium text-muted">Countries</th>
                   <th className="px-3 py-2 font-medium text-muted">Services</th>
-                  <th className="px-3 py-2 font-medium text-muted">Theme</th>
                   <th className="px-3 py-2 font-medium text-muted">Role</th>
                   <th className="px-3 py-2 font-medium text-muted">Status</th>
                   <th className="px-3 py-2 font-medium text-muted">Actions</th>
@@ -456,13 +552,13 @@ function AdminContent() {
               <tbody>
                 {loadingData ? (
                   <tr>
-                    <td colSpan={9} className="px-3 py-10 text-center text-muted">
+                    <td colSpan={8} className="px-3 py-10 text-center text-muted">
                       Loading users...
                     </td>
                   </tr>
                 ) : users.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-3 py-10 text-center text-muted">
+                    <td colSpan={8} className="px-3 py-10 text-center text-muted">
                       No users found.
                     </td>
                   </tr>
@@ -479,7 +575,6 @@ function AdminContent() {
                         <td className="px-3 py-2 text-muted">{formatDate(row.last_login_at)}</td>
                         <td className="px-3 py-2 text-muted">{row.countries.length ? row.countries.join(", ") : "-"}</td>
                         <td className="px-3 py-2 text-muted">{row.provider_count}</td>
-                        <td className="px-3 py-2 text-muted">{row.theme || "-"}</td>
                         <td className="px-3 py-2">
                           <select
                             value={row.is_admin ? "admin" : "user"}
@@ -504,21 +599,27 @@ function AdminContent() {
                           </select>
                         </td>
                         <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!window.confirm(`Are you sure you want to delete ${row.email}?`)) return;
-                              setDeleteTarget(row);
-                              setDeletePassword("");
-                              setDeleteReason("");
-                              setDeleteError("");
+                          <select
+                            defaultValue=""
+                            onChange={(e) => {
+                              const action = e.target.value;
+                              e.currentTarget.value = "";
+                              if (action === "reset_password") {
+                                onOpenPasswordResetAction(row);
+                                return;
+                              }
+                              if (action === "delete_user") {
+                                onOpenDeleteAction(row);
+                              }
                             }}
-                            disabled={row.id === user.id}
-                            title={row.id === user.id ? "You cannot delete your own account from admin center." : ""}
-                            className="rounded-md px-2 py-1 text-xs font-semibold border border-red-500/40 bg-red-500/15 text-red-300 hover:bg-red-500/25 disabled:opacity-60 disabled:cursor-not-allowed"
+                            className="rounded-md px-2 py-1 text-xs border border-border bg-panel-2 text-text"
                           >
-                            Delete
-                          </button>
+                            <option value="">Choose</option>
+                            <option value="reset_password">Reset password</option>
+                            <option value="delete_user" disabled={row.id === user.id}>
+                              Delete user
+                            </option>
+                          </select>
                         </td>
                       </tr>
                     );
@@ -552,7 +653,199 @@ function AdminContent() {
             </div>
           </div>
         </section>
+
+        <section className="rounded-2xl border border-border bg-panel/80 p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+            <form onSubmit={onLogSearch} className="flex gap-2 w-full sm:max-w-xl">
+              <input
+                type="text"
+                value={logQueryInput}
+                onChange={(e) => setLogQueryInput(e.target.value)}
+                placeholder="Search logs by user email..."
+                className="min-w-0 flex-1 rounded-lg border border-border bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent"
+              />
+              <button
+                type="submit"
+                className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-text"
+              >
+                Search Logs
+              </button>
+            </form>
+            <div className="flex items-center gap-2">
+              <select
+                value={logPageSize}
+                onChange={(e) => {
+                  setLogPageSize(Number(e.target.value));
+                  setLogPage(1);
+                }}
+                className="rounded-lg border border-border bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent"
+              >
+                {LOG_PAGE_SIZE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt} / page
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => loadLogs()}
+                className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-text"
+              >
+                Refresh Logs
+              </button>
+            </div>
+          </div>
+
+          {logError && (
+            <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+              {logError}
+            </div>
+          )}
+
+          <div className="overflow-x-auto rounded-xl border border-border">
+            <table className="min-w-[980px] w-full text-sm">
+              <thead className="bg-panel-2/70">
+                <tr className="text-left">
+                  <th className="px-3 py-2 font-medium text-muted">Time</th>
+                  <th className="px-3 py-2 font-medium text-muted">Action</th>
+                  <th className="px-3 py-2 font-medium text-muted">Actor</th>
+                  <th className="px-3 py-2 font-medium text-muted">Target</th>
+                  <th className="px-3 py-2 font-medium text-muted">Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logLoading ? (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-10 text-center text-muted">
+                      Loading logs...
+                    </td>
+                  </tr>
+                ) : logs.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-10 text-center text-muted">
+                      No logs found.
+                    </td>
+                  </tr>
+                ) : (
+                  logs.map((entry) => (
+                    <tr key={entry.id} className="border-t border-border/70 align-top">
+                      <td className="px-3 py-2 text-muted whitespace-nowrap">{formatDate(entry.created_at)}</td>
+                      <td className="px-3 py-2 text-muted whitespace-nowrap">{entry.action}</td>
+                      <td className="px-3 py-2 text-muted whitespace-nowrap">{entry.actor_email || "-"}</td>
+                      <td className="px-3 py-2 text-muted whitespace-nowrap">{entry.target_email || "-"}</td>
+                      <td className="px-3 py-2">
+                        <div className="text-text">{entry.message}</div>
+                        {entry.reason && (
+                          <div className="mt-1 text-xs text-muted">Reason: {entry.reason}</div>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p className="text-sm text-muted">
+              Showing page {logPage} of {logTotalPages} ({logTotal} logs)
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setLogPage((prev) => Math.max(1, prev - 1))}
+                disabled={logPage <= 1}
+                className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-text disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => setLogPage((prev) => prev + 1)}
+                disabled={!logHasMore}
+                className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-text disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </section>
       </main>
+
+      {passwordTarget && (
+        <div className="fixed inset-0 z-[220] grid place-items-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => {
+              if (passwordLoading) return;
+              setPasswordTarget(null);
+              setPasswordAdminPassword("");
+              setPasswordNew("");
+              setPasswordConfirm("");
+              setPasswordError("");
+            }}
+          />
+          <div className="relative z-10 w-full max-w-md rounded-2xl border border-border bg-panel p-5">
+            <h3 className="font-display text-xl">Reset User Password</h3>
+            <p className="mt-2 text-sm text-muted">
+              Set a new password for <span className="text-text">{passwordTarget.email}</span>. Enter your password and the new password twice.
+            </p>
+            <input
+              type="password"
+              value={passwordAdminPassword}
+              onChange={(e) => setPasswordAdminPassword(e.target.value)}
+              autoComplete="current-password"
+              placeholder="Your admin password"
+              className="mt-4 w-full rounded-lg border border-border bg-panel-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+              disabled={passwordLoading}
+            />
+            <input
+              type="password"
+              value={passwordNew}
+              onChange={(e) => setPasswordNew(e.target.value)}
+              autoComplete="new-password"
+              placeholder="New user password"
+              className="mt-3 w-full rounded-lg border border-border bg-panel-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+              disabled={passwordLoading}
+            />
+            <input
+              type="password"
+              value={passwordConfirm}
+              onChange={(e) => setPasswordConfirm(e.target.value)}
+              autoComplete="new-password"
+              placeholder="Confirm new user password"
+              className="mt-3 w-full rounded-lg border border-border bg-panel-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+              disabled={passwordLoading}
+            />
+            {passwordError && <p className="mt-2 text-sm text-red-300">{passwordError}</p>}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (passwordLoading) return;
+                  setPasswordTarget(null);
+                  setPasswordAdminPassword("");
+                  setPasswordNew("");
+                  setPasswordConfirm("");
+                  setPasswordError("");
+                }}
+                className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-text"
+                disabled={passwordLoading}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onResetPasswordConfirmed}
+                disabled={passwordLoading}
+                className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white hover:bg-accent/90 disabled:opacity-60"
+              >
+                {passwordLoading ? "Saving..." : "Reset password"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteTarget && (
         <div className="fixed inset-0 z-[220] grid place-items-center p-4">

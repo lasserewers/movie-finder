@@ -17,11 +17,28 @@ export interface AdminUser {
   last_login_at?: string | null;
   provider_count: number;
   countries: string[];
-  theme: string;
 }
 
 export interface AdminUserListResponse {
   results: AdminUser[];
+  page: number;
+  page_size: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface AdminAuditLog {
+  id: string;
+  created_at?: string | null;
+  action: string;
+  message: string;
+  reason?: string | null;
+  actor_email?: string | null;
+  target_email?: string | null;
+}
+
+export interface AdminAuditLogListResponse {
+  results: AdminAuditLog[];
   page: number;
   page_size: number;
   total: number;
@@ -45,6 +62,15 @@ export async function getAdminUsers(query = "", page = 1, pageSize = 25): Promis
   return apiFetch(`/api/admin/users?${params.toString()}`);
 }
 
+export async function getAdminLogs(query = "", page = 1, pageSize = 50): Promise<AdminAuditLogListResponse> {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("page_size", String(pageSize));
+  const trimmed = query.trim();
+  if (trimmed) params.set("q", trimmed);
+  return apiFetch(`/api/admin/logs?${params.toString()}`);
+}
+
 export async function updateAdminUser(
   userId: string,
   body: { is_admin?: boolean; is_active?: boolean; action_reason?: string }
@@ -63,5 +89,19 @@ export async function deleteAdminUser(
   return apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/delete`, {
     method: "POST",
     body: JSON.stringify({ admin_password: adminPassword, action_reason: actionReason }),
+  });
+}
+
+export async function resetAdminUserPassword(
+  userId: string,
+  adminPassword: string,
+  newPassword: string
+): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({
+      admin_password: adminPassword,
+      new_password: newPassword,
+    }),
   });
 }
