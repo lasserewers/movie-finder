@@ -47,7 +47,7 @@ export async function logout(): Promise<void> {
   await apiFetch("/api/auth/logout", { method: "POST" });
 }
 
-export async function changeEmail(currentPassword: string, newEmail: string): Promise<{ email: string }> {
+export async function changeEmail(currentPassword: string, newEmail: string): Promise<{ pending_email: string }> {
   return apiFetch("/api/auth/email", {
     method: "PUT",
     body: JSON.stringify({ current_password: currentPassword, new_email: newEmail }),
@@ -79,5 +79,12 @@ export async function resetPassword(token: string, newPassword: string): Promise
   await apiFetch("/api/auth/reset-password", {
     method: "POST",
     body: JSON.stringify({ token, new_password: newPassword }),
+  });
+}
+
+export async function confirmEmailChange(token: string): Promise<{ email: string; previous_email: string }> {
+  return apiFetch("/api/auth/confirm-email-change", {
+    method: "POST",
+    body: JSON.stringify({ token }),
   });
 }

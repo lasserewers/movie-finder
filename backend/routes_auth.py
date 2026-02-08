@@ -10,7 +10,7 @@ from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_db
-from .models import User, UserPreferences, PasswordResetToken
+from .models import User, UserPreferences, PasswordResetToken, EmailChangeToken
 from . import mailer
 from .auth import (
     hash_password, verify_password, set_auth_cookies, clear_auth_cookies,
@@ -19,6 +19,7 @@ from .auth import (
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 PASSWORD_RESET_TTL_MINUTES = max(5, int(os.environ.get("PASSWORD_RESET_TTL_MINUTES", "30")))
+EMAIL_CHANGE_TTL_MINUTES = max(5, int(os.environ.get("EMAIL_CHANGE_TTL_MINUTES", "60")))
 
 
 def _client_ip(request: Request) -> str | None:
@@ -138,12 +139,45 @@ class ChangePasswordRequest(BaseModel):
 async def change_email(body: ChangeEmailRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if not verify_password(body.current_password, user.password_hash):
         raise HTTPException(status_code=403, detail="Incorrect password")
-    existing = await db.execute(select(User).where(User.email == body.new_email.lower()))
+    normalized_new_email = body.new_email.lower()
+    if normalized_new_email == user.email:
+        raise HTTPException(status_code=400, detail="New email is the same as your current email")
+    existing = await db.execute(select(User).where(User.email == normalized_new_email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")
-    user.email = body.new_email.lower()
+
+    now = datetime.now(timezone.utc)
+    token_plain = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token_plain.encode("utf-8")).hexdigest()
+    expires_at = now + timedelta(minutes=EMAIL_CHANGE_TTL_MINUTES)
+
+    await db.execute(
+        update(EmailChangeToken)
+        .where(
+            EmailChangeToken.user_id == user.id,
+            EmailChangeToken.used_at.is_(None),
+            EmailChangeToken.expires_at > now,
+        )
+        .values(used_at=now)
+    )
+    db.add(
+        EmailChangeToken(
+            user_id=user.id,
+            new_email=normalized_new_email,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+    )
     await db.commit()
-    return {"ok": True, "email": user.email}
+
+    asyncio.create_task(
+        mailer.send_email_change_confirmation_email(
+            normalized_new_email,
+            token_plain,
+            EMAIL_CHANGE_TTL_MINUTES,
+        )
+    )
+    return {"ok": True, "pending_email": normalized_new_email}
 
 
 @router.put("/password")
@@ -152,6 +186,7 @@ async def change_password(body: ChangePasswordRequest, user: User = Depends(get_
         raise HTTPException(status_code=403, detail="Incorrect password")
     user.password_hash = hash_password(body.new_password)
     await db.commit()
+    asyncio.create_task(mailer.send_password_changed_email(user.email))
     return {"ok": True}
 
 
@@ -240,7 +275,58 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
         .values(used_at=now)
     )
     await db.commit()
+    asyncio.create_task(mailer.send_password_changed_email(user.email))
     return {"ok": True}
+
+
+class ConfirmEmailChangeRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=512)
+
+
+@router.post("/confirm-email-change")
+async def confirm_email_change(body: ConfirmEmailChangeRequest, db: AsyncSession = Depends(get_db)):
+    token_hash = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
+    now = datetime.now(timezone.utc)
+    row = (
+        await db.execute(
+            select(EmailChangeToken, User)
+            .join(User, User.id == EmailChangeToken.user_id)
+            .where(
+                EmailChangeToken.token_hash == token_hash,
+                EmailChangeToken.used_at.is_(None),
+                EmailChangeToken.expires_at > now,
+            )
+        )
+    ).first()
+    if not row:
+        raise HTTPException(status_code=400, detail="Invalid or expired email confirmation token")
+
+    email_token, user = row
+    existing_email_user = (
+        await db.execute(
+            select(User).where(
+                User.email == email_token.new_email,
+                User.id != user.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_email_user:
+        raise HTTPException(status_code=409, detail="Email is already in use")
+
+    old_email = user.email
+    user.email = email_token.new_email
+    email_token.used_at = now
+    await db.execute(
+        update(EmailChangeToken)
+        .where(
+            EmailChangeToken.user_id == user.id,
+            EmailChangeToken.used_at.is_(None),
+            EmailChangeToken.id != email_token.id,
+        )
+        .values(used_at=now)
+    )
+    await db.commit()
+    return {"ok": True, "email": user.email, "previous_email": old_email}
 
 
 @router.post("/refresh")

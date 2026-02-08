@@ -34,10 +34,12 @@ def _serialize_user(user: User, prefs: UserPreferences | None) -> dict:
 class AdminUserUpdateRequest(BaseModel):
     is_admin: bool | None = None
     is_active: bool | None = None
+    action_reason: str | None = Field(default=None, max_length=500)
 
 
 class AdminUserDeleteRequest(BaseModel):
     admin_password: str = Field(min_length=1, max_length=128)
+    action_reason: str = Field(min_length=3, max_length=500)
 
 
 @router.get("/me")
@@ -144,11 +146,19 @@ async def admin_update_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     send_deactivated_email = False
+    deactivation_reason: str | None = None
+    send_reactivated_email = False
+    normalized_reason = (body.action_reason or "").strip()
     if body.is_active is not None:
         if body.is_active is False and user.id == admin.id:
             raise HTTPException(status_code=400, detail="You cannot disable your own account")
         if user.is_active and body.is_active is False:
+            if len(normalized_reason) < 3:
+                raise HTTPException(status_code=400, detail="Reason is required when disabling an account")
             send_deactivated_email = True
+            deactivation_reason = normalized_reason
+        if (not user.is_active) and body.is_active is True:
+            send_reactivated_email = True
         user.is_active = body.is_active
 
     if body.is_admin is not None:
@@ -165,7 +175,9 @@ async def admin_update_user(
     await db.commit()
 
     if send_deactivated_email:
-        asyncio.create_task(mailer.send_account_deactivated_email(user.email))
+        asyncio.create_task(mailer.send_account_deactivated_email(user.email, deactivation_reason))
+    if send_reactivated_email:
+        asyncio.create_task(mailer.send_account_reactivated_email(user.email))
 
     prefs = await db.get(UserPreferences, user.id)
     return {"ok": True, "user": _serialize_user(user, prefs)}
@@ -178,6 +190,9 @@ async def admin_delete_user(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    normalized_reason = body.action_reason.strip()
+    if len(normalized_reason) < 3:
+        raise HTTPException(status_code=400, detail="Reason is required when deleting an account")
     if not verify_password(body.admin_password, admin.password_hash):
         raise HTTPException(status_code=403, detail="Incorrect admin password")
 
@@ -196,8 +211,10 @@ async def admin_delete_user(
         if (other_admins or 0) == 0:
             raise HTTPException(status_code=400, detail="System must keep at least one admin")
 
+    user_email = user.email
     await db.delete(user)
     await db.commit()
+    asyncio.create_task(mailer.send_account_deleted_email(user_email, normalized_reason))
     return {"ok": True}
 
 

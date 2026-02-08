@@ -60,6 +60,7 @@ function AdminContent() {
   const [updatingKeys, setUpdatingKeys] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
   const [deletePassword, setDeletePassword] = useState("");
+  const [deleteReason, setDeleteReason] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
 
@@ -151,13 +152,17 @@ function AdminContent() {
   const onUpdateUserField = async (
     target: AdminUser,
     field: "is_admin" | "is_active",
-    nextValue: boolean
+    nextValue: boolean,
+    actionReason?: string
   ) => {
     if (target[field] === nextValue) return;
     const updatingKey = `${target.id}:${field}`;
     setUpdatingKeys((prev) => new Set(prev).add(updatingKey));
     try {
-      const result = await updateAdminUser(target.id, { [field]: nextValue });
+      const result = await updateAdminUser(target.id, {
+        [field]: nextValue,
+        ...(actionReason ? { action_reason: actionReason } : {}),
+      });
       setUsers((prev) => prev.map((u) => (u.id === target.id ? result.user : u)));
       if (user?.id === target.id) {
         updateUser({ is_admin: result.user.is_admin, is_active: result.user.is_active });
@@ -198,6 +203,23 @@ function AdminContent() {
       setUsers((prev) => [...prev]);
       return;
     }
+    if (!nextIsActive) {
+      const reasonInput = window.prompt(
+        `Write the reason for disabling ${target.email}. This will be sent by email.`,
+        ""
+      );
+      if (reasonInput === null) {
+        setUsers((prev) => [...prev]);
+        return;
+      }
+      const reason = reasonInput.trim();
+      if (reason.length < 3) {
+        setDataError("Disable reason must be at least 3 characters.");
+        return;
+      }
+      await onUpdateUserField(target, "is_active", nextIsActive, reason);
+      return;
+    }
     await onUpdateUserField(target, "is_active", nextIsActive);
   };
 
@@ -207,12 +229,18 @@ function AdminContent() {
       setDeleteError("Password is required.");
       return;
     }
+    const normalizedReason = deleteReason.trim();
+    if (normalizedReason.length < 3) {
+      setDeleteError("Reason is required (minimum 3 characters).");
+      return;
+    }
     setDeleteError("");
     setDeleteLoading(true);
     try {
-      await deleteAdminUser(deleteTarget.id, deletePassword);
+      await deleteAdminUser(deleteTarget.id, deletePassword, normalizedReason);
       setDeleteTarget(null);
       setDeletePassword("");
+      setDeleteReason("");
       await loadData();
     } catch (err) {
       const e = err as ApiError;
@@ -482,6 +510,7 @@ function AdminContent() {
                               if (!window.confirm(`Are you sure you want to delete ${row.email}?`)) return;
                               setDeleteTarget(row);
                               setDeletePassword("");
+                              setDeleteReason("");
                               setDeleteError("");
                             }}
                             disabled={row.id === user.id}
@@ -533,13 +562,14 @@ function AdminContent() {
               if (deleteLoading) return;
               setDeleteTarget(null);
               setDeletePassword("");
+              setDeleteReason("");
               setDeleteError("");
             }}
           />
           <div className="relative z-10 w-full max-w-md rounded-2xl border border-border bg-panel p-5">
             <h3 className="font-display text-xl">Delete User</h3>
             <p className="mt-2 text-sm text-muted">
-              Deleting <span className="text-text">{deleteTarget.email}</span> is permanent. Enter your password to confirm.
+              Deleting <span className="text-text">{deleteTarget.email}</span> is permanent. Enter your password and a reason.
             </p>
             <input
               type="password"
@@ -550,6 +580,14 @@ function AdminContent() {
               className="mt-4 w-full rounded-lg border border-border bg-panel-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
               disabled={deleteLoading}
             />
+            <textarea
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              placeholder="Reason for deletion (sent to the user)"
+              rows={3}
+              className="mt-3 w-full resize-y rounded-lg border border-border bg-panel-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
+              disabled={deleteLoading}
+            />
             {deleteError && <p className="mt-2 text-sm text-red-300">{deleteError}</p>}
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
@@ -558,6 +596,7 @@ function AdminContent() {
                   if (deleteLoading) return;
                   setDeleteTarget(null);
                   setDeletePassword("");
+                  setDeleteReason("");
                   setDeleteError("");
                 }}
                 className="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:text-text"

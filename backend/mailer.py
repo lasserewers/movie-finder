@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import os
 import smtplib
@@ -14,6 +15,7 @@ SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL", SMTP_USERNAME or "").strip()
 SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "FullStreamer").strip() or "FullStreamer"
 SMTP_SECURITY = os.environ.get("SMTP_SECURITY", "starttls").strip().lower()
 FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "http://localhost:5173").strip().rstrip("/")
+SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", "contact@fullstreamer.com").strip() or "contact@fullstreamer.com"
 
 
 def _enabled() -> bool:
@@ -26,6 +28,68 @@ def _from_header() -> str:
 
 def build_password_reset_link(token: str) -> str:
     return f"{FRONTEND_BASE_URL}/reset-password?token={token}"
+
+
+def build_email_change_link(token: str) -> str:
+    return f"{FRONTEND_BASE_URL}/confirm-email?token={token}"
+
+
+def _render_email_html(
+    *,
+    preheader: str,
+    title: str,
+    subtitle: str,
+    body_html: str,
+    cta_label: str | None = None,
+    cta_url: str | None = None,
+) -> str:
+    logo_url = f"{FRONTEND_BASE_URL}/logo-text-white.png"
+    cta_html = ""
+    if cta_label and cta_url:
+        cta_html = (
+            f"<div style=\"margin-top:26px;text-align:center;\">"
+            f"<a href=\"{cta_url}\" style=\"display:inline-block;background:#e50914;color:#ffffff;"
+            f"text-decoration:none;font-weight:700;border-radius:999px;padding:12px 22px;"
+            f"font-family:Inter,Segoe UI,Arial,sans-serif;\">{cta_label}</a></div>"
+        )
+    return f"""
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>{title}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#0b0c10;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">{preheader}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0b0c10;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;border-collapse:separate;">
+            <tr>
+              <td style="border-radius:22px;background:linear-gradient(135deg,#12141a 0%,#1a0f12 55%,#24070c 100%);border:1px solid #2a2f3b;padding:0;">
+                <div style="padding:24px 24px 14px 24px;border-bottom:1px solid rgba(255,255,255,0.08);">
+                  <img src="{logo_url}" alt="FullStreamer" width="170" style="display:block;max-width:100%;height:auto;" />
+                </div>
+                <div style="padding:26px 24px 24px 24px;">
+                  <h1 style="margin:0 0 10px 0;color:#f1f4f9;font-size:26px;line-height:1.2;font-family:Inter,Segoe UI,Arial,sans-serif;">{title}</h1>
+                  <p style="margin:0 0 18px 0;color:#cfd6e0;font-size:15px;line-height:1.6;font-family:Inter,Segoe UI,Arial,sans-serif;">{subtitle}</p>
+                  <div style="color:#f1f4f9;font-size:15px;line-height:1.7;font-family:Inter,Segoe UI,Arial,sans-serif;">{body_html}</div>
+                  {cta_html}
+                </div>
+                <div style="padding:14px 24px 24px 24px;color:#9aa4b2;font-size:12px;line-height:1.6;border-top:1px solid rgba(255,255,255,0.08);font-family:Inter,Segoe UI,Arial,sans-serif;">
+                  Need help? Contact us at <a href="mailto:{SUPPORT_EMAIL}" style="color:#ff7b7b;text-decoration:none;">{SUPPORT_EMAIL}</a><br/>
+                  FullStreamer
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+""".strip()
 
 
 def _send_sync(to_email: str, subject: str, text_body: str, html_body: str | None = None) -> None:
@@ -70,13 +134,18 @@ async def send_welcome_email(to_email: str) -> bool:
         "Welcome to FullStreamer.\n\n"
         "Your account is ready, and you can start exploring what to watch right away.\n\n"
         f"Open FullStreamer: {FRONTEND_BASE_URL}\n\n"
-        "If you did not create this account, please contact support."
+        f"If you did not create this account, contact {SUPPORT_EMAIL}."
     )
-    html_body = (
-        "<p>Welcome to <strong>FullStreamer</strong>.</p>"
-        "<p>Your account is ready, and you can start exploring what to watch right away.</p>"
-        f"<p><a href=\"{FRONTEND_BASE_URL}\">Open FullStreamer</a></p>"
-        "<p>If you did not create this account, please contact support.</p>"
+    html_body = _render_email_html(
+        preheader="Welcome to FullStreamer",
+        title="Welcome to FullStreamer",
+        subtitle="Your account is ready. Start exploring movies and shows instantly.",
+        body_html=(
+            "<p style=\"margin:0 0 12px 0;\">You are all set up and ready to stream smarter.</p>"
+            "<p style=\"margin:0;\">Set your countries and services to see exactly where content is available.</p>"
+        ),
+        cta_label="Open FullStreamer",
+        cta_url=FRONTEND_BASE_URL,
     )
     return await send_email(to_email, subject, text_body, html_body)
 
@@ -90,23 +159,137 @@ async def send_password_reset_email(to_email: str, reset_token: str, expires_min
         f"This link expires in {expires_minutes} minutes.\n\n"
         "If you did not request this, you can ignore this email."
     )
-    html_body = (
-        "<p>We received a request to reset your FullStreamer password.</p>"
-        f"<p><a href=\"{link}\">Reset your password</a></p>"
-        f"<p>This link expires in {expires_minutes} minutes.</p>"
-        "<p>If you did not request this, you can ignore this email.</p>"
+    html_body = _render_email_html(
+        preheader="Reset your FullStreamer password",
+        title="Reset Your Password",
+        subtitle="A password reset was requested for your account.",
+        body_html=(
+            f"<p style=\"margin:0 0 12px 0;\">This secure link expires in <strong>{expires_minutes} minutes</strong>.</p>"
+            "<p style=\"margin:0;\">If this was not you, you can safely ignore this message.</p>"
+        ),
+        cta_label="Reset Password",
+        cta_url=link,
     )
     return await send_email(to_email, subject, text_body, html_body)
 
 
-async def send_account_deactivated_email(to_email: str) -> bool:
+async def send_account_deactivated_email(to_email: str, reason: str | None = None) -> bool:
+    normalized_reason = (reason or "").strip()
+    reason_text = f"Reason: {normalized_reason}\n\n" if normalized_reason else ""
+    reason_html = ""
+    if normalized_reason:
+        escaped_reason = html.escape(normalized_reason)
+        reason_html = (
+            "<div style=\"margin:14px 0;padding:12px 14px;border:1px solid rgba(255,255,255,0.14);"
+            "border-radius:12px;background:rgba(255,255,255,0.04);\">"
+            "<p style=\"margin:0 0 6px 0;font-size:12px;color:#cfd6e0;text-transform:uppercase;letter-spacing:.04em;\">Reason</p>"
+            f"<p style=\"margin:0;color:#f1f4f9;\">{escaped_reason}</p>"
+            "</div>"
+        )
     subject = "Your FullStreamer account has been deactivated"
     text_body = (
         "Your FullStreamer account has been deactivated.\n\n"
-        "If this was unexpected, please contact support."
+        f"{reason_text}"
+        f"If this was unexpected, contact {SUPPORT_EMAIL}."
     )
-    html_body = (
-        "<p>Your FullStreamer account has been deactivated.</p>"
-        "<p>If this was unexpected, please contact support.</p>"
+    html_body = _render_email_html(
+        preheader="Your account has been deactivated",
+        title="Account Deactivated",
+        subtitle="Your FullStreamer account is currently disabled.",
+        body_html=(
+            "<p style=\"margin:0 0 12px 0;\">You may not be able to log in until the account is reactivated.</p>"
+            f"{reason_html}"
+            f"<p style=\"margin:0;\">If this was unexpected, contact <a href=\"mailto:{SUPPORT_EMAIL}\" style=\"color:#ff7b7b;text-decoration:none;\">{SUPPORT_EMAIL}</a>.</p>"
+        ),
+    )
+    return await send_email(to_email, subject, text_body, html_body)
+
+
+async def send_account_deleted_email(to_email: str, reason: str) -> bool:
+    normalized_reason = reason.strip()
+    escaped_reason = html.escape(normalized_reason)
+    subject = "Your FullStreamer account has been deleted"
+    text_body = (
+        "Your FullStreamer account has been deleted by an administrator.\n\n"
+        f"Reason: {normalized_reason}\n\n"
+        f"If this was unexpected, contact {SUPPORT_EMAIL}."
+    )
+    html_body = _render_email_html(
+        preheader="Your account has been deleted",
+        title="Account Deleted",
+        subtitle="Your FullStreamer account has been removed.",
+        body_html=(
+            "<p style=\"margin:0 0 12px 0;\">This account can no longer be accessed.</p>"
+            "<div style=\"margin:14px 0;padding:12px 14px;border:1px solid rgba(255,255,255,0.14);"
+            "border-radius:12px;background:rgba(255,255,255,0.04);\">"
+            "<p style=\"margin:0 0 6px 0;font-size:12px;color:#cfd6e0;text-transform:uppercase;letter-spacing:.04em;\">Reason</p>"
+            f"<p style=\"margin:0;color:#f1f4f9;\">{escaped_reason}</p>"
+            "</div>"
+            f"<p style=\"margin:0;\">If this was unexpected, contact <a href=\"mailto:{SUPPORT_EMAIL}\" style=\"color:#ff7b7b;text-decoration:none;\">{SUPPORT_EMAIL}</a>.</p>"
+        ),
+    )
+    return await send_email(to_email, subject, text_body, html_body)
+
+
+async def send_password_changed_email(to_email: str) -> bool:
+    subject = "Your FullStreamer password was changed"
+    text_body = (
+        "Your FullStreamer password was changed successfully.\n\n"
+        f"If this was not you, reset your password immediately and contact {SUPPORT_EMAIL}."
+    )
+    html_body = _render_email_html(
+        preheader="Your password was changed",
+        title="Password Updated",
+        subtitle="Your FullStreamer password has been changed successfully.",
+        body_html=(
+            "<p style=\"margin:0 0 12px 0;\">If you made this change, no action is needed.</p>"
+            f"<p style=\"margin:0;\">If this was not you, reset your password now and contact <a href=\"mailto:{SUPPORT_EMAIL}\" style=\"color:#ff7b7b;text-decoration:none;\">{SUPPORT_EMAIL}</a>.</p>"
+        ),
+        cta_label="Reset Password",
+        cta_url=f"{FRONTEND_BASE_URL}/reset-password",
+    )
+    return await send_email(to_email, subject, text_body, html_body)
+
+
+async def send_email_change_confirmation_email(to_email: str, token: str, expires_minutes: int) -> bool:
+    link = build_email_change_link(token)
+    subject = "Confirm your new FullStreamer email"
+    text_body = (
+        "Confirm your new FullStreamer email address.\n\n"
+        f"Confirm email change: {link}\n\n"
+        f"This link expires in {expires_minutes} minutes.\n\n"
+        "If you did not request this, you can ignore this email."
+    )
+    html_body = _render_email_html(
+        preheader="Confirm your email change",
+        title="Confirm New Email",
+        subtitle="Finish updating your FullStreamer account email.",
+        body_html=(
+            f"<p style=\"margin:0 0 12px 0;\">This confirmation link expires in <strong>{expires_minutes} minutes</strong>.</p>"
+            "<p style=\"margin:0;\">If you did not request this change, ignore this message.</p>"
+        ),
+        cta_label="Confirm Email Change",
+        cta_url=link,
+    )
+    return await send_email(to_email, subject, text_body, html_body)
+
+
+async def send_account_reactivated_email(to_email: str) -> bool:
+    subject = "Your FullStreamer account has been reactivated"
+    text_body = (
+        "Your FullStreamer account has been reactivated.\n\n"
+        f"You can log in again at {FRONTEND_BASE_URL}.\n\n"
+        f"If this was unexpected, contact {SUPPORT_EMAIL}."
+    )
+    html_body = _render_email_html(
+        preheader="Your account has been reactivated",
+        title="Account Reactivated",
+        subtitle="Great news. Your FullStreamer account is active again.",
+        body_html=(
+            "<p style=\"margin:0 0 12px 0;\">You can now sign in and continue where you left off.</p>"
+            f"<p style=\"margin:0;\">If this was unexpected, contact <a href=\"mailto:{SUPPORT_EMAIL}\" style=\"color:#ff7b7b;text-decoration:none;\">{SUPPORT_EMAIL}</a>.</p>"
+        ),
+        cta_label="Go to FullStreamer",
+        cta_url=FRONTEND_BASE_URL,
     )
     return await send_email(to_email, subject, text_body, html_body)

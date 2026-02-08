@@ -47,7 +47,7 @@ export async function getAdminUsers(query = "", page = 1, pageSize = 25): Promis
 
 export async function updateAdminUser(
   userId: string,
-  body: { is_admin?: boolean; is_active?: boolean }
+  body: { is_admin?: boolean; is_active?: boolean; action_reason?: string }
 ): Promise<{ ok: boolean; user: AdminUser }> {
   return apiFetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
     method: "PATCH",
@@ -57,10 +57,11 @@ export async function updateAdminUser(
 
 export async function deleteAdminUser(
   userId: string,
-  adminPassword: string
+  adminPassword: string,
+  actionReason: string
 ): Promise<{ ok: boolean }> {
   return apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/delete`, {
     method: "POST",
-    body: JSON.stringify({ admin_password: adminPassword }),
+    body: JSON.stringify({ admin_password: adminPassword, action_reason: actionReason }),
   });
 }

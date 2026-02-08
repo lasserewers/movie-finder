@@ -10,7 +10,7 @@ interface Props {
 }
 
 export default function ProfileModal({ open, onClose }: Props) {
-  const { user, updateUser, logout } = useAuth();
+  const { user, logout } = useAuth();
 
   const [emailPassword, setEmailPassword] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -52,8 +52,7 @@ export default function ProfileModal({ open, onClose }: Props) {
     setEmailLoading(true);
     try {
       const result = await changeEmail(emailPassword, newEmail);
-      updateUser({ email: result.email });
-      setEmailMsg("Email updated");
+      setEmailMsg(`Confirmation sent to ${result.pending_email}. Open that inbox and confirm the change.`);
       setEmailPassword("");
       setNewEmail("");
     } catch (err) {

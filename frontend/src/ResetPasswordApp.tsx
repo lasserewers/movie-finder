@@ -101,6 +101,19 @@ export default function ResetPasswordApp() {
               {loading ? "Sending..." : "Send reset link"}
             </button>
           </form>
+        ) : success ? (
+          <div className="space-y-3">
+            <p className="text-sm text-green-300">{success}</p>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = "/";
+              }}
+              className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent/90"
+            >
+              Take me to log in
+            </button>
+          </div>
         ) : (
           <form onSubmit={onResetSubmit} className="space-y-3">
             <p className="text-sm text-muted">
@@ -127,7 +140,6 @@ export default function ResetPasswordApp() {
               className="w-full rounded-lg border border-border bg-panel-2 px-3 py-2.5 text-sm outline-none focus:border-accent"
             />
             {error && <p className="text-sm text-red-300">{error}</p>}
-            {success && <p className="text-sm text-green-300">{success}</p>}
             <button
               type="submit"
               disabled={loading}
