@@ -231,6 +231,24 @@ async def send_account_deleted_email(to_email: str, reason: str) -> bool:
     return await send_email(to_email, subject, text_body, html_body)
 
 
+async def send_account_self_deleted_email(to_email: str) -> bool:
+    subject = "Your FullStreamer account was deleted"
+    text_body = (
+        "Your FullStreamer account was deleted at your request.\n\n"
+        f"If this was not you, contact {SUPPORT_EMAIL} immediately."
+    )
+    html_body = _render_email_html(
+        preheader="Your account was deleted",
+        title="Account Deleted",
+        subtitle="Your request to delete your FullStreamer account is complete.",
+        body_html=(
+            "<p style=\"margin:0 0 12px 0;\">This account can no longer be accessed.</p>"
+            f"<p style=\"margin:0;\">If this was not you, contact <a href=\"mailto:{SUPPORT_EMAIL}\" style=\"color:#ff7b7b;text-decoration:none;\">{SUPPORT_EMAIL}</a> immediately.</p>"
+        ),
+    )
+    return await send_email(to_email, subject, text_body, html_body)
+
+
 async def send_password_changed_email(to_email: str) -> bool:
     subject = "Your FullStreamer password was changed"
     text_body = (

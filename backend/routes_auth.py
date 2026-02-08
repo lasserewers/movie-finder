@@ -357,6 +357,7 @@ class DeleteAccountRequest(BaseModel):
 async def delete_account(body: DeleteAccountRequest, response: Response, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=403, detail="Incorrect password")
+    user_email = user.email
 
     # Delete user preferences first (foreign key constraint)
     prefs_result = await db.execute(select(UserPreferences).where(UserPreferences.user_id == user.id))
@@ -368,5 +369,6 @@ async def delete_account(body: DeleteAccountRequest, response: Response, user: U
     await db.delete(user)
     await db.commit()
 
+    asyncio.create_task(mailer.send_account_self_deleted_email(user_email))
     clear_auth_cookies(response)
     return {"ok": True}
