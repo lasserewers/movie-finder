@@ -25,6 +25,7 @@ export default function AuthModal({
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState("");
+  const [verificationFromLogin, setVerificationFromLogin] = useState(false);
   const [info, setInfo] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -39,6 +40,7 @@ export default function AuthModal({
     setPassword("");
     setConfirmPassword("");
     setPendingVerificationEmail("");
+    setVerificationFromLogin(false);
     setInfo("");
     setError("");
     setLoading(false);
@@ -75,6 +77,7 @@ export default function AuthModal({
         const result = await signup(email, password);
         if (result.requiresEmailVerification) {
           setPendingVerificationEmail(result.email || email.trim().toLowerCase());
+          setVerificationFromLogin(false);
           setInfo("Verification email sent. Check your inbox and spam folder.");
           setError("");
           setResendCooldownSeconds(RESEND_COOLDOWN_SECONDS);
@@ -87,7 +90,21 @@ export default function AuthModal({
         onClose?.();
       }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Network error. Please try again.");
+      const apiError = err instanceof ApiError ? err : null;
+      const message = apiError?.message || "Network error. Please try again.";
+      const isUnverifiedLogin =
+        mode === "login" &&
+        apiError?.status === 403 &&
+        message.toLowerCase().includes("verify your email");
+      if (isUnverifiedLogin) {
+        setPendingVerificationEmail(email.trim().toLowerCase());
+        setVerificationFromLogin(true);
+        setInfo("Your account is not verified yet. Resend a confirmation link below.");
+        setError("");
+        setResendCooldownSeconds(0);
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -112,6 +129,7 @@ export default function AuthModal({
   const switchMode = () => {
     setMode(mode === "login" ? "signup" : "login");
     setPendingVerificationEmail("");
+    setVerificationFromLogin(false);
     setInfo("");
     setError("");
     setConfirmPassword("");
@@ -151,8 +169,17 @@ export default function AuthModal({
             {pendingVerificationEmail ? (
               <div className="flex flex-col gap-4">
                 <p className="text-sm text-muted">
-                  We sent a confirmation link to <span className="text-text">{pendingVerificationEmail}</span>.
-                  Please check your inbox and your spam folder.
+                  {verificationFromLogin ? (
+                    <>
+                      This account is not verified yet. You can resend the confirmation link to{" "}
+                      <span className="text-text">{pendingVerificationEmail}</span>. Please also check your spam folder.
+                    </>
+                  ) : (
+                    <>
+                      We sent a confirmation link to <span className="text-text">{pendingVerificationEmail}</span>.
+                      Please check your inbox and your spam folder.
+                    </>
+                  )}
                 </p>
                 {error && (
                   <div className="text-sm text-red-400 bg-red-400/10 rounded-lg px-3 py-2">
@@ -180,6 +207,7 @@ export default function AuthModal({
                   type="button"
                   onClick={() => {
                     setPendingVerificationEmail("");
+                    setVerificationFromLogin(false);
                     setInfo("");
                     setError("");
                     setMode("login");

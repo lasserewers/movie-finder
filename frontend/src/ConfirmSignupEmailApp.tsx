@@ -83,15 +83,17 @@ export default function ConfirmSignupEmailApp() {
         )}
         {status === "error" && <p className="text-sm text-red-300">{message}</p>}
 
-        <button
-          type="button"
-          onClick={() => {
-            window.location.href = "/";
-          }}
-          className="mt-4 w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent/90"
-        >
-          Continue setting up your account
-        </button>
+        {status === "success" ? (
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = "/";
+            }}
+            className="mt-4 w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent/90"
+          >
+            Continue setting up your account
+          </button>
+        ) : null}
       </div>
     </div>
   );
