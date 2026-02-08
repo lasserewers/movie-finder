@@ -3,13 +3,26 @@ import { motion, AnimatePresence } from "framer-motion";
 import { getMovieProviders, getMovieLinks, getTvProviders, getTvLinks, type Movie, type CountryProviders, type StreamingLink, type Person, type CrewMember } from "../api/movies";
 import ProviderGrid from "./ProviderGrid";
 import CreditsModal from "./CreditsModal";
+import PersonWorksModal from "./PersonWorksModal";
 import Spinner from "./Spinner";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
 
-function PersonCircle({ person, role }: { person: { name: string; profile_path?: string }; role?: string }) {
+function PersonCircle({
+  person,
+  role,
+  onClick,
+}: {
+  person: { id: number; name: string; profile_path?: string };
+  role?: string;
+  onClick?: (personId: number) => void;
+}) {
   return (
-    <div className="flex flex-col items-center w-[70px] text-center flex-shrink-0">
+    <button
+      type="button"
+      onClick={() => onClick?.(person.id)}
+      className="flex flex-col items-center w-[70px] text-center flex-shrink-0 cursor-pointer"
+    >
       {person.profile_path ? (
         <img src={`${TMDB_IMG}/w185${person.profile_path}`} alt="" className="w-14 h-14 rounded-full object-cover border-2 border-border" />
       ) : (
@@ -17,24 +30,33 @@ function PersonCircle({ person, role }: { person: { name: string; profile_path?:
       )}
       <span className="text-[0.7rem] text-text mt-1 leading-tight line-clamp-2">{person.name}</span>
       {role && <span className="text-[0.6rem] text-muted leading-tight">{role}</span>}
-    </div>
+    </button>
   );
 }
 
 interface Props {
   movieId: number | null;
   onClose: () => void;
+  onSelectMovie?: (id: number, mediaType?: "movie" | "tv") => void;
   countryNameMap: Record<string, string>;
   itemMediaType?: "movie" | "tv";
   guestCountry?: string;
 }
 
-export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMediaType, guestCountry }: Props) {
+export default function MovieOverlay({
+  movieId,
+  onClose,
+  onSelectMovie,
+  countryNameMap,
+  itemMediaType,
+  guestCountry,
+}: Props) {
   const [movie, setMovie] = useState<Movie | null>(null);
   const [providers, setProviders] = useState<Record<string, CountryProviders>>({});
   const [streamingLinks, setStreamingLinks] = useState<Record<string, StreamingLink[]>>({});
   const [loading, setLoading] = useState(false);
   const [creditsOpen, setCreditsOpen] = useState(false);
+  const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
 
   useEffect(() => {
     if (!movieId) return;
@@ -56,6 +78,13 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMed
     if (movieId) document.body.classList.add("overflow-hidden");
     else document.body.classList.remove("overflow-hidden");
     return () => document.body.classList.remove("overflow-hidden");
+  }, [movieId]);
+
+  useEffect(() => {
+    if (!movieId) {
+      setCreditsOpen(false);
+      setSelectedPersonId(null);
+    }
   }, [movieId]);
 
   const credits = movie?.credits;
@@ -125,7 +154,7 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMed
                               </h4>
                               <div className="flex gap-3">
                                 {directors.map((d) => (
-                                  <PersonCircle key={d.id} person={d} />
+                                  <PersonCircle key={d.id} person={d} onClick={setSelectedPersonId} />
                                 ))}
                               </div>
                             </div>
@@ -135,7 +164,7 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMed
                               <h4 className="text-xs text-muted uppercase tracking-wider mb-2">Cast</h4>
                               <div className="flex gap-3">
                                 {topCast.map((p) => (
-                                  <PersonCircle key={p.id} person={p} role={p.character} />
+                                  <PersonCircle key={p.id} person={p} role={p.character} onClick={setSelectedPersonId} />
                                 ))}
                               </div>
                             </div>
@@ -173,6 +202,18 @@ export default function MovieOverlay({ movieId, onClose, countryNameMap, itemMed
         onClose={() => setCreditsOpen(false)}
         cast={cast}
         crew={crew}
+        onPersonClick={setSelectedPersonId}
+      />
+
+      <PersonWorksModal
+        open={selectedPersonId !== null}
+        personId={selectedPersonId}
+        onClose={() => setSelectedPersonId(null)}
+        onSelectWork={(id, mediaType) => {
+          setSelectedPersonId(null);
+          setCreditsOpen(false);
+          onSelectMovie?.(id, mediaType);
+        }}
       />
     </>
   );

@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { apiFetch, ApiError } from "./client";
 
 export type MediaType = "movie" | "tv" | "mix";
 
@@ -11,6 +11,8 @@ export interface Movie {
   overview?: string;
   imdb_id?: string;
   media_type?: "movie" | "tv";
+  popularity?: number;
+  vote_average?: number;
   number_of_seasons?: number;
   number_of_episodes?: number;
   credits?: {
@@ -31,6 +33,30 @@ export interface CrewMember {
   name: string;
   profile_path?: string;
   job: string;
+}
+
+export interface PersonSummary {
+  id: number;
+  name: string;
+  profile_path?: string;
+  known_for_department?: string;
+}
+
+export interface PersonWork {
+  id: number;
+  title: string;
+  poster_path?: string;
+  release_date?: string;
+  media_type: "movie" | "tv";
+  popularity?: number;
+  vote_average?: number;
+  role_summary?: string;
+  role_categories?: string[];
+}
+
+export interface PersonWorksResponse {
+  person: PersonSummary;
+  works: PersonWork[];
 }
 
 export interface HomeSection {
@@ -80,18 +106,77 @@ export interface Region {
   english_name: string;
 }
 
-export async function searchMovies(q: string, mediaType: MediaType = "movie"): Promise<{ results: Movie[] }> {
-  return apiFetch(`/api/search?q=${encodeURIComponent(q)}&media_type=${mediaType}`);
+export async function searchMovies(
+  q: string,
+  mediaType: MediaType = "movie",
+  limit = 20
+): Promise<{ results: Movie[] }> {
+  return apiFetch(`/api/search?q=${encodeURIComponent(q)}&media_type=${mediaType}&limit=${limit}`);
+}
+
+export async function searchPage(
+  q: string,
+  page: number,
+  mediaType: MediaType = "movie",
+  limit = 20
+): Promise<{ results: Movie[]; page?: number; total_pages?: number }> {
+  try {
+    return await apiFetch(
+      `/api/search_page?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}&media_type=${mediaType}`
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return await apiFetch(
+        `/api/search?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}&media_type=${mediaType}`
+      );
+    }
+    throw err;
+  }
+}
+
+export async function searchFilteredPage(
+  q: string,
+  page: number,
+  providerIds: number[],
+  mediaType: MediaType = "movie",
+  limit = 20,
+  countries?: string[],
+  vpn = false,
+  includePaid = false
+): Promise<{ results: Movie[]; page?: number; total_pages?: number }> {
+  const ids = providerIds.join(",");
+  const countriesParam = countries && countries.length ? `&countries=${encodeURIComponent(countries.join(","))}` : "";
+  const vpnParam = vpn ? "&vpn=1" : "";
+  const paidParam = includePaid ? "&include_paid=1" : "";
+  try {
+    return await apiFetch(
+      `/api/search_filtered_page?q=${encodeURIComponent(q)}&page=${page}&limit=${limit}${ids ? `&provider_ids=${ids}` : ""}&media_type=${mediaType}${countriesParam}${vpnParam}${paidParam}`
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return await apiFetch(
+        `/api/search_filtered?q=${encodeURIComponent(q)}&page=${page}&paged=1&limit=${limit}${ids ? `&provider_ids=${ids}` : ""}&media_type=${mediaType}${countriesParam}${vpnParam}${paidParam}`
+      );
+    }
+    throw err;
+  }
 }
 
 export async function searchFiltered(
   q: string,
   providerIds: number[],
-  mediaType: MediaType = "movie"
+  mediaType: MediaType = "movie",
+  options?: { limit?: number; countries?: string[]; vpn?: boolean; includePaid?: boolean }
 ): Promise<{ results: Movie[] }> {
   const ids = providerIds.join(",");
+  const limitParam = options?.limit ? `&limit=${options.limit}` : "";
+  const countriesParam = options?.countries && options.countries.length
+    ? `&countries=${encodeURIComponent(options.countries.join(","))}`
+    : "";
+  const vpnParam = options?.vpn ? "&vpn=1" : "";
+  const paidParam = options?.includePaid ? "&include_paid=1" : "";
   return apiFetch(
-    `/api/search_filtered?q=${encodeURIComponent(q)}${ids ? `&provider_ids=${ids}` : ""}&media_type=${mediaType}`
+    `/api/search_filtered?q=${encodeURIComponent(q)}${ids ? `&provider_ids=${ids}` : ""}&media_type=${mediaType}${limitParam}${countriesParam}${vpnParam}${paidParam}`
   );
 }
 
@@ -166,6 +251,10 @@ export async function getTvLinks(
   tvId: number
 ): Promise<{ streaming?: Record<string, StreamingLink[]>; movie_info?: { poster?: string; backdrop?: string } }> {
   return apiFetch(`/api/tv/${tvId}/links`);
+}
+
+export async function getPersonWorks(personId: number): Promise<PersonWorksResponse> {
+  return apiFetch(`/api/person/${personId}/works`);
 }
 
 export async function getProviders(

@@ -11,6 +11,7 @@ interface Props {
   showFilterToggle?: boolean;
   onOpenSettings?: () => void;
   vpnEnabled?: boolean;
+  onSubmitSearch?: (query: string, filtered: boolean) => void;
 }
 
 export default function SearchBar({
@@ -19,6 +20,7 @@ export default function SearchBar({
   showFilterToggle = true,
   onOpenSettings,
   vpnEnabled = false,
+  onSubmitSearch,
 }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Movie[]>([]);
@@ -129,10 +131,35 @@ export default function SearchBar({
           type="text"
           value={query}
           onChange={(e) => handleInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            const q = query.trim();
+            if (q.length < 2) return;
+            e.preventDefault();
+            setOpen(false);
+            onSubmitSearch?.(q, showFilterToggle && filterOn);
+          }}
           onFocus={() => results.length && setOpen(true)}
           placeholder={mediaType === "tv" ? "Search TV shows..." : mediaType === "movie" ? "Search movies..." : "Search movies & TV..."}
           className="flex-1 bg-transparent text-text text-sm sm:text-base outline-none placeholder:text-muted"
         />
+        {onSubmitSearch && (
+          <button
+            onClick={() => {
+              const q = query.trim();
+              if (q.length < 2) return;
+              setOpen(false);
+              onSubmitSearch(q, showFilterToggle && filterOn);
+            }}
+            className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full text-muted hover:text-text transition-colors"
+            aria-label="Search"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+          </button>
+        )}
         {showFilterToggle && (
           <button
             onClick={handleFilterToggle}

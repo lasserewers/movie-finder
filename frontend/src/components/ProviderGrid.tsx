@@ -129,7 +129,11 @@ function LanguageDropdown({
   useLayoutEffect(() => {
     if (!open) return;
     const raf = requestAnimationFrame(positionPanel);
-    return () => cancelAnimationFrame(raf);
+    const t1 = window.setTimeout(positionPanel, 80);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t1);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -145,15 +149,16 @@ function LanguageDropdown({
     const closeOnEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    const onReposition = () => {
-      requestAnimationFrame(positionPanel);
-    };
+    const onReposition = () => requestAnimationFrame(positionPanel);
+    const resizeObserver = panelRef.current ? new ResizeObserver(onReposition) : null;
+    if (resizeObserver && panelRef.current) resizeObserver.observe(panelRef.current);
     document.addEventListener("mousedown", closeIfOutside);
     document.addEventListener("touchstart", closeIfOutside);
     document.addEventListener("keydown", closeOnEscape);
     window.addEventListener("resize", onReposition);
     window.addEventListener("scroll", onReposition, true);
     return () => {
+      resizeObserver?.disconnect();
       document.removeEventListener("mousedown", closeIfOutside);
       document.removeEventListener("touchstart", closeIfOutside);
       document.removeEventListener("keydown", closeOnEscape);
@@ -185,7 +190,7 @@ function LanguageDropdown({
       {open && createPortal(
         <div
           ref={panelRef}
-          className={`fixed z-[999] rounded-md border border-border bg-panel p-2 shadow-lg ${
+          className={`fixed z-[9999] rounded-md border border-border bg-panel p-2 shadow-lg ${
             compact ? "min-w-[170px]" : "min-w-[180px]"
           }`}
           style={{

@@ -6,6 +6,7 @@ import HeroSection from "./components/HeroSection";
 import MovieRow from "./components/MovieRow";
 import MovieOverlay from "./components/MovieOverlay";
 import SectionOverlay from "./components/SectionOverlay";
+import SearchOverlay from "./components/SearchOverlay";
 import AuthModal from "./components/AuthModal";
 import SettingsModal from "./components/SettingsModal";
 import ProfileModal from "./components/ProfileModal";
@@ -56,6 +57,9 @@ function AppContent() {
   const [selectedMovie, setSelectedMovie] = useState<number | null>(null);
   const [selectedMovieType, setSelectedMovieType] = useState<"movie" | "tv">("movie");
   const [selectedSection, setSelectedSection] = useState<HomeSection | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchFiltered, setSearchFiltered] = useState(false);
   const [mediaType, setMediaType] = useState<MediaType>("mix");
   const [rowResetToken, setRowResetToken] = useState(0);
   const [userContentMode, setUserContentMode] = useState<UserContentMode>("streamable");
@@ -427,6 +431,12 @@ function AppContent() {
     setSelectedMovieType(mt || "movie");
   }, []);
 
+  const handleSearchSubmit = useCallback((q: string, filtered: boolean) => {
+    setSearchQuery(q);
+    setSearchFiltered(filtered);
+    setSearchOpen(true);
+  }, []);
+
   const handleMediaTypeChange = (next: MediaType) => {
     setMediaType(next);
     if (next === "mix") setRowResetToken((v) => v + 1);
@@ -464,6 +474,7 @@ function AppContent() {
           onOpenCountries={() => setCountriesModalOpen(true)}
           mediaType={mediaType}
           vpnEnabled={usingVpn}
+          onSearchSubmit={handleSearchSubmit}
         />
       </div>
 
@@ -709,6 +720,7 @@ function AppContent() {
       <MovieOverlay
         movieId={selectedMovie}
         onClose={() => setSelectedMovie(null)}
+        onSelectMovie={handleSelectMovie}
         countryNameMap={countryNameMap}
         itemMediaType={selectedMovieType}
         guestCountry={!user ? guestCountry : undefined}
@@ -724,6 +736,22 @@ function AppContent() {
         unfiltered={unfilteredMode}
         vpn={usingVpn}
         includePaid={includePaidMode}
+      />
+
+      <SearchOverlay
+        open={searchOpen}
+        query={searchQuery}
+        filtered={searchFiltered}
+        mediaType={mediaType}
+        vpnEnabled={usingVpn}
+        isLoggedIn={!!user}
+        initialContentMode={
+          !user ? "all"
+            : searchFiltered ? "streamable"
+            : userContentMode
+        }
+        onClose={() => setSearchOpen(false)}
+        onSelectMovie={handleSelectMovie}
       />
 
       <SettingsModal

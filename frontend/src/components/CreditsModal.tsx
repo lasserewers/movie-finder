@@ -4,9 +4,21 @@ import type { Person, CrewMember } from "../api/movies";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
 
-function PersonCircle({ person, role }: { person: { name: string; profile_path?: string }; role?: string }) {
+function PersonCircle({
+  person,
+  role,
+  onClick,
+}: {
+  person: { id: number; name: string; profile_path?: string };
+  role?: string;
+  onClick?: (personId: number) => void;
+}) {
   return (
-    <div className="flex flex-col items-center w-[70px] text-center">
+    <button
+      type="button"
+      onClick={() => onClick?.(person.id)}
+      className="flex flex-col items-center w-[70px] text-center cursor-pointer"
+    >
       {person.profile_path ? (
         <img
           src={`${TMDB_IMG}/w185${person.profile_path}`}
@@ -18,7 +30,7 @@ function PersonCircle({ person, role }: { person: { name: string; profile_path?:
       )}
       <span className="text-[0.7rem] text-text mt-1 leading-tight">{person.name}</span>
       {role && <span className="text-[0.6rem] text-muted leading-tight">{role}</span>}
-    </div>
+    </button>
   );
 }
 
@@ -27,9 +39,10 @@ interface Props {
   onClose: () => void;
   cast: Person[];
   crew: CrewMember[];
+  onPersonClick?: (personId: number) => void;
 }
 
-export default function CreditsModal({ open, onClose, cast, crew }: Props) {
+export default function CreditsModal({ open, onClose, cast, crew, onPersonClick }: Props) {
   const [tab, setTab] = useState<"cast" | "filmmakers" | "crew">("cast");
 
   const directors = crew.filter((c) => c.job === "Director");
@@ -98,9 +111,9 @@ export default function CreditsModal({ open, onClose, cast, crew }: Props) {
 
             <div className="flex-1 overflow-y-auto p-6 pt-4">
             {tab === "cast" && (
-              <div className="flex flex-wrap gap-3">
+                <div className="flex flex-wrap gap-3">
                 {cast.map((p) => (
-                  <PersonCircle key={p.id} person={p} role={p.character} />
+                  <PersonCircle key={p.id} person={p} role={p.character} onClick={onPersonClick} />
                 ))}
               </div>
             )}
@@ -114,7 +127,7 @@ export default function CreditsModal({ open, onClose, cast, crew }: Props) {
                     </h4>
                     <div className="flex flex-wrap gap-3">
                       {directors.map((p) => (
-                        <PersonCircle key={p.id} person={p} />
+                        <PersonCircle key={p.id} person={p} onClick={onPersonClick} />
                       ))}
                     </div>
                   </div>
@@ -124,7 +137,7 @@ export default function CreditsModal({ open, onClose, cast, crew }: Props) {
                     <h4 className="text-xs text-muted uppercase tracking-wider mb-2">Writers</h4>
                     <div className="flex flex-wrap gap-3">
                       {dedup(writers).map((p) => (
-                        <PersonCircle key={`${p.id}-${p.job}`} person={p} role={p.job} />
+                        <PersonCircle key={`${p.id}-${p.job}`} person={p} role={p.job} onClick={onPersonClick} />
                       ))}
                     </div>
                   </div>
@@ -134,7 +147,7 @@ export default function CreditsModal({ open, onClose, cast, crew }: Props) {
                     <h4 className="text-xs text-muted uppercase tracking-wider mb-2">Producers</h4>
                     <div className="flex flex-wrap gap-3">
                       {dedup(producers).map((p) => (
-                        <PersonCircle key={`${p.id}-${p.job}`} person={p} role={p.job} />
+                        <PersonCircle key={`${p.id}-${p.job}`} person={p} role={p.job} onClick={onPersonClick} />
                       ))}
                     </div>
                   </div>
@@ -145,7 +158,7 @@ export default function CreditsModal({ open, onClose, cast, crew }: Props) {
             {tab === "crew" && (
               <div className="flex flex-wrap gap-3">
                 {dedup(otherCrew).map((p) => (
-                  <PersonCircle key={`${p.id}-${p.job}`} person={p} role={p.job} />
+                  <PersonCircle key={`${p.id}-${p.job}`} person={p} role={p.job} onClick={onPersonClick} />
                 ))}
               </div>
             )}

@@ -64,6 +64,14 @@ async def get_tv_details(tv_id: int) -> dict:
     return await _get(f"/tv/{tv_id}", {"append_to_response": "credits"})
 
 
+async def get_person_details(person_id: int) -> dict:
+    return await _get(f"/person/{person_id}")
+
+
+async def get_person_combined_credits(person_id: int) -> dict:
+    return await _get(f"/person/{person_id}/combined_credits")
+
+
 async def get_genres() -> list:
     data = await _get("/genre/movie/list")
     return data.get("genres", [])
