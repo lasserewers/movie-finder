@@ -4,11 +4,12 @@ import { useConfig } from "../hooks/useConfig";
 
 interface Props {
   onOpenProfile: () => void;
+  onOpenWatchlist: () => void;
   onOpenSettings: () => void;
   onOpenCountries: () => void;
 }
 
-export default function UserMenu({ onOpenProfile, onOpenSettings, onOpenCountries }: Props) {
+export default function UserMenu({ onOpenProfile, onOpenWatchlist, onOpenSettings, onOpenCountries }: Props) {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useConfig();
   const [open, setOpen] = useState(false);
@@ -51,6 +52,18 @@ export default function UserMenu({ onOpenProfile, onOpenSettings, onOpenCountrie
               <circle cx="12" cy="7" r="4" />
             </svg>
             Profile
+          </button>
+          <button
+            onClick={() => {
+              setOpen(false);
+              onOpenWatchlist();
+            }}
+            className="w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-muted hover:text-text flex items-center gap-2.5"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+            </svg>
+            Watchlist
           </button>
           <button
             onClick={() => {

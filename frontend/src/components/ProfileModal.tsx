@@ -3,14 +3,19 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "../hooks/useAuth";
 import { changeEmail, changePassword, deleteAccount } from "../api/auth";
 import { ApiError } from "../api/client";
+import { useWatchlist } from "../hooks/useWatchlist";
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  onSelectMovie?: (id: number, mediaType?: "movie" | "tv") => void;
 }
 
-export default function ProfileModal({ open, onClose }: Props) {
+const TMDB_IMG = "https://image.tmdb.org/t/p";
+
+export default function ProfileModal({ open, onClose, onSelectMovie }: Props) {
   const { user, logout } = useAuth();
+  const { items: watchlistItems, loading: watchlistLoading, remove } = useWatchlist();
 
   const [emailPassword, setEmailPassword] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -29,6 +34,8 @@ export default function ProfileModal({ open, onClose }: Props) {
   const [deletePw, setDeletePw] = useState("");
   const [deleteErr, setDeleteErr] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [watchlistErr, setWatchlistErr] = useState("");
+  const [watchlistBusyKey, setWatchlistBusyKey] = useState("");
 
   const resetFields = () => {
     setEmailPassword("");
@@ -43,6 +50,8 @@ export default function ProfileModal({ open, onClose }: Props) {
     setDeleteConfirm(false);
     setDeletePw("");
     setDeleteErr("");
+    setWatchlistErr("");
+    setWatchlistBusyKey("");
   };
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
@@ -101,6 +110,23 @@ export default function ProfileModal({ open, onClose }: Props) {
 
   const inputClass =
     "w-full px-3 py-2.5 text-sm border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors";
+  const handleOpenWatchlistItem = (tmdbId: number, mediaType: "movie" | "tv") => {
+    onSelectMovie?.(tmdbId, mediaType);
+    onClose();
+  };
+  const handleRemoveWatchlistItem = async (mediaType: "movie" | "tv", tmdbId: number) => {
+    const busyKey = `${mediaType}:${tmdbId}`;
+    if (watchlistBusyKey) return;
+    setWatchlistErr("");
+    setWatchlistBusyKey(busyKey);
+    try {
+      await remove(mediaType, tmdbId);
+    } catch (err) {
+      setWatchlistErr(err instanceof ApiError ? err.message : "Could not remove from watchlist.");
+    } finally {
+      setWatchlistBusyKey("");
+    }
+  };
 
   return (
     <AnimatePresence>
@@ -134,6 +160,60 @@ export default function ProfileModal({ open, onClose }: Props) {
             </div>
 
             <div className="flex-1 overflow-y-auto p-8 pt-4">
+            {/* Watchlist */}
+            <div className="mb-8">
+              <h4 className="text-sm font-semibold text-text mb-3">Watchlist</h4>
+              {watchlistLoading ? (
+                <div className="text-sm text-muted">Loading watchlist...</div>
+              ) : watchlistItems.length === 0 ? (
+                <div className="text-sm text-muted">Your watchlist is empty.</div>
+              ) : (
+                <div className="space-y-2 max-h-56 overflow-auto pr-1">
+                  {watchlistItems.map((item) => {
+                    const key = `${item.media_type}:${item.tmdb_id}`;
+                    const posterUrl = item.poster_path ? `${TMDB_IMG}/w185${item.poster_path}` : "";
+                    const year = item.release_date?.slice(0, 4) || "";
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center gap-2 rounded-lg border border-border bg-bg-2/65 p-2"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleOpenWatchlistItem(item.tmdb_id, item.media_type)}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left hover:opacity-90 transition-opacity"
+                        >
+                          {posterUrl ? (
+                            <img src={posterUrl} alt="" className="h-12 w-8 rounded object-cover border border-border/70 flex-shrink-0" />
+                          ) : (
+                            <div className="h-12 w-8 rounded bg-panel-2 border border-border/70 flex-shrink-0" />
+                          )}
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm text-text">{item.title}</span>
+                            <span className="block text-xs text-muted">
+                              {item.media_type === "tv" ? "TV Show" : "Movie"}{year ? ` • ${year}` : ""}
+                            </span>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveWatchlistItem(item.media_type, item.tmdb_id)}
+                          disabled={watchlistBusyKey === key}
+                          className="h-8 px-2 rounded-md border border-border text-xs text-muted hover:text-text hover:border-accent-2 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
+                          title="Remove from watchlist"
+                        >
+                          {watchlistBusyKey === key ? "..." : "Remove"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {watchlistErr && (
+                <div className="mt-2 text-sm text-red-400 bg-red-400/10 rounded-lg px-3 py-2">{watchlistErr}</div>
+              )}
+            </div>
+
             {/* Change Email */}
             <form onSubmit={handleEmailSubmit} className="flex flex-col gap-3 mb-8">
               <h4 className="text-sm font-semibold text-text">Change email</h4>

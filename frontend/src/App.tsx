@@ -1,11 +1,13 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { ConfigProvider, useConfig } from "./hooks/useConfig";
+import { WatchlistProvider, useWatchlist } from "./hooks/useWatchlist";
 import Topbar from "./components/Topbar";
 import HeroSection from "./components/HeroSection";
 import MovieRow from "./components/MovieRow";
 import MovieOverlay from "./components/MovieOverlay";
 import SectionOverlay from "./components/SectionOverlay";
+import WatchlistOverlay from "./components/WatchlistOverlay";
 import SearchOverlay from "./components/SearchOverlay";
 import AdvancedSearchModal from "./components/AdvancedSearchModal";
 import AuthModal from "./components/AuthModal";
@@ -46,6 +48,7 @@ function countryFlag(code: string) {
 function AppContent() {
   const { user, loading: authLoading } = useAuth();
   const { providerIds, countries, loadConfig, saveConfig } = useConfig();
+  const { items: watchlistItems, loading: watchlistLoading } = useWatchlist();
 
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInitialMode, setAuthInitialMode] = useState<"login" | "signup">("login");
@@ -60,6 +63,7 @@ function AppContent() {
   const [selectedMovie, setSelectedMovie] = useState<number | null>(null);
   const [selectedMovieType, setSelectedMovieType] = useState<"movie" | "tv">("movie");
   const [selectedSection, setSelectedSection] = useState<HomeSection | null>(null);
+  const [watchlistOverlayOpen, setWatchlistOverlayOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFiltered, setSearchFiltered] = useState(false);
@@ -521,14 +525,52 @@ function AppContent() {
     }
   }, [user, advancedSearchOpen]);
 
+  useEffect(() => {
+    if (!user && watchlistOverlayOpen) {
+      setWatchlistOverlayOpen(false);
+    }
+  }, [user, watchlistOverlayOpen]);
+
   const handleMediaTypeChange = (next: MediaType) => {
     setMediaType(next);
     if (next === "mix") setRowResetToken((v) => v + 1);
   };
 
   const sectionMap = useMemo(() => new Map(sections.map((s) => [s.id, s])), [sections]);
+  const watchlistSection = useMemo<HomeSection | null>(() => {
+    if (!user || !watchlistItems.length) return null;
+    return {
+      id: "__watchlist__",
+      title: "Your Watchlist",
+      results: watchlistItems.map((entry) => ({
+        id: entry.tmdb_id,
+        title: entry.title,
+        poster_path: entry.poster_path || undefined,
+        release_date: entry.release_date || undefined,
+        media_type: entry.media_type,
+      })),
+    };
+  }, [user, watchlistItems]);
+  const watchlistAnchorIndex = useMemo(() => {
+    const trendingIndex = sections.findIndex(
+      (section) => section.id === "trending_day" || section.title.trim().toLowerCase() === "trending today"
+    );
+    if (trendingIndex >= 0) return trendingIndex;
+    return sections.length > 0 ? 0 : -1;
+  }, [sections]);
+  const handleOpenWatchlist = useCallback(() => {
+    if (!user) {
+      openAuthModal("login");
+      return;
+    }
+    setWatchlistOverlayOpen(true);
+  }, [openAuthModal, user]);
   const handleSeeMore = useCallback(
     (id: string) => {
+      if (id === "__watchlist__") {
+        setWatchlistOverlayOpen(true);
+        return;
+      }
       setSelectedSection(sectionMap.get(id) || null);
     },
     [sectionMap]
@@ -541,6 +583,7 @@ function AppContent() {
   const hasBlockingOverlay =
     selectedMovie !== null ||
     selectedSection !== null ||
+    watchlistOverlayOpen ||
     searchOpen ||
     advancedSearchOpen ||
     settingsOpen ||
@@ -549,6 +592,29 @@ function AppContent() {
     countriesModalOpen ||
     authModalOpen ||
     vpnPromptOpen;
+
+  const watchlistHomeBlock = user ? (
+    watchlistLoading ? (
+      <SkeletonRow />
+    ) : watchlistSection ? (
+      <MovieRow
+        key={`${watchlistSection.id}:${rowResetToken}`}
+        section={watchlistSection}
+        onSelectMovie={handleSelectMovie}
+        onSeeMore={handleSeeMore}
+        resetToken={rowResetToken}
+        mediaType={mediaType}
+        forceSeeMore
+      />
+    ) : (
+      <div className="rounded-2xl border border-border bg-panel/65 p-4 sm:p-5">
+        <h3 className="text-lg sm:text-xl font-semibold text-text">Your Watchlist</h3>
+        <p className="text-sm text-muted mt-1">
+          Your watchlist is empty. Tap the bookmark icon on any title to add it here.
+        </p>
+      </div>
+    )
+  ) : null;
 
   useEffect(() => {
     if (hasBlockingOverlay) {
@@ -579,6 +645,7 @@ function AppContent() {
           onSelectMovie={handleSelectMovie}
           onLoginClick={() => openAuthModal("login")}
           onOpenProfile={() => setProfileOpen(true)}
+          onOpenWatchlist={handleOpenWatchlist}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenCountries={() => setCountriesModalOpen(true)}
           vpnEnabled={usingVpn}
@@ -800,16 +867,20 @@ function AppContent() {
           </div>
 
           <section className="flex flex-col gap-6 sm:gap-10">
-          {sections.map((section) => (
-            <MovieRow
-              key={`${section.id}:${rowResetToken}`}
-              section={section}
-              onSelectMovie={handleSelectMovie}
-              onSeeMore={handleSeeMore}
-              resetToken={rowResetToken}
-              mediaType={mediaType}
-            />
+          {sections.map((section, index) => (
+            <Fragment key={`${section.id}:${rowResetToken}`}>
+              <MovieRow
+                section={section}
+                onSelectMovie={handleSelectMovie}
+                onSeeMore={handleSeeMore}
+                resetToken={rowResetToken}
+                mediaType={mediaType}
+              />
+              {watchlistHomeBlock && index === watchlistAnchorIndex && watchlistHomeBlock}
+            </Fragment>
           ))}
+
+          {watchlistHomeBlock && sections.length === 0 && !homeLoading && watchlistHomeBlock}
 
           {homeLoading && sections.length === 0 && (
             <>
@@ -871,6 +942,13 @@ function AppContent() {
         includePaid={includePaidMode}
       />
 
+      <WatchlistOverlay
+        open={watchlistOverlayOpen}
+        onClose={() => setWatchlistOverlayOpen(false)}
+        items={watchlistItems}
+        onSelectMovie={handleSelectMovie}
+      />
+
       <SearchOverlay
         open={searchOpen}
         query={searchQuery}
@@ -901,6 +979,7 @@ function AppContent() {
       <ProfileModal
         open={profileOpen}
         onClose={() => setProfileOpen(false)}
+        onSelectMovie={handleSelectMovie}
       />
 
       {/* Onboarding (post-signup) */}
@@ -945,9 +1024,11 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <ConfigProvider>
-        <AppContent />
-      </ConfigProvider>
+      <WatchlistProvider>
+        <ConfigProvider>
+          <AppContent />
+        </ConfigProvider>
+      </WatchlistProvider>
     </AuthProvider>
   );
 }

@@ -2,6 +2,9 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getMovieProviders, getMovieLinks, getTvProviders, getTvLinks, type Movie, type CountryProviders, type StreamingLink, type Person, type CrewMember } from "../api/movies";
 import { useConfig } from "../hooks/useConfig";
+import { useAuth } from "../hooks/useAuth";
+import { useWatchlist } from "../hooks/useWatchlist";
+import { ApiError } from "../api/client";
 import ProviderGrid from "./ProviderGrid";
 import CreditsModal from "./CreditsModal";
 import PersonWorksModal from "./PersonWorksModal";
@@ -52,6 +55,8 @@ export default function MovieOverlay({
   itemMediaType,
   guestCountry,
 }: Props) {
+  const { user } = useAuth();
+  const { isInWatchlist, toggle } = useWatchlist();
   const { countries } = useConfig();
   const [movie, setMovie] = useState<Movie | null>(null);
   const [providers, setProviders] = useState<Record<string, CountryProviders>>({});
@@ -59,6 +64,8 @@ export default function MovieOverlay({
   const [loading, setLoading] = useState(false);
   const [creditsOpen, setCreditsOpen] = useState(false);
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
+  const [watchlistBusy, setWatchlistBusy] = useState(false);
+  const [watchlistErr, setWatchlistErr] = useState("");
 
   useEffect(() => {
     if (!movieId) return;
@@ -91,8 +98,36 @@ export default function MovieOverlay({
   const topCast = cast.slice(0, 6);
   const hasCredits = cast.length > 0 || crew.length > 0;
   const hideCreditsButtonOnDesktop = cast.length <= 6 && crew.length === 0;
+  const mediaTypeSafe: "movie" | "tv" = itemMediaType || (movie?.number_of_seasons != null ? "tv" : "movie");
+  const watchlisted = !!(movie && user && isInWatchlist(mediaTypeSafe, movie.id));
 
   const posterUrl = movie?.poster_path ? `${TMDB_IMG}/w300${movie.poster_path}` : "";
+  const handleToggleWatchlist = async () => {
+    if (!movie || !user || watchlistBusy) return;
+    setWatchlistBusy(true);
+    setWatchlistErr("");
+    try {
+      await toggle({
+        tmdb_id: movie.id,
+        media_type: mediaTypeSafe,
+        title: movie.title,
+        poster_path: movie.poster_path,
+        release_date: movie.release_date,
+      });
+    } catch (err) {
+      const e = err as ApiError;
+      console.error("Watchlist toggle failed", e.message || err);
+      setWatchlistErr(
+        err instanceof ApiError
+          ? e.status === 401
+            ? "Please log in again."
+            : e.message || "Could not update watchlist."
+          : "Could not update watchlist."
+      );
+    } finally {
+      setWatchlistBusy(false);
+    }
+  };
 
   return (
     <>
@@ -140,6 +175,39 @@ export default function MovieOverlay({
                           <span className="ml-2">&middot; {movie.number_of_seasons} season{movie.number_of_seasons !== 1 ? "s" : ""}</span>
                         )}
                       </p>
+                      {user && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleToggleWatchlist}
+                            disabled={watchlistBusy}
+                            className={`mb-2 h-[34px] px-3 border rounded-full text-xs sm:text-sm transition-colors inline-flex items-center gap-1.5 ${
+                              watchlisted
+                                ? "border-accent/70 bg-accent/15 text-text"
+                                : "border-border bg-panel-2 text-muted hover:text-text hover:border-accent-2"
+                            } disabled:opacity-55 disabled:cursor-not-allowed`}
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill={watchlisted ? "currentColor" : "none"}
+                              stroke="currentColor"
+                              strokeWidth="2.1"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                            </svg>
+                            <span>{watchlistBusy ? "Updating..." : watchlisted ? "Remove from watchlist" : "Add to watchlist"}</span>
+                          </button>
+                          {watchlistErr && (
+                            <div className="mb-2 text-xs text-red-300 bg-red-400/10 rounded-md px-2 py-1 inline-block">
+                              {watchlistErr}
+                            </div>
+                          )}
+                        </>
+                      )}
                       <p className="text-xs sm:text-sm text-muted leading-relaxed">{movie.overview}</p>
 
                       {(directors.length > 0 || topCast.length > 0) && (

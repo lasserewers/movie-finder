@@ -9,10 +9,18 @@ interface Props {
   onSeeMore: (sectionId: string) => void;
   resetToken?: number;
   mediaType?: "movie" | "tv" | "mix";
+  forceSeeMore?: boolean;
 }
 
-function MovieRow({ section, onSelectMovie, onSeeMore, resetToken = 0, mediaType = "mix" }: Props) {
-  const hasMore = !!(section.next_cursor || section.next_page || (section.total_pages && section.total_pages > 1));
+function MovieRow({
+  section,
+  onSelectMovie,
+  onSeeMore,
+  resetToken = 0,
+  mediaType = "mix",
+  forceSeeMore = false,
+}: Props) {
+  const hasMore = forceSeeMore || !!(section.next_cursor || section.next_page || (section.total_pages && section.total_pages > 1));
   const rowRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
