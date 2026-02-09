@@ -398,7 +398,11 @@ def _build_advanced_discover_params(
         params[field] = f"{year_from}-01-01"
     if year_to:
         field = "first_air_date.lte" if media_type == "tv" else "primary_release_date.lte"
-        params[field] = f"{year_to}-12-31"
+        current_year = date.today().year
+        if year_to >= current_year:
+            params[field] = date.today().isoformat()
+        else:
+            params[field] = f"{year_to}-12-31"
 
     if genre_ids:
         params["with_genres"] = ",".join(str(gid) for gid in genre_ids)
@@ -692,8 +696,8 @@ async def search_advanced(
     q: str | None = None,
     country: str | None = None,
     language: str | None = None,
-    year_from: int | None = Query(None, ge=1878, le=2100),
-    year_to: int | None = Query(None, ge=1878, le=2100),
+    year_from: int | None = Query(None, ge=1874, le=2100),
+    year_to: int | None = Query(None, ge=1874, le=2100),
     genre_ids: str | None = None,
     exclude_genre_ids: str | None = None,
     actor_ids: str | None = None,

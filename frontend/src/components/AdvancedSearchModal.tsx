@@ -82,7 +82,7 @@ const CONTENT_MODE_LABEL: Record<ContentMode, string> = {
   available: "Available",
   streamable: "Streamable",
 };
-const YEAR_MIN = 1878;
+const YEAR_MIN = 1874;
 const YEAR_MAX = new Date().getFullYear();
 const TMDB_IMG = "https://image.tmdb.org/t/p";
 const TIMELINE_THUMB_PX = 16;
@@ -395,15 +395,14 @@ export default function AdvancedSearchModal({
       }
 
       try {
-        const exactYearRaw = toOptionalInt(filters.releaseYear);
+        const spanStart = Math.min(filters.yearSpanStart, filters.yearSpanEnd);
+        const spanEnd = Math.max(filters.yearSpanStart, filters.yearSpanEnd);
+        const exactYearRaw = filters.useYearSpan ? undefined : toOptionalInt(filters.releaseYear);
         const exactYear = typeof exactYearRaw === "number"
           ? Math.max(YEAR_MIN, Math.min(YEAR_MAX, exactYearRaw))
           : undefined;
-        const spanStart = Math.min(filters.yearSpanStart, filters.yearSpanEnd);
-        const spanEnd = Math.max(filters.yearSpanStart, filters.yearSpanEnd);
-        const hasCustomSpan = filters.useYearSpan && (spanStart !== YEAR_MIN || spanEnd !== YEAR_MAX);
-        const yearFrom = exactYear ?? (hasCustomSpan ? spanStart : undefined);
-        const yearTo = exactYear ?? (hasCustomSpan ? spanEnd : undefined);
+        const yearFrom = exactYear ?? (filters.useYearSpan ? spanStart : undefined);
+        const yearTo = exactYear ?? (filters.useYearSpan ? spanEnd : undefined);
         const response: AdvancedSearchResponse = await searchAdvanced({
           page,
           limit: 24,
@@ -688,7 +687,7 @@ export default function AdvancedSearchModal({
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs uppercase tracking-wide text-muted">Release Year Span Timeline</span>
-                          <span className="text-[11px] text-muted">1878 to {YEAR_MAX}</span>
+                          <span className="text-[11px] text-muted">1874 to {YEAR_MAX}</span>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <label className="space-y-1">
