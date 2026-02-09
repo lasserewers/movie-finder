@@ -322,15 +322,25 @@ async def _process_user_subscriptions(
     primary_countries = _primary_countries_from_prefs(prefs)
     service_ids = set(prefs.provider_ids or []) if prefs and prefs.provider_ids else set()
     providers_cache: dict[tuple[str, int], dict] = {}
+    poster_cache: dict[tuple[str, int], str | None] = {}
     now = datetime.now(timezone.utc)
     pending_emails: list[tuple[str, str, str, int, str | None]] = []
     touched = False
 
     for subscription in active_subscriptions:
-        media_key = (subscription.media_type, int(subscription.tmdb_id))
+        try:
+            tmdb_id = int(subscription.tmdb_id)
+        except (TypeError, ValueError):
+            tmdb_id = 0
+        if tmdb_id <= 0:
+            subscription.last_checked_at = now
+            touched = True
+            continue
+
+        media_key = (subscription.media_type, tmdb_id)
         if media_key not in providers_cache:
             try:
-                providers_cache[media_key] = await _get_media_providers(subscription.media_type, int(subscription.tmdb_id))
+                providers_cache[media_key] = await _get_media_providers(subscription.media_type, tmdb_id)
             except Exception:
                 providers_cache[media_key] = {}
         providers = providers_cache[media_key]
@@ -349,15 +359,30 @@ async def _process_user_subscriptions(
         touched = True
 
         message = _notification_message(subscription.title, subscription.condition_type, summary)
+        poster_path = (subscription.poster_path or "").strip() or None
+        if not poster_path:
+            if media_key not in poster_cache:
+                try:
+                    if subscription.media_type == "tv":
+                        details = await tmdb.get_tv_score_details(tmdb_id)
+                    else:
+                        details = await tmdb.get_movie_score_details(tmdb_id)
+                    poster_cache[media_key] = (details.get("poster_path") or "").strip() or None
+                except Exception:
+                    poster_cache[media_key] = None
+            poster_path = poster_cache[media_key]
+            if poster_path and subscription.poster_path != poster_path:
+                subscription.poster_path = poster_path
+
         if subscription.deliver_in_app:
             db.add(
                 UserNotification(
                     user_id=user.id,
                     subscription_id=subscription.id,
                     media_type=subscription.media_type,
-                    tmdb_id=subscription.tmdb_id,
+                    tmdb_id=tmdb_id,
                     title=subscription.title,
-                    poster_path=subscription.poster_path,
+                    poster_path=poster_path,
                     condition_type=subscription.condition_type,
                     message=message,
                     is_read=False,
@@ -379,8 +404,8 @@ async def _process_user_subscriptions(
                     subscription.title,
                     message,
                     subscription.media_type,
-                    int(subscription.tmdb_id),
-                    subscription.poster_path,
+                    tmdb_id,
+                    poster_path,
                 )
             )
 

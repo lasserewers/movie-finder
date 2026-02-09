@@ -9,10 +9,8 @@ interface Props {
   onClose: () => void;
   notifications: UserNotification[];
   loading: boolean;
-  unreadCount: number;
   activeAlerts: number;
   onMarkRead: (notificationId: string) => Promise<void>;
-  onMarkAllRead: () => Promise<void>;
   onRemoveNotification: (notificationId: string) => Promise<void>;
   onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
   onOpenAlerts: () => void;
@@ -43,10 +41,8 @@ export default function NotificationsOverlay({
   onClose,
   notifications,
   loading,
-  unreadCount,
   activeAlerts,
   onMarkRead,
-  onMarkAllRead,
   onRemoveNotification,
   onSelectMovie,
   onOpenAlerts,
@@ -98,16 +94,6 @@ export default function NotificationsOverlay({
                 >
                   Notification settings
                 </button>
-                <div className="flex-1" />
-                {unreadCount > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => void onMarkAllRead()}
-                    className="h-9 px-3 rounded-full border border-accent/65 bg-accent/10 text-sm text-text hover:border-accent-2 transition-colors"
-                  >
-                    Mark all read
-                  </button>
-                )}
               </div>
             </div>
 

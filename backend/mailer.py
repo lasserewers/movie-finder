@@ -44,7 +44,7 @@ def build_title_link(media_type: str, tmdb_id: int) -> str:
     safe_id = int(tmdb_id) if int(tmdb_id) > 0 else 0
     if safe_id <= 0:
         return FRONTEND_BASE_URL
-    return f"{FRONTEND_BASE_URL}/?media_type={safe_type}&tmdb_id={safe_id}"
+    return f"{FRONTEND_BASE_URL}/title/{safe_type}/{safe_id}"
 
 
 def _render_email_html(
@@ -59,11 +59,13 @@ def _render_email_html(
     logo_url = f"{FRONTEND_BASE_URL}/logo-text-white.png"
     cta_html = ""
     if cta_label and cta_url:
+        safe_cta_url = html.escape(cta_url, quote=True)
+        safe_cta_label = html.escape(cta_label)
         cta_html = (
             f"<div style=\"margin-top:26px;text-align:center;\">"
-            f"<a href=\"{cta_url}\" style=\"display:inline-block;background:#e50914;color:#ffffff;"
+            f"<a href=\"{safe_cta_url}\" style=\"display:inline-block;background:#e50914;color:#ffffff;"
             f"text-decoration:none;font-weight:700;border-radius:999px;padding:12px 22px;"
-            f"font-family:Inter,Segoe UI,Arial,sans-serif;\">{cta_label}</a></div>"
+            f"font-family:Inter,Segoe UI,Arial,sans-serif;\">{safe_cta_label}</a></div>"
         )
     return f"""
 <!doctype html>

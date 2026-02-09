@@ -55,7 +55,6 @@ function AppContent() {
   const { items: watchlistItems, loading: watchlistLoading } = useWatchlist();
   const {
     notifications,
-    unreadCount,
     activeAlerts,
     clearUnreadIndicator,
     loading: notificationsLoading,
@@ -466,14 +465,26 @@ function AppContent() {
     if (handledTitleDeepLinkRef.current) return;
     let targetId: number | null = null;
     let targetType: "movie" | "tv" = "movie";
+    let fromPath = false;
     try {
       const params = new URLSearchParams(window.location.search);
       const idRaw = params.get("tmdb_id");
-      const parsedId = Number(idRaw);
-      if (!idRaw || !Number.isInteger(parsedId) || parsedId <= 0) return;
-      const mediaTypeRaw = (params.get("media_type") || "").toLowerCase();
-      if (mediaTypeRaw === "tv") targetType = "tv";
-      targetId = parsedId;
+      const parsedId = Number(idRaw || "");
+      if (idRaw && Number.isInteger(parsedId) && parsedId > 0) {
+        const mediaTypeRaw = (params.get("media_type") || "").toLowerCase();
+        if (mediaTypeRaw === "tv") targetType = "tv";
+        targetId = parsedId;
+      } else {
+        const pathMatch = window.location.pathname.match(/^\/title\/(movie|tv)\/(\d+)\/?$/i);
+        if (!pathMatch) return;
+        targetType = pathMatch[1].toLowerCase() === "tv" ? "tv" : "movie";
+        targetId = Number(pathMatch[2]);
+        if (!Number.isInteger(targetId) || targetId <= 0) {
+          targetId = null;
+          return;
+        }
+        fromPath = true;
+      }
     } catch {
       return;
     }
@@ -485,6 +496,9 @@ function AppContent() {
       const url = new URL(window.location.href);
       url.searchParams.delete("tmdb_id");
       url.searchParams.delete("media_type");
+      if (fromPath) {
+        url.pathname = "/";
+      }
       const nextSearch = url.searchParams.toString();
       window.history.replaceState(
         {},
@@ -635,6 +649,10 @@ function AppContent() {
     void refreshNotifications(true);
     setNotificationsOverlayOpen(true);
   }, [clearUnreadIndicator, openAuthModal, refreshNotifications, user]);
+  const handleCloseNotifications = useCallback(() => {
+    setNotificationsOverlayOpen(false);
+    void markAllRead();
+  }, [markAllRead]);
   const handleSeeMore = useCallback(
     (id: string) => {
       if (id === "__watchlist__") {
@@ -1025,21 +1043,19 @@ function AppContent() {
 
       <NotificationsOverlay
         open={notificationsOverlayOpen}
-        onClose={() => setNotificationsOverlayOpen(false)}
+        onClose={handleCloseNotifications}
         notifications={notifications}
         loading={notificationsLoading}
-        unreadCount={unreadCount}
         activeAlerts={activeAlerts}
         onMarkRead={markRead}
-        onMarkAllRead={markAllRead}
         onRemoveNotification={removeNotification}
         onSelectMovie={handleSelectMovie}
         onOpenAlerts={() => {
-          setNotificationsOverlayOpen(false);
+          handleCloseNotifications();
           setNotificationAlertsOverlayOpen(true);
         }}
         onOpenSettings={() => {
-          setNotificationsOverlayOpen(false);
+          handleCloseNotifications();
           setNotificationSettingsOverlayOpen(true);
         }}
       />

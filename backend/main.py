@@ -2506,4 +2506,13 @@ async def confirm_signup_email_frontend(subpath: str = ""):
     return JSONResponse(status_code=404, content={"detail": "Frontend build not found"})
 
 
+@app.get("/title", include_in_schema=False)
+@app.get("/title/{subpath:path}", include_in_schema=False)
+async def title_frontend(subpath: str = ""):
+    index_file = FRONTEND_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return JSONResponse(status_code=404, content={"detail": "Frontend build not found"})
+
+
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
