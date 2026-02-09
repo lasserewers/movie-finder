@@ -167,7 +167,16 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   const markRead = useCallback(
     async (notificationId: string) => {
       const target = notifications.find((row) => row.id === notificationId);
-      if (!target || target.is_read) return;
+      if (!target) {
+        try {
+          await markNotificationRead(notificationId);
+          await refresh(false);
+        } catch {
+          // Ignore direct mark failures (e.g. invalid link/user mismatch).
+        }
+        return;
+      }
+      if (target.is_read) return;
       let nextRows: UserNotification[] = [];
       setNotifications((prev) => {
         nextRows = prev.map((row) =>

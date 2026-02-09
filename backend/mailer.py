@@ -3,6 +3,7 @@ import html
 import logging
 import os
 import smtplib
+from urllib.parse import urlencode
 from email.message import EmailMessage
 
 logger = logging.getLogger(__name__)
@@ -38,13 +39,17 @@ def build_signup_verification_link(token: str) -> str:
     return f"{FRONTEND_BASE_URL}/confirm-signup-email?token={token}"
 
 
-def build_title_link(media_type: str, tmdb_id: int) -> str:
+def build_title_link(media_type: str, tmdb_id: int, notification_id: str | None = None) -> str:
     normalized_type = (media_type or "").strip().lower()
     safe_type = "tv" if normalized_type == "tv" else "movie"
     safe_id = int(tmdb_id) if int(tmdb_id) > 0 else 0
     if safe_id <= 0:
         return FRONTEND_BASE_URL
-    return f"{FRONTEND_BASE_URL}/title/{safe_type}/{safe_id}"
+    base = f"{FRONTEND_BASE_URL}/title/{safe_type}/{safe_id}"
+    safe_notification_id = (notification_id or "").strip()
+    if not safe_notification_id:
+        return base
+    return f"{base}?{urlencode({'notification_id': safe_notification_id})}"
 
 
 def _render_email_html(
@@ -360,12 +365,13 @@ async def send_availability_notification_email(
     media_type: str | None = None,
     tmdb_id: int | None = None,
     poster_path: str | None = None,
+    notification_id: str | None = None,
 ) -> bool:
     safe_title = (title or "Title").strip() or "Title"
     safe_message = (message or f"{safe_title} has a new availability update.").strip()
     escaped_message = html.escape(safe_message)
     title_url = (
-        build_title_link(media_type or "movie", int(tmdb_id or 0))
+        build_title_link(media_type or "movie", int(tmdb_id or 0), notification_id=notification_id)
         if tmdb_id
         else FRONTEND_BASE_URL
     )

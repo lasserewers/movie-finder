@@ -127,6 +127,7 @@ function AppContent() {
   const previousUserKeyRef = useRef<string | null>(null);
   const hasStoredContentModePrefRef = useRef(false);
   const handledTitleDeepLinkRef = useRef(false);
+  const pendingNotificationReadRef = useRef<string | null>(null);
 
   const [regions, setRegions] = useState<Region[]>([]);
   const [countryNameMap, setCountryNameMap] = useState<Record<string, string>>({});
@@ -465,9 +466,14 @@ function AppContent() {
     if (handledTitleDeepLinkRef.current) return;
     let targetId: number | null = null;
     let targetType: "movie" | "tv" = "movie";
+    let notificationId: string | null = null;
     let fromPath = false;
     try {
       const params = new URLSearchParams(window.location.search);
+      const rawNotificationId = (params.get("notification_id") || "").trim();
+      if (rawNotificationId) {
+        notificationId = rawNotificationId;
+      }
       const idRaw = params.get("tmdb_id");
       const parsedId = Number(idRaw || "");
       if (idRaw && Number.isInteger(parsedId) && parsedId > 0) {
@@ -490,12 +496,20 @@ function AppContent() {
     }
     if (!targetId) return;
     handledTitleDeepLinkRef.current = true;
+    if (notificationId) {
+      pendingNotificationReadRef.current = notificationId;
+    }
     setSelectedMovie(targetId);
     setSelectedMovieType(targetType);
+    if (notificationId && user) {
+      void markRead(notificationId);
+      pendingNotificationReadRef.current = null;
+    }
     try {
       const url = new URL(window.location.href);
       url.searchParams.delete("tmdb_id");
       url.searchParams.delete("media_type");
+      url.searchParams.delete("notification_id");
       if (fromPath) {
         url.pathname = "/";
       }
@@ -508,7 +522,15 @@ function AppContent() {
     } catch {
       // Ignore URL rewrite failures.
     }
-  }, [authLoading]);
+  }, [authLoading, markRead, user]);
+
+  useEffect(() => {
+    if (authLoading || !user) return;
+    const pendingNotificationId = pendingNotificationReadRef.current;
+    if (!pendingNotificationId) return;
+    pendingNotificationReadRef.current = null;
+    void markRead(pendingNotificationId);
+  }, [authLoading, markRead, user]);
 
   useEffect(() => {
     if (authLoading || !user || onboardingOpen) return;

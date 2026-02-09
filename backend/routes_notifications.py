@@ -324,7 +324,7 @@ async def _process_user_subscriptions(
     providers_cache: dict[tuple[str, int], dict] = {}
     poster_cache: dict[tuple[str, int], str | None] = {}
     now = datetime.now(timezone.utc)
-    pending_emails: list[tuple[str, str, str, int, str | None]] = []
+    pending_emails: list[tuple[str, str, str, int, str | None, str | None]] = []
     touched = False
 
     for subscription in active_subscriptions:
@@ -360,6 +360,7 @@ async def _process_user_subscriptions(
 
         message = _notification_message(subscription.title, subscription.condition_type, summary)
         poster_path = (subscription.poster_path or "").strip() or None
+        notification_id_for_email: str | None = None
         if not poster_path:
             if media_key not in poster_cache:
                 try:
@@ -375,8 +376,11 @@ async def _process_user_subscriptions(
                 subscription.poster_path = poster_path
 
         if subscription.deliver_in_app:
+            notification_uuid = uuid.uuid4()
+            notification_id_for_email = str(notification_uuid)
             db.add(
                 UserNotification(
+                    id=notification_uuid,
                     user_id=user.id,
                     subscription_id=subscription.id,
                     media_type=subscription.media_type,
@@ -406,13 +410,14 @@ async def _process_user_subscriptions(
                     subscription.media_type,
                     tmdb_id,
                     poster_path,
+                    notification_id_for_email,
                 )
             )
 
     if touched:
         await db.commit()
 
-    for title, message, media_type, tmdb_id, poster_path in pending_emails:
+    for title, message, media_type, tmdb_id, poster_path, notification_id in pending_emails:
         asyncio.create_task(
             mailer.send_availability_notification_email(
                 user.email,
@@ -421,6 +426,7 @@ async def _process_user_subscriptions(
                 media_type=media_type,
                 tmdb_id=tmdb_id,
                 poster_path=poster_path,
+                notification_id=notification_id,
             )
         )
 
