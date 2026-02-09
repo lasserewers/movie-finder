@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getMovieProviders, getMovieLinks, getTvProviders, getTvLinks, type Movie, type CountryProviders, type StreamingLink, type Person, type CrewMember } from "../api/movies";
+import { getMovieProviders, getMovieLinks, getTvProviders, getTvLinks, type Movie, type CountryProviders, type StreamingLink, type Person, type CrewMember, type ExternalScores } from "../api/movies";
 import { useConfig } from "../hooks/useConfig";
 import { useAuth } from "../hooks/useAuth";
 import { useWatchlist } from "../hooks/useWatchlist";
@@ -11,6 +11,238 @@ import PersonWorksModal from "./PersonWorksModal";
 import Spinner from "./Spinner";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
+
+function parseScoreValue(display?: string | null): number | null {
+  if (!display) return null;
+  const match = display.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const value = Number(match[0]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function compactFractionScore(display?: string | null): string {
+  if (!display) return "tbd";
+  const parsed = parseScoreValue(display);
+  if (parsed == null) return "tbd";
+  const value = display.split("/")[0]?.trim();
+  return value || "tbd";
+}
+
+function ScoreSurface({
+  url,
+  title,
+  className,
+  children,
+}: {
+  url?: string | null;
+  title: string;
+  className: string;
+  children: React.ReactNode;
+}) {
+  if (url) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={title}
+        className={`${className} hover:opacity-85 transition-opacity`}
+      >
+        {children}
+      </a>
+    );
+  }
+  return (
+    <div title={title} className={className}>
+      {children}
+    </div>
+  );
+}
+
+function LetterboxdLogo() {
+  return (
+    <img
+      src="/ratings/letterboxd-logo.svg"
+      alt="Letterboxd"
+      className="h-[12px] w-auto flex-shrink-0"
+      loading="lazy"
+    />
+  );
+}
+
+function IMDbLogo() {
+  return (
+    <img
+      src="/ratings/imdb-logo.svg"
+      alt="IMDb"
+      className="h-[13px] w-auto flex-shrink-0"
+      loading="lazy"
+    />
+  );
+}
+
+type RottenIconState = "fresh" | "rotten" | "na";
+
+function TomatoIcon({ state }: { state: RottenIconState }) {
+  const isFresh = state === "fresh";
+  const isUnknown = state === "na";
+  const src = state === "rotten" ? "/ratings/rt-critics-rotten.svg" : "/ratings/rt-critics-fresh.svg";
+  return (
+    <img
+      src={src}
+      alt={isUnknown ? "No Tomatometer" : isFresh ? "Fresh" : "Rotten"}
+      className={`w-3.5 h-3.5 flex-shrink-0 ${isUnknown ? "grayscale opacity-60" : ""}`}
+      loading="lazy"
+    />
+  );
+}
+
+function PopcornIcon({ state }: { state: RottenIconState }) {
+  const isFresh = state === "fresh";
+  const isUnknown = state === "na";
+  const src = state === "rotten" ? "/ratings/rt-audience-rotten.svg" : "/ratings/rt-audience-fresh.svg";
+  return (
+    <img
+      src={src}
+      alt={isUnknown ? "No Popcornmeter" : isFresh ? "Upright" : "Spilled"}
+      className={`w-3.5 h-3.5 flex-shrink-0 ${isUnknown ? "grayscale opacity-60" : ""}`}
+      loading="lazy"
+    />
+  );
+}
+
+function MetacriticWordmark() {
+  return (
+    <img
+      src="/ratings/metacritic-logo.svg"
+      alt="Metacritic"
+      className="w-4 h-4 rounded-full flex-shrink-0"
+      loading="lazy"
+    />
+  );
+}
+
+function metacriticCriticTone(score: number | null): { bg: string; text: string } {
+  if (score == null) return { bg: "#FFFFFF", text: "#111111" };
+  // Metacritic critic bands: 61-100 positive, 40-60 mixed, 0-39 negative.
+  if (score >= 61) return { bg: "#66CC33", text: "#10210A" };
+  if (score >= 40) return { bg: "#FFCC33", text: "#241B05" };
+  return { bg: "#FF4E50", text: "#2A0B0C" };
+}
+
+function metacriticAudienceTone(score: number | null): { bg: string; text: string } {
+  if (score == null) return { bg: "#FFFFFF", text: "#111111" };
+  // User score bands aligned to Metacritic style (10-point scale): 6.1-10 positive, 4.0-6.0 mixed.
+  if (score >= 6.1) return { bg: "#66CC33", text: "#10210A" };
+  if (score >= 4.0) return { bg: "#FFCC33", text: "#241B05" };
+  return { bg: "#FF4E50", text: "#2A0B0C" };
+}
+
+function ExternalScoresBlock({ scores }: { scores?: ExternalScores }) {
+  const lbd = scores?.letterboxd;
+  const imdb = scores?.imdb;
+  const rtCritics = scores?.rotten_tomatoes_critics;
+  const rtAudience = scores?.rotten_tomatoes_audience;
+  const mcCritics = scores?.metacritic;
+  const mcAudience = scores?.metacritic_audience;
+
+  const lbdValue = parseScoreValue(lbd?.display);
+  const imdbValue = parseScoreValue(imdb?.display);
+  const rtCriticsValue = parseScoreValue(rtCritics?.display);
+  const rtAudienceValue = parseScoreValue(rtAudience?.display);
+  const rtCriticsState: RottenIconState =
+    rtCriticsValue == null ? "na" : rtCriticsValue >= 60 ? "fresh" : "rotten";
+  const rtAudienceState: RottenIconState =
+    rtAudienceValue == null ? "na" : rtAudienceValue >= 60 ? "fresh" : "rotten";
+  const rtUrl = rtCritics?.url || rtAudience?.url || null;
+
+  const mcCriticsValue = parseScoreValue(mcCritics?.display);
+  const mcAudienceValue = parseScoreValue(mcAudience?.display);
+  const mcUrl = mcCritics?.url || mcAudience?.url || null;
+  const criticTone = metacriticCriticTone(mcCriticsValue);
+  const audienceTone = metacriticAudienceTone(mcAudienceValue);
+  const hasLetterboxd = lbdValue != null;
+  const hasImdb = imdbValue != null;
+  const hasRotten = rtCriticsValue != null || rtAudienceValue != null;
+  const hasMetacritic = mcCriticsValue != null || mcAudienceValue != null;
+
+  if (!hasLetterboxd && !hasImdb && !hasRotten && !hasMetacritic) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 sm:mt-4">
+      <div className="flex flex-wrap items-center gap-x-6 sm:gap-x-7 gap-y-2.5">
+      {hasLetterboxd && (
+        <ScoreSurface
+          url={lbd?.url}
+          title="Letterboxd"
+          className="inline-flex items-center gap-1 text-[0.76rem] sm:text-[0.86rem] text-text font-semibold leading-none"
+        >
+          <LetterboxdLogo />
+          <span className="whitespace-nowrap">{lbd?.display || "N/A"}</span>
+        </ScoreSurface>
+      )}
+
+      {hasImdb && (
+        <ScoreSurface
+          url={imdb?.url}
+          title="IMDb"
+          className="inline-flex items-center gap-1 text-[0.76rem] sm:text-[0.86rem] text-text font-semibold leading-none"
+        >
+          <IMDbLogo />
+          <span className="whitespace-nowrap">{imdb?.display || "N/A"}</span>
+        </ScoreSurface>
+      )}
+
+      {hasRotten && (
+        <ScoreSurface
+          url={rtUrl}
+          title="Rotten Tomatoes"
+          className="inline-flex items-center gap-2.5 text-[0.76rem] sm:text-[0.86rem] text-text font-semibold leading-none"
+        >
+          <span className="inline-flex items-center gap-1">
+            <TomatoIcon state={rtCriticsState} />
+            <span className="whitespace-nowrap">{rtCritics?.display || "--"}</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <PopcornIcon state={rtAudienceState} />
+            <span className="whitespace-nowrap">{rtAudience?.display || "--"}</span>
+          </span>
+        </ScoreSurface>
+      )}
+
+      {hasMetacritic && (
+        <ScoreSurface
+          url={mcUrl}
+          title="Metacritic"
+          className="inline-flex items-center gap-2.5 text-[0.76rem] sm:text-[0.86rem] text-text font-semibold leading-none"
+        >
+          <MetacriticWordmark />
+          <div className="flex items-center gap-1">
+            <div
+              className={`w-[26px] h-[26px] rounded-[5px] border flex items-center justify-center ${mcCriticsValue == null ? "border-black" : "border-black/20"}`}
+              style={{ backgroundColor: criticTone.bg, color: criticTone.text }}
+            >
+              <span className="text-[0.64rem] font-black leading-none">
+                {compactFractionScore(mcCritics?.display)}
+              </span>
+            </div>
+            <div
+              className={`w-[26px] h-[26px] rounded-full border flex items-center justify-center ${mcAudienceValue == null ? "border-black" : "border-black/20"}`}
+              style={{ backgroundColor: audienceTone.bg, color: audienceTone.text }}
+            >
+              <span className="text-[0.64rem] font-black leading-none">
+                {compactFractionScore(mcAudience?.display)}
+              </span>
+            </div>
+          </div>
+        </ScoreSurface>
+      )}
+      </div>
+    </div>
+  );
+}
 
 function PersonCircle({
   person,
@@ -165,9 +397,13 @@ export default function MovieOverlay({
               ) : movie ? (
                 <>
                   <div className="flex items-start gap-3 sm:gap-6 mb-5 sm:mb-6">
-                    {posterUrl && (
-                      <img src={posterUrl} alt="" className="w-[96px] sm:w-[150px] rounded-lg flex-shrink-0 self-start" />
-                    )}
+                    <div className="w-[96px] sm:w-[150px] flex-shrink-0 self-start">
+                      {posterUrl ? (
+                        <img src={posterUrl} alt="" className="w-[96px] sm:w-[150px] rounded-lg" />
+                      ) : (
+                        <div className="w-[96px] sm:w-[150px] aspect-[2/3] rounded-lg bg-panel-2 border border-border" />
+                      )}
+                    </div>
                     <div className="min-w-0">
                       <p className="text-muted text-sm sm:text-base mb-2">
                         {movie.release_date?.slice(0, 4)}
@@ -209,6 +445,7 @@ export default function MovieOverlay({
                         </>
                       )}
                       <p className="text-xs sm:text-sm text-muted leading-relaxed">{movie.overview}</p>
+                      <ExternalScoresBlock scores={movie.external_scores} />
 
                       {(directors.length > 0 || topCast.length > 0) && (
                         <div className="hidden sm:flex flex-nowrap gap-5 mt-4 overflow-x-auto pb-1">

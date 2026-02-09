@@ -64,8 +64,57 @@ async def get_movie_details(movie_id: int) -> dict:
     return await _get(f"/movie/{movie_id}", {"append_to_response": "credits"})
 
 
+def _pick_primary_role(roles: list[dict] | None) -> str | None:
+    if not roles:
+        return None
+    ranked = sorted(
+        (
+            ((role.get("episode_count") or 0), str(role.get("character") or "").strip())
+            for role in roles
+        ),
+        key=lambda item: item[0],
+        reverse=True,
+    )
+    for _, character in ranked:
+        if character:
+            return character
+    return None
+
+
+def _normalize_aggregate_tv_cast(cast_items: list[dict] | None) -> list[dict]:
+    if not cast_items:
+        return []
+    normalized: list[dict] = []
+    for person in cast_items:
+        entry = dict(person)
+        entry["character"] = _pick_primary_role(person.get("roles"))
+        normalized.append(entry)
+    normalized.sort(
+        key=lambda person: (
+            person.get("order", 10_000),
+            -(person.get("total_episode_count") or 0),
+            -(person.get("popularity") or 0),
+        )
+    )
+    return normalized
+
+
 async def get_tv_details(tv_id: int) -> dict:
-    return await _get(f"/tv/{tv_id}", {"append_to_response": "credits"})
+    data = await _get(f"/tv/{tv_id}", {"append_to_response": "credits,aggregate_credits,external_ids"})
+    aggregate_credits = data.get("aggregate_credits") or {}
+    aggregate_cast = _normalize_aggregate_tv_cast(aggregate_credits.get("cast"))
+    if aggregate_cast:
+        credits = data.get("credits") or {}
+        current_cast = credits.get("cast") or []
+        # Aggregate credits are usually much more complete for TV series.
+        if len(aggregate_cast) >= len(current_cast):
+            credits["cast"] = aggregate_cast
+            data["credits"] = credits
+    external_ids = data.get("external_ids") or {}
+    imdb_id = external_ids.get("imdb_id")
+    if imdb_id:
+        data["imdb_id"] = imdb_id
+    return data
 
 
 async def get_person_details(person_id: int) -> dict:

@@ -20,7 +20,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from . import tmdb, streaming_availability
+from . import tmdb, streaming_availability, ratings
 from .database import get_db, init_db, close_db
 from .models import User, UserPreferences
 from .auth import get_current_user, get_optional_user, verify_csrf
@@ -83,6 +83,7 @@ async def lifespan(app: FastAPI):
     yield
     await tmdb.close_client()
     await streaming_availability.close_client()
+    await ratings.close_client()
     await close_db()
 
 
@@ -910,8 +911,11 @@ async def search_filtered_page(
 
 @app.get("/api/movie/{movie_id}/providers")
 async def movie_providers(movie_id: int):
-    providers = await tmdb.get_watch_providers(movie_id)
-    details = await tmdb.get_movie_details(movie_id)
+    providers, details = await asyncio.gather(
+        tmdb.get_watch_providers(movie_id),
+        tmdb.get_movie_details(movie_id),
+    )
+    details["external_scores"] = await ratings.get_media_scores("movie", details)
     return {"movie": details, "providers": providers}
 
 
@@ -930,8 +934,11 @@ async def movie_links(movie_id: int, countries: str | None = None):
 
 @app.get("/api/tv/{tv_id}/providers")
 async def tv_providers(tv_id: int):
-    providers = await tmdb.get_tv_watch_providers(tv_id)
-    details = await tmdb.get_tv_details(tv_id)
+    providers, details = await asyncio.gather(
+        tmdb.get_tv_watch_providers(tv_id),
+        tmdb.get_tv_details(tv_id),
+    )
+    details["external_scores"] = await ratings.get_media_scores("tv", details)
     _normalize_result(details)
     return {"movie": details, "providers": providers}
 

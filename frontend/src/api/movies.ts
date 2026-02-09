@@ -2,6 +2,21 @@ import { apiFetch, ApiError } from "./client";
 
 export type MediaType = "movie" | "tv" | "mix";
 
+export interface ExternalScore {
+  display?: string | null;
+  url?: string | null;
+  source?: string | null;
+}
+
+export interface ExternalScores {
+  letterboxd?: ExternalScore;
+  imdb?: ExternalScore;
+  rotten_tomatoes_critics?: ExternalScore;
+  rotten_tomatoes_audience?: ExternalScore;
+  metacritic?: ExternalScore;
+  metacritic_audience?: ExternalScore;
+}
+
 export interface Movie {
   id: number;
   title: string;
@@ -15,6 +30,7 @@ export interface Movie {
   vote_average?: number;
   number_of_seasons?: number;
   number_of_episodes?: number;
+  external_scores?: ExternalScores;
   credits?: {
     cast: Person[];
     crew: CrewMember[];
