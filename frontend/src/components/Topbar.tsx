@@ -102,7 +102,7 @@ export default function Topbar({
         />
       </div>
       <div className="relative z-[2] flex-shrink-0 flex items-center gap-2 max-sm:gap-1.5 max-sm:order-2 max-sm:ml-auto">
-        {onOpenAdvancedSearch && (
+        {user && onOpenAdvancedSearch && (
           <button
             onClick={() => onOpenAdvancedSearch(searchDraft.trim())}
             className="h-[44px] sm:h-[52px] px-2.5 sm:px-3.5 border border-border rounded-full flex items-center justify-center gap-1.5 sm:gap-2 hover:border-accent-2 transition-colors text-muted hover:text-text"

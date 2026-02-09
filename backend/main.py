@@ -523,7 +523,7 @@ async def search_advanced(
     countries: str | None = None,
     vpn: bool = False,
     include_paid: bool = False,
-    user: User | None = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if media_type not in VALID_MEDIA_TYPES:
@@ -548,7 +548,7 @@ async def search_advanced(
     ids: set[int] = set()
     allowed_countries: set[str] | None = None
     if filtered_mode:
-        prefs = await _get_user_prefs(db, user.id) if user else None
+        prefs = await _get_user_prefs(db, user.id)
         if provider_ids:
             ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
         elif prefs:

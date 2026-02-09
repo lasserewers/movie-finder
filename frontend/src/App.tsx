@@ -507,9 +507,19 @@ function AppContent() {
   }, []);
 
   const handleOpenAdvancedSearch = useCallback((initialQuery: string) => {
+    if (!user) {
+      openAuthModal("login");
+      return;
+    }
     setAdvancedSearchInitialQuery(initialQuery);
     setAdvancedSearchOpen(true);
-  }, []);
+  }, [openAuthModal, user]);
+
+  useEffect(() => {
+    if (!user && advancedSearchOpen) {
+      setAdvancedSearchOpen(false);
+    }
+  }, [user, advancedSearchOpen]);
 
   const handleMediaTypeChange = (next: MediaType) => {
     setMediaType(next);
