@@ -323,7 +323,7 @@ async def _process_user_subscriptions(
     service_ids = set(prefs.provider_ids or []) if prefs and prefs.provider_ids else set()
     providers_cache: dict[tuple[str, int], dict] = {}
     now = datetime.now(timezone.utc)
-    pending_emails: list[tuple[str, str]] = []
+    pending_emails: list[tuple[str, str, str, int, str | None]] = []
     touched = False
 
     for subscription in active_subscriptions:
@@ -374,17 +374,28 @@ async def _process_user_subscriptions(
         )
 
         if subscription.deliver_email:
-            pending_emails.append((subscription.title, message))
+            pending_emails.append(
+                (
+                    subscription.title,
+                    message,
+                    subscription.media_type,
+                    int(subscription.tmdb_id),
+                    subscription.poster_path,
+                )
+            )
 
     if touched:
         await db.commit()
 
-    for title, message in pending_emails:
+    for title, message, media_type, tmdb_id, poster_path in pending_emails:
         asyncio.create_task(
             mailer.send_availability_notification_email(
                 user.email,
                 title=title,
                 message=message,
+                media_type=media_type,
+                tmdb_id=tmdb_id,
+                poster_path=poster_path,
             )
         )
 

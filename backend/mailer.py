@@ -38,6 +38,15 @@ def build_signup_verification_link(token: str) -> str:
     return f"{FRONTEND_BASE_URL}/confirm-signup-email?token={token}"
 
 
+def build_title_link(media_type: str, tmdb_id: int) -> str:
+    normalized_type = (media_type or "").strip().lower()
+    safe_type = "tv" if normalized_type == "tv" else "movie"
+    safe_id = int(tmdb_id) if int(tmdb_id) > 0 else 0
+    if safe_id <= 0:
+        return FRONTEND_BASE_URL
+    return f"{FRONTEND_BASE_URL}/?media_type={safe_type}&tmdb_id={safe_id}"
+
+
 def _render_email_html(
     *,
     preheader: str,
@@ -341,14 +350,44 @@ async def send_account_reactivated_email(to_email: str) -> bool:
     return await send_email(to_email, subject, text_body, html_body)
 
 
-async def send_availability_notification_email(to_email: str, *, title: str, message: str) -> bool:
+async def send_availability_notification_email(
+    to_email: str,
+    *,
+    title: str,
+    message: str,
+    media_type: str | None = None,
+    tmdb_id: int | None = None,
+    poster_path: str | None = None,
+) -> bool:
     safe_title = (title or "Title").strip() or "Title"
     safe_message = (message or f"{safe_title} has a new availability update.").strip()
     escaped_message = html.escape(safe_message)
+    title_url = (
+        build_title_link(media_type or "movie", int(tmdb_id or 0))
+        if tmdb_id
+        else FRONTEND_BASE_URL
+    )
+    poster = (poster_path or "").strip()
+    poster_url = ""
+    if poster:
+        if poster.startswith("http://") or poster.startswith("https://"):
+            poster_url = poster
+        elif poster.startswith("/"):
+            poster_url = f"https://image.tmdb.org/t/p/w342{poster}"
+    poster_html = ""
+    if poster_url:
+        safe_poster_url = html.escape(poster_url, quote=True)
+        poster_html = (
+            "<div style=\"margin:0 0 14px 0;\">"
+            f"<img src=\"{safe_poster_url}\" alt=\"{html.escape(safe_title, quote=True)} poster\" "
+            "style=\"display:block;width:130px;max-width:100%;height:auto;border-radius:12px;"
+            "border:1px solid rgba(255,255,255,0.12);\" />"
+            "</div>"
+        )
     subject = f"Availability update: {safe_title}"
     text_body = (
         f"{safe_message}\n\n"
-        f"Open FullStreamer: {FRONTEND_BASE_URL}\n\n"
+        f"Go to title: {title_url}\n\n"
         "You can manage your alerts from your profile dropdown."
     )
     html_body = _render_email_html(
@@ -356,10 +395,11 @@ async def send_availability_notification_email(to_email: str, *, title: str, mes
         title="Availability Alert",
         subtitle=f"We found a new availability update for {safe_title}.",
         body_html=(
+            f"{poster_html}"
             f"<p style=\"margin:0 0 12px 0;\">{escaped_message}</p>"
             "<p style=\"margin:0;\">You can manage your alerts in FullStreamer from your profile dropdown.</p>"
         ),
-        cta_label="Open FullStreamer",
-        cta_url=FRONTEND_BASE_URL,
+        cta_label="Go to title",
+        cta_url=title_url,
     )
     return await send_email(to_email, subject, text_body, html_body)

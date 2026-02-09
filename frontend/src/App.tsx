@@ -127,6 +127,7 @@ function AppContent() {
   const wasLoggedInRef = useRef(false);
   const previousUserKeyRef = useRef<string | null>(null);
   const hasStoredContentModePrefRef = useRef(false);
+  const handledTitleDeepLinkRef = useRef(false);
 
   const [regions, setRegions] = useState<Region[]>([]);
   const [countryNameMap, setCountryNameMap] = useState<Record<string, string>>({});
@@ -459,6 +460,41 @@ function AppContent() {
       // Ignore URL rewrite failures.
     }
   }, [authLoading, user, openAuthModal]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (handledTitleDeepLinkRef.current) return;
+    let targetId: number | null = null;
+    let targetType: "movie" | "tv" = "movie";
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const idRaw = params.get("tmdb_id");
+      const parsedId = Number(idRaw);
+      if (!idRaw || !Number.isInteger(parsedId) || parsedId <= 0) return;
+      const mediaTypeRaw = (params.get("media_type") || "").toLowerCase();
+      if (mediaTypeRaw === "tv") targetType = "tv";
+      targetId = parsedId;
+    } catch {
+      return;
+    }
+    if (!targetId) return;
+    handledTitleDeepLinkRef.current = true;
+    setSelectedMovie(targetId);
+    setSelectedMovieType(targetType);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("tmdb_id");
+      url.searchParams.delete("media_type");
+      const nextSearch = url.searchParams.toString();
+      window.history.replaceState(
+        {},
+        "",
+        `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`
+      );
+    } catch {
+      // Ignore URL rewrite failures.
+    }
+  }, [authLoading]);
 
   useEffect(() => {
     if (authLoading || !user || onboardingOpen) return;
