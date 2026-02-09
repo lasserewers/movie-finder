@@ -98,8 +98,8 @@ export default function WatchlistOverlay({ open, onClose, items, onSelectMovie }
                   {items.length} {items.length === 1 ? "title" : "titles"} saved
                 </p>
               </div>
-              <div className="flex flex-col gap-2 mt-3">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-2 mt-3 w-[min(100%,360px)] max-sm:mx-auto">
+                <div className="flex items-center justify-center sm:justify-start gap-2 w-full">
                   <label htmlFor="watchlist-sort" className="text-xs text-muted uppercase tracking-wide whitespace-nowrap">
                     Sort by
                   </label>
@@ -107,7 +107,7 @@ export default function WatchlistOverlay({ open, onClose, items, onSelectMovie }
                     id="watchlist-sort"
                     value={sortMode}
                     onChange={(e) => setSortMode(e.target.value as SortMode)}
-                    className="h-9 px-3 border border-border rounded-full bg-panel text-text text-sm outline-none focus:border-accent-2 transition-colors"
+                    className="h-9 px-3 border border-border rounded-full bg-panel text-text text-sm outline-none focus:border-accent-2 transition-colors flex-1 min-w-0"
                   >
                     {SORT_OPTIONS.map((opt) => (
                       <option key={opt.value} value={opt.value}>
