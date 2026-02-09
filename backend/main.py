@@ -173,6 +173,20 @@ def _normalize_language_code(code: str | None) -> str | None:
     return normalized if allowed else None
 
 
+def _resolve_country_scope(
+    *,
+    user_countries: list[str],
+    requested_countries: set[str] | None,
+    vpn: bool,
+    include_paid: bool,
+) -> tuple[set[str] | None, bool]:
+    # VPN expands region scope only for streamable mode (flatrate/free/ads).
+    effective_vpn = bool(vpn and not include_paid)
+    if effective_vpn:
+        return None, True
+    return (requested_countries or _normalize_country_codes(user_countries)), False
+
+
 def _normalize_advanced_sort(sort_by: str | None) -> str:
     normalized = (sort_by or "popularity.desc").strip().lower()
     if normalized not in ADVANCED_SORT_BY_OPTIONS:
@@ -900,6 +914,7 @@ async def search_advanced(
 
     ids: set[int] = set()
     allowed_countries: set[str] | None = None
+    effective_vpn = False
     if filtered_mode:
         prefs = await _get_user_prefs(db, user.id)
         if provider_ids:
@@ -916,11 +931,16 @@ async def search_advanced(
             }
         user_countries = list(prefs.countries) if prefs and prefs.countries else []
         requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
-        allowed_countries = (requested_countries or _normalize_country_codes(user_countries)) if not vpn else None
+        allowed_countries, effective_vpn = _resolve_country_scope(
+            user_countries=user_countries,
+            requested_countries=requested_countries,
+            vpn=vpn,
+            include_paid=include_paid_mode,
+        )
 
     provider_scope_key = ",".join(str(pid) for pid in sorted(ids)) if filtered_mode else ""
     country_scope_key = ",".join(sorted(allowed_countries)) if allowed_countries else "*"
-    vpn_key = int(vpn and filtered_mode)
+    vpn_key = int(effective_vpn and filtered_mode)
     paid_key = int(include_paid_mode and filtered_mode)
 
     cache_key = (
@@ -1166,7 +1186,12 @@ async def search_filtered(
         ids = set()
     user_countries = list(prefs.countries) if prefs and prefs.countries else []
     requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
-    allowed_countries = (requested_countries or _normalize_country_codes(user_countries)) if not vpn else None
+    allowed_countries, _effective_vpn = _resolve_country_scope(
+        user_countries=user_countries,
+        requested_countries=requested_countries,
+        vpn=vpn,
+        include_paid=include_paid,
+    )
     if not ids:
         return {"results": [], "filtered": True}
     if paged:
@@ -1290,7 +1315,12 @@ async def search_filtered_page(
         ids = set()
     user_countries = list(prefs.countries) if prefs and prefs.countries else []
     requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
-    allowed_countries = (requested_countries or _normalize_country_codes(user_countries)) if not vpn else None
+    allowed_countries, _effective_vpn = _resolve_country_scope(
+        user_countries=user_countries,
+        requested_countries=requested_countries,
+        vpn=vpn,
+        include_paid=include_paid,
+    )
     if not ids:
         return {"results": [], "filtered": True, "page": page, "total_pages": 0}
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
@@ -2452,12 +2482,17 @@ async def home(
             return await _guest_home(page, page_size, media_type, guest_country)
         return {"sections": [], "filtered": True, "message": "Select streaming services to see available titles."}
 
-    allowed_countries = (requested_countries or _normalize_country_codes(user_countries)) if not vpn else None
+    allowed_countries, effective_vpn = _resolve_country_scope(
+        user_countries=user_countries,
+        requested_countries=requested_countries,
+        vpn=vpn,
+        include_paid=include_paid,
+    )
     section_countries = sorted(allowed_countries) if allowed_countries else user_countries
     country_scope_key = ",".join(sorted(allowed_countries)) if allowed_countries else "*"
     page = max(1, page)
     page_size = max(3, min(10, page_size))
-    cache_key = f"{','.join(str(pid) for pid in sorted(ids))}:{','.join(user_countries)}:{page}:{page_size}:{media_type}:vpn={int(vpn)}:paid={int(include_paid)}:scope={country_scope_key}"
+    cache_key = f"{','.join(str(pid) for pid in sorted(ids))}:{','.join(user_countries)}:{page}:{page_size}:{media_type}:vpn={int(effective_vpn)}:paid={int(include_paid)}:scope={country_scope_key}"
     now = time.time()
     cached = HOME_CACHE.get(cache_key)
     if cached and (now - cached[0]) < HOME_CACHE_TTL:
@@ -2695,10 +2730,15 @@ async def section(
             return await _guest_section(section_id, page, pages, media_type, guest_country)
         return {"id": section_id, "results": [], "filtered": True, "message": "Select streaming services first."}
 
-    allowed_countries = (requested_countries or _normalize_country_codes(user_countries)) if not vpn else None
+    allowed_countries, effective_vpn = _resolve_country_scope(
+        user_countries=user_countries,
+        requested_countries=requested_countries,
+        vpn=vpn,
+        include_paid=include_paid,
+    )
     section_countries = sorted(allowed_countries) if allowed_countries else user_countries
     country_scope_key = ",".join(sorted(allowed_countries)) if allowed_countries else "*"
-    cache_key = f"{section_id}:{','.join(str(pid) for pid in sorted(ids))}:{','.join(sorted(user_countries))}:{page}:{pages}:{cursor or ''}:{media_type}:vpn={int(vpn)}:paid={int(include_paid)}:scope={country_scope_key}"
+    cache_key = f"{section_id}:{','.join(str(pid) for pid in sorted(ids))}:{','.join(sorted(user_countries))}:{page}:{pages}:{cursor or ''}:{media_type}:vpn={int(effective_vpn)}:paid={int(include_paid)}:scope={country_scope_key}"
     now = time.time()
     cached = SECTION_CACHE.get(cache_key)
     if cached and (now - cached[0]) < SECTION_CACHE_TTL:
