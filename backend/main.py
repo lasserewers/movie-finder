@@ -206,6 +206,164 @@ def _title_matches_keyword(item: dict, keyword: str | None) -> bool:
     return keyword in candidate
 
 
+def _extract_credit_ids(rows: list[dict] | None) -> set[int]:
+    ids: set[int] = set()
+    if not rows:
+        return ids
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        person_id = row.get("id")
+        if isinstance(person_id, int) and person_id > 0:
+            ids.add(person_id)
+    return ids
+
+
+def _is_self_like_role(value: str) -> bool:
+    role = (value or "").strip().lower()
+    if not role:
+        return False
+    self_markers = (
+        "self",
+        "himself",
+        "herself",
+        "themselves",
+        "archive footage",
+        "archive sound",
+    )
+    return any(marker in role for marker in self_markers)
+
+
+def _actor_credit_ids(rows: list[dict] | None, *, media_type: str) -> set[int]:
+    ids: set[int] = set()
+    if not rows:
+        return ids
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        person_id = row.get("id")
+        if not isinstance(person_id, int) or person_id <= 0:
+            continue
+        role_names: list[str] = []
+        character = row.get("character")
+        if isinstance(character, str) and character.strip():
+            role_names.append(character.strip())
+        if media_type == "tv":
+            roles = row.get("roles")
+            if isinstance(roles, list):
+                for role in roles:
+                    if not isinstance(role, dict):
+                        continue
+                    char_name = role.get("character")
+                    if isinstance(char_name, str) and char_name.strip():
+                        role_names.append(char_name.strip())
+        # If all known roles are "self/archive", treat it as non-acting for actor filtering.
+        if role_names and all(_is_self_like_role(name) for name in role_names):
+            continue
+        ids.add(person_id)
+    return ids
+
+
+def _extract_movie_director_ids(details: dict) -> set[int]:
+    crew = ((details.get("credits") or {}).get("crew") or []) if isinstance(details, dict) else []
+    ids: set[int] = set()
+    for row in crew:
+        if not isinstance(row, dict):
+            continue
+        person_id = row.get("id")
+        if not isinstance(person_id, int) or person_id <= 0:
+            continue
+        job = str(row.get("job") or "").strip().lower()
+        if "director" in job:
+            ids.add(person_id)
+    return ids
+
+
+def _extract_tv_director_ids(details: dict) -> set[int]:
+    if not isinstance(details, dict):
+        return set()
+    aggregate_crew = ((details.get("aggregate_credits") or {}).get("crew") or [])
+    ids: set[int] = set()
+    for row in aggregate_crew:
+        if not isinstance(row, dict):
+            continue
+        person_id = row.get("id")
+        if not isinstance(person_id, int) or person_id <= 0:
+            continue
+        jobs = row.get("jobs") or []
+        if not isinstance(jobs, list):
+            continue
+        if any("director" in str(job.get("job") or "").strip().lower() for job in jobs if isinstance(job, dict)):
+            ids.add(person_id)
+    if ids:
+        return ids
+    return _extract_movie_director_ids(details)
+
+
+def _matches_advanced_role_requirements(
+    *,
+    details: dict,
+    media_type: str,
+    actor_ids: list[int],
+    director_ids: list[int],
+) -> bool:
+    if actor_ids:
+        if media_type == "tv":
+            cast_rows = (details.get("aggregate_credits") or {}).get("cast") or (details.get("credits") or {}).get("cast") or []
+        else:
+            cast_rows = (details.get("credits") or {}).get("cast") or []
+        cast_ids = _actor_credit_ids(cast_rows, media_type=media_type)
+        if any(person_id not in cast_ids for person_id in actor_ids):
+            return False
+    if director_ids:
+        director_credit_ids = (
+            _extract_tv_director_ids(details)
+            if media_type == "tv"
+            else _extract_movie_director_ids(details)
+        )
+        if any(person_id not in director_credit_ids for person_id in director_ids):
+            return False
+    return True
+
+
+async def _filter_advanced_role_matches(
+    results: list[dict],
+    *,
+    media_type: str,
+    actor_ids: list[int],
+    director_ids: list[int],
+    semaphore: asyncio.Semaphore,
+    role_cache: dict[tuple[str, int], bool],
+) -> list[dict]:
+    if not results or (not actor_ids and not director_ids):
+        return results
+
+    async def _matches_item(item: dict) -> bool:
+        item_id = item.get("id")
+        if not isinstance(item_id, int) or item_id <= 0:
+            return False
+        cache_key = (media_type, item_id)
+        cached = role_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            async with semaphore:
+                details = await (tmdb.get_tv_details(item_id) if media_type == "tv" else tmdb.get_movie_details(item_id))
+            matched = _matches_advanced_role_requirements(
+                details=details,
+                media_type=media_type,
+                actor_ids=actor_ids,
+                director_ids=director_ids,
+            )
+        except Exception:
+            matched = False
+        role_cache[cache_key] = matched
+        return matched
+
+    flags = await asyncio.gather(*[_matches_item(item) for item in results])
+    return [item for item, keep in zip(results, flags) if keep]
+
+
 def _build_advanced_discover_params(
     media_type: str,
     *,
@@ -257,14 +415,21 @@ def _build_advanced_discover_params(
         if runtime_max is not None:
             params["with_runtime.lte"] = max(0, runtime_max)
         if actor_ids:
-            params["with_cast"] = "|".join(str(pid) for pid in actor_ids)
+            params["with_cast"] = ",".join(str(pid) for pid in actor_ids)
         if director_ids:
-            params["with_crew"] = "|".join(str(pid) for pid in director_ids)
+            params["with_crew"] = ",".join(str(pid) for pid in director_ids)
     else:
-        if actor_ids:
-            params["with_cast"] = "|".join(str(pid) for pid in actor_ids)
-        if director_ids:
-            params["with_people"] = "|".join(str(pid) for pid in director_ids)
+        people_ids: list[int] = []
+        seen_people: set[int] = set()
+        for person_id in actor_ids + director_ids:
+            if person_id in seen_people:
+                continue
+            seen_people.add(person_id)
+            people_ids.append(person_id)
+        if people_ids:
+            # TV discover does not support strict actor/director role filters.
+            # Use with_people as coarse prefilter, then enforce roles via credit checks.
+            params["with_people"] = ",".join(str(pid) for pid in people_ids)
 
     return params
 
@@ -280,6 +445,8 @@ async def _advanced_discover_search(
     provider_ids: set[int] | None = None,
     include_paid: bool = False,
     allowed_countries: set[str] | None = None,
+    actor_ids: list[int] | None = None,
+    director_ids: list[int] | None = None,
     semaphore: asyncio.Semaphore | None = None,
     flag_cache: dict[tuple[str, int, str], bool] | None = None,
 ) -> dict:
@@ -289,8 +456,11 @@ async def _advanced_discover_search(
     results: list[dict] = []
     seen_ids: set[int] = set()
     provider_ids = provider_ids or set()
+    actor_ids = actor_ids or []
+    director_ids = director_ids or []
     semaphore = semaphore or asyncio.Semaphore(FILTER_CONCURRENCY)
     flag_cache = flag_cache or {}
+    role_cache: dict[tuple[str, int], bool] = {}
     while len(results) < limit and scanned < scan_limit:
         if total_pages and p > total_pages:
             break
@@ -310,6 +480,15 @@ async def _advanced_discover_search(
                 continue
             seen_ids.add(item_id)
             page_candidates.append(item)
+        if actor_ids or director_ids:
+            page_candidates = await _filter_advanced_role_matches(
+                page_candidates,
+                media_type=media_type,
+                actor_ids=actor_ids,
+                director_ids=director_ids,
+                semaphore=semaphore,
+                role_cache=role_cache,
+            )
         if provider_ids:
             page_candidates = await _filter_results(
                 page_candidates,
@@ -636,6 +815,8 @@ async def search_advanced(
                 provider_ids=ids if filtered_mode else None,
                 include_paid=include_paid_mode and filtered_mode,
                 allowed_countries=allowed_countries,
+                actor_ids=actor_people,
+                director_ids=director_people,
                 semaphore=semaphore,
                 flag_cache=flag_cache,
             ),
@@ -648,6 +829,8 @@ async def search_advanced(
                 provider_ids=ids if filtered_mode else None,
                 include_paid=include_paid_mode and filtered_mode,
                 allowed_countries=allowed_countries,
+                actor_ids=actor_people,
+                director_ids=director_people,
                 semaphore=semaphore,
                 flag_cache=flag_cache,
             ),
@@ -698,6 +881,8 @@ async def search_advanced(
         provider_ids=ids if filtered_mode else None,
         include_paid=include_paid_mode and filtered_mode,
         allowed_countries=allowed_countries,
+        actor_ids=actor_people,
+        director_ids=director_people,
         semaphore=semaphore,
         flag_cache=flag_cache,
     )
