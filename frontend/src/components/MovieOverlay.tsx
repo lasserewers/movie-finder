@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getMovieProviders, getMovieLinks, getTvProviders, getTvLinks, type Movie, type CountryProviders, type StreamingLink, type Person, type CrewMember, type ExternalScores } from "../api/movies";
+import { getMovieProviders, getMovieScores, getMovieLinks, getTvProviders, getTvScores, getTvLinks, type Movie, type CountryProviders, type StreamingLink, type Person, type CrewMember, type ExternalScores } from "../api/movies";
 import { useConfig } from "../hooks/useConfig";
 import { useAuth } from "../hooks/useAuth";
 import { useWatchlist } from "../hooks/useWatchlist";
@@ -138,7 +138,7 @@ function metacriticAudienceTone(score: number | null): { bg: string; text: strin
   return { bg: "#FF4E50", text: "#2A0B0C" };
 }
 
-function ExternalScoresBlock({ scores }: { scores?: ExternalScores }) {
+function ExternalScoresBlock({ scores, loading }: { scores?: ExternalScores; loading?: boolean }) {
   const lbd = scores?.letterboxd;
   const imdb = scores?.imdb;
   const rtCritics = scores?.rotten_tomatoes_critics;
@@ -165,6 +165,14 @@ function ExternalScoresBlock({ scores }: { scores?: ExternalScores }) {
   const hasImdb = imdbValue != null;
   const hasRotten = rtCriticsValue != null || rtAudienceValue != null;
   const hasMetacritic = mcCriticsValue != null || mcAudienceValue != null;
+
+  if (loading && !scores) {
+    return (
+      <div className="mt-3 sm:mt-4 min-h-[28px] flex items-center">
+        <span className="text-[0.76rem] sm:text-[0.86rem] text-muted font-medium">Loading scores...</span>
+      </div>
+    );
+  }
 
   if (!hasLetterboxd && !hasImdb && !hasRotten && !hasMetacritic) {
     return null;
@@ -298,22 +306,68 @@ export default function MovieOverlay({
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
   const [watchlistBusy, setWatchlistBusy] = useState(false);
   const [watchlistErr, setWatchlistErr] = useState("");
+  const [scoresLoading, setScoresLoading] = useState(false);
 
   useEffect(() => {
-    if (!movieId) return;
+    if (!movieId) {
+      setScoresLoading(false);
+      return;
+    }
+    let cancelled = false;
+    let resolvedScores: ExternalScores | undefined;
     setLoading(true);
     setMovie(null);
+    setProviders({});
+    setStreamingLinks({});
     const isTV = itemMediaType === "tv";
     const provFn = isTV ? getTvProviders : getMovieProviders;
+    const scoreFn = isTV ? getTvScores : getMovieScores;
     const linksFn = isTV ? getTvLinks : getMovieLinks;
     const linkCountries = guestCountry ? [guestCountry] : countries;
-    Promise.all([provFn(movieId), linksFn(movieId, linkCountries).catch(() => ({} as Awaited<ReturnType<typeof getMovieLinks>>))])
-      .then(([provData, linksData]) => {
-        setMovie(provData.movie);
+    provFn(movieId)
+      .then((provData) => {
+        if (cancelled) return;
+        setMovie(resolvedScores ? { ...provData.movie, external_scores: resolvedScores } : provData.movie);
         setProviders(provData.providers);
-        setStreamingLinks(linksData?.streaming || {});
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    setScoresLoading(true);
+    scoreFn(movieId)
+      .then((scoreData) => {
+        if (cancelled) return;
+        resolvedScores = scoreData?.external_scores;
+        if (!resolvedScores) return;
+        setMovie((prev) => (prev ? { ...prev, external_scores: resolvedScores } : prev));
+      })
+      .catch(() => {
+        // Non-critical for initial overlay render.
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setScoresLoading(false);
+        }
+      });
+
+    linksFn(movieId, linkCountries)
+      .then((linksData) => {
+        if (!cancelled) {
+          setStreamingLinks(linksData?.streaming || {});
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStreamingLinks({});
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [movieId, itemMediaType, guestCountry, countries]);
 
   useEffect(() => {
@@ -445,7 +499,7 @@ export default function MovieOverlay({
                         </>
                       )}
                       <p className="text-xs sm:text-sm text-muted leading-relaxed">{movie.overview}</p>
-                      <ExternalScoresBlock scores={movie.external_scores} />
+                      <ExternalScoresBlock scores={movie.external_scores} loading={scoresLoading} />
 
                       {(directors.length > 0 || topCast.length > 0) && (
                         <div className="hidden sm:flex flex-nowrap gap-5 mt-4 overflow-x-auto pb-1">

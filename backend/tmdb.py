@@ -64,6 +64,10 @@ async def get_movie_details(movie_id: int) -> dict:
     return await _get(f"/movie/{movie_id}", {"append_to_response": "credits"})
 
 
+async def get_movie_score_details(movie_id: int) -> dict:
+    return await _get(f"/movie/{movie_id}")
+
+
 def _pick_primary_role(roles: list[dict] | None) -> str | None:
     if not roles:
         return None
@@ -110,6 +114,15 @@ async def get_tv_details(tv_id: int) -> dict:
         if len(aggregate_cast) >= len(current_cast):
             credits["cast"] = aggregate_cast
             data["credits"] = credits
+    external_ids = data.get("external_ids") or {}
+    imdb_id = external_ids.get("imdb_id")
+    if imdb_id:
+        data["imdb_id"] = imdb_id
+    return data
+
+
+async def get_tv_score_details(tv_id: int) -> dict:
+    data = await _get(f"/tv/{tv_id}", {"append_to_response": "external_ids"})
     external_ids = data.get("external_ids") or {}
     imdb_id = external_ids.get("imdb_id")
     if imdb_id:

@@ -299,6 +299,12 @@ export async function getMovieProviders(
   return apiFetch(`/api/movie/${movieId}/providers`);
 }
 
+export async function getMovieScores(
+  movieId: number
+): Promise<{ external_scores?: ExternalScores }> {
+  return apiFetch(`/api/movie/${movieId}/scores`);
+}
+
 export async function getMovieLinks(
   movieId: number,
   countries?: string[]
@@ -313,6 +319,12 @@ export async function getTvProviders(
   tvId: number
 ): Promise<{ movie: Movie; providers: Record<string, CountryProviders> }> {
   return apiFetch(`/api/tv/${tvId}/providers`);
+}
+
+export async function getTvScores(
+  tvId: number
+): Promise<{ external_scores?: ExternalScores }> {
+  return apiFetch(`/api/tv/${tvId}/scores`);
 }
 
 export async function getTvLinks(

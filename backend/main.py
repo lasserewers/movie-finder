@@ -915,8 +915,14 @@ async def movie_providers(movie_id: int):
         tmdb.get_watch_providers(movie_id),
         tmdb.get_movie_details(movie_id),
     )
-    details["external_scores"] = await ratings.get_media_scores("movie", details)
     return {"movie": details, "providers": providers}
+
+
+@app.get("/api/movie/{movie_id}/scores")
+async def movie_scores(movie_id: int):
+    details = await tmdb.get_movie_score_details(movie_id)
+    external_scores = await ratings.get_media_scores("movie", details)
+    return {"external_scores": external_scores}
 
 
 @app.get("/api/movie/{movie_id}/links")
@@ -938,9 +944,15 @@ async def tv_providers(tv_id: int):
         tmdb.get_tv_watch_providers(tv_id),
         tmdb.get_tv_details(tv_id),
     )
-    details["external_scores"] = await ratings.get_media_scores("tv", details)
     _normalize_result(details)
     return {"movie": details, "providers": providers}
+
+
+@app.get("/api/tv/{tv_id}/scores")
+async def tv_scores(tv_id: int):
+    details = await tmdb.get_tv_score_details(tv_id)
+    external_scores = await ratings.get_media_scores("tv", details)
+    return {"external_scores": external_scores}
 
 
 @app.get("/api/tv/{tv_id}/links")
