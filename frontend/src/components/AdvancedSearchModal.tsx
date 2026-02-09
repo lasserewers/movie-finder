@@ -426,9 +426,14 @@ export default function AdvancedSearchModal({
           includePaid: effectiveFilteredMode && effectiveIncludePaidMode,
         });
         const incoming = response.results || [];
+        const resolvedNextPage =
+          typeof response.next_page === "number" && response.next_page > page
+            ? response.next_page
+            : null;
+        const canLoadMore = resolvedNextPage !== null && incoming.length > 0;
         setResults((prev) => (append ? mergeUniqueResults(prev, incoming) : incoming));
-        setNextPage(response.next_page ?? null);
-        setHasMore(!!response.has_more || !!response.next_page);
+        setNextPage(canLoadMore ? resolvedNextPage : null);
+        setHasMore(canLoadMore);
         setSearched(true);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Could not run advanced search.";
@@ -1096,7 +1101,7 @@ export default function AdvancedSearchModal({
                       ))}
                     </div>
 
-                    {(hasMore || loadingMore) && (
+                    {(loadingMore || !!nextPage) && (
                       <div className="flex justify-center pt-6">
                         <button
                           onClick={() => {

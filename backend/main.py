@@ -207,6 +207,66 @@ def _title_matches_keyword(item: dict, keyword: str | None) -> bool:
     return keyword in candidate
 
 
+def _parse_release_year(value: str | None) -> int | None:
+    raw = (value or "").strip()
+    if len(raw) < 4:
+        return None
+    year_part = raw[:4]
+    if not year_part.isdigit():
+        return None
+    return int(year_part)
+
+
+def _matches_basic_advanced_filters(
+    item: dict,
+    *,
+    media_type: str,
+    country: str | None,
+    language: str | None,
+    year_from: int | None,
+    year_to: int | None,
+    genre_ids: list[int],
+    exclude_genre_ids: list[int],
+    min_rating: float | None,
+    min_votes: int | None,
+) -> bool:
+    if language:
+        if str(item.get("original_language") or "").strip().lower() != language:
+            return False
+
+    release_year = _parse_release_year(
+        item.get("first_air_date") if media_type == "tv" else item.get("release_date")
+    )
+    if year_from is not None and (release_year is None or release_year < year_from):
+        return False
+    if year_to is not None and (release_year is None or release_year > year_to):
+        return False
+
+    item_genres = set(item.get("genre_ids") or [])
+    if genre_ids and not set(genre_ids).issubset(item_genres):
+        return False
+    if exclude_genre_ids and any(gid in item_genres for gid in exclude_genre_ids):
+        return False
+
+    if min_rating is not None and float(item.get("vote_average") or 0) < float(min_rating):
+        return False
+    if min_votes is not None and int(item.get("vote_count") or 0) < int(min_votes):
+        return False
+
+    if country:
+        if media_type == "tv":
+            origin = item.get("origin_country") or []
+            origin_codes = {str(code).strip().upper() for code in origin if isinstance(code, str)}
+            if origin_codes and country not in origin_codes:
+                return False
+
+    return True
+
+
+def _sort_advanced_results(results: list[dict], sort_by: str) -> list[dict]:
+    return _sort_advanced_mix_results(results, sort_by)
+
+
 def _extract_credit_ids(rows: list[dict] | None) -> set[int]:
     ids: set[int] = set()
     if not rows:
@@ -522,6 +582,110 @@ async def _advanced_discover_search(
     }
 
 
+async def _advanced_keyword_search(
+    media_type: str,
+    *,
+    keyword: str,
+    page: int,
+    limit: int,
+    country: str | None,
+    language: str | None,
+    year_from: int | None,
+    year_to: int | None,
+    genre_ids: list[int],
+    exclude_genre_ids: list[int],
+    min_rating: float | None,
+    min_votes: int | None,
+    actor_ids: list[int],
+    director_ids: list[int],
+    sort_by: str = "popularity.desc",
+    provider_ids: set[int] | None = None,
+    include_paid: bool = False,
+    allowed_countries: set[str] | None = None,
+    semaphore: asyncio.Semaphore | None = None,
+    flag_cache: dict[tuple[str, int, str], bool] | None = None,
+    scan_limit: int = 8,
+) -> dict:
+    p = max(1, page)
+    total_pages = 0
+    scanned = 0
+    results: list[dict] = []
+    seen_ids: set[int] = set()
+    provider_ids = provider_ids or set()
+    semaphore = semaphore or asyncio.Semaphore(FILTER_CONCURRENCY)
+    flag_cache = flag_cache or {}
+    role_cache: dict[tuple[str, int], bool] = {}
+    search_fn = tmdb.search_tv if media_type == "tv" else tmdb.search_movie
+
+    while len(results) < limit and scanned < scan_limit:
+        if total_pages and p > total_pages:
+            break
+        data = await search_fn(keyword, page=p)
+        total_pages = data.get("total_pages") or total_pages
+        raw = data.get("results", [])
+        if not raw:
+            break
+        page_candidates: list[dict] = []
+        for item in raw:
+            _normalize_result(item)
+            item["media_type"] = media_type
+            item_id = item.get("id")
+            if not item_id or item_id in seen_ids:
+                continue
+            if not _title_matches_keyword(item, keyword):
+                continue
+            if not _matches_basic_advanced_filters(
+                item,
+                media_type=media_type,
+                country=country,
+                language=language,
+                year_from=year_from,
+                year_to=year_to,
+                genre_ids=genre_ids,
+                exclude_genre_ids=exclude_genre_ids,
+                min_rating=min_rating,
+                min_votes=min_votes,
+            ):
+                continue
+            seen_ids.add(item_id)
+            page_candidates.append(item)
+        if actor_ids or director_ids:
+            page_candidates = await _filter_advanced_role_matches(
+                page_candidates,
+                media_type=media_type,
+                actor_ids=actor_ids,
+                director_ids=director_ids,
+                semaphore=semaphore,
+                role_cache=role_cache,
+            )
+        if provider_ids:
+            page_candidates = await _filter_results(
+                page_candidates,
+                provider_ids,
+                semaphore,
+                flag_cache,
+                media_type=media_type,
+                include_paid=include_paid,
+                allowed_countries=allowed_countries,
+            )
+        for item in _sort_advanced_results(page_candidates, sort_by):
+            results.append(item)
+            if len(results) >= limit:
+                break
+        scanned += 1
+        if total_pages and p >= total_pages:
+            p += 1
+            break
+        p += 1
+
+    next_page = p if total_pages and p <= total_pages else None
+    return {
+        "results": results[:limit],
+        "next_page": next_page,
+        "total_pages": total_pages,
+    }
+
+
 def _sort_advanced_mix_results(results: list[dict], sort_by: str) -> list[dict]:
     reverse = sort_by.endswith(".desc")
     if sort_by.startswith("release."):
@@ -810,36 +974,84 @@ async def search_advanced(
             sort_by=sort_key,
         )
         branch_limit = min(80, max(24, limit * 2))
-        movie_data, tv_data = await asyncio.gather(
-            _advanced_discover_search(
-                "movie",
-                movie_params,
-                page=page,
-                limit=branch_limit,
-                keyword=keyword,
-                provider_ids=ids if filtered_mode else None,
-                include_paid=include_paid_mode and filtered_mode,
-                allowed_countries=allowed_countries,
-                actor_ids=actor_people,
-                director_ids=director_people,
-                semaphore=semaphore,
-                flag_cache=flag_cache,
-            ),
-            _advanced_discover_search(
-                "tv",
-                tv_params,
-                page=page,
-                limit=branch_limit,
-                keyword=keyword,
-                provider_ids=ids if filtered_mode else None,
-                include_paid=include_paid_mode and filtered_mode,
-                allowed_countries=allowed_countries,
-                actor_ids=actor_people,
-                director_ids=director_people,
-                semaphore=semaphore,
-                flag_cache=flag_cache,
-            ),
-        )
+        if keyword:
+            movie_data, tv_data = await asyncio.gather(
+                _advanced_keyword_search(
+                    "movie",
+                    keyword=keyword,
+                    page=page,
+                    limit=branch_limit,
+                    country=country_code,
+                    language=language_code,
+                    year_from=year_from,
+                    year_to=year_to,
+                    genre_ids=include_genres,
+                    exclude_genre_ids=excluded_genres,
+                    min_rating=min_rating,
+                    min_votes=min_votes,
+                    actor_ids=actor_people,
+                    director_ids=director_people,
+                    sort_by=sort_key,
+                    provider_ids=ids if filtered_mode else None,
+                    include_paid=include_paid_mode and filtered_mode,
+                    allowed_countries=allowed_countries,
+                    semaphore=semaphore,
+                    flag_cache=flag_cache,
+                ),
+                _advanced_keyword_search(
+                    "tv",
+                    keyword=keyword,
+                    page=page,
+                    limit=branch_limit,
+                    country=country_code,
+                    language=language_code,
+                    year_from=year_from,
+                    year_to=year_to,
+                    genre_ids=include_genres,
+                    exclude_genre_ids=excluded_genres,
+                    min_rating=min_rating,
+                    min_votes=min_votes,
+                    actor_ids=actor_people,
+                    director_ids=director_people,
+                    sort_by=sort_key,
+                    provider_ids=ids if filtered_mode else None,
+                    include_paid=include_paid_mode and filtered_mode,
+                    allowed_countries=allowed_countries,
+                    semaphore=semaphore,
+                    flag_cache=flag_cache,
+                ),
+            )
+        else:
+            movie_data, tv_data = await asyncio.gather(
+                _advanced_discover_search(
+                    "movie",
+                    movie_params,
+                    page=page,
+                    limit=branch_limit,
+                    keyword=keyword,
+                    provider_ids=ids if filtered_mode else None,
+                    include_paid=include_paid_mode and filtered_mode,
+                    allowed_countries=allowed_countries,
+                    actor_ids=actor_people,
+                    director_ids=director_people,
+                    semaphore=semaphore,
+                    flag_cache=flag_cache,
+                ),
+                _advanced_discover_search(
+                    "tv",
+                    tv_params,
+                    page=page,
+                    limit=branch_limit,
+                    keyword=keyword,
+                    provider_ids=ids if filtered_mode else None,
+                    include_paid=include_paid_mode and filtered_mode,
+                    allowed_countries=allowed_countries,
+                    actor_ids=actor_people,
+                    director_ids=director_people,
+                    semaphore=semaphore,
+                    flag_cache=flag_cache,
+                ),
+            )
         seen: set[tuple[str, int]] = set()
         combined: list[dict] = []
         for item in movie_data.get("results", []) + tv_data.get("results", []):
@@ -877,20 +1089,45 @@ async def search_advanced(
         runtime_max=runtime_max,
         sort_by=sort_key,
     )
-    data = await _advanced_discover_search(
-        media_type,
-        params,
-        page=page,
-        limit=limit,
-        keyword=keyword,
-        provider_ids=ids if filtered_mode else None,
-        include_paid=include_paid_mode and filtered_mode,
-        allowed_countries=allowed_countries,
-        actor_ids=actor_people,
-        director_ids=director_people,
-        semaphore=semaphore,
-        flag_cache=flag_cache,
-    )
+    if keyword:
+        data = await _advanced_keyword_search(
+            media_type,
+            keyword=keyword,
+            page=page,
+            limit=limit,
+            country=country_code,
+            language=language_code,
+            year_from=year_from,
+            year_to=year_to,
+            genre_ids=include_genres,
+            exclude_genre_ids=excluded_genres,
+            min_rating=min_rating,
+            min_votes=min_votes,
+            actor_ids=actor_people,
+            director_ids=director_people,
+            sort_by=sort_key,
+            provider_ids=ids if filtered_mode else None,
+            include_paid=include_paid_mode and filtered_mode,
+            allowed_countries=allowed_countries,
+            semaphore=semaphore,
+            flag_cache=flag_cache,
+        )
+        data["results"] = _sort_advanced_results(data.get("results", []), sort_key)[:limit]
+    else:
+        data = await _advanced_discover_search(
+            media_type,
+            params,
+            page=page,
+            limit=limit,
+            keyword=keyword,
+            provider_ids=ids if filtered_mode else None,
+            include_paid=include_paid_mode and filtered_mode,
+            allowed_countries=allowed_countries,
+            actor_ids=actor_people,
+            director_ids=director_people,
+            semaphore=semaphore,
+            flag_cache=flag_cache,
+        )
     payload = {
         "results": data.get("results", []),
         "page": page,
