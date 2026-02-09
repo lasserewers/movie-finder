@@ -26,6 +26,7 @@ interface NotificationsContextValue {
   refresh: (forceRefresh?: boolean) => Promise<void>;
   clearUnreadIndicator: () => void;
   markRead: (notificationId: string) => Promise<void>;
+  markLatestUnreadForTitle: (tmdbId: number, mediaType: "movie" | "tv") => Promise<void>;
   removeNotification: (notificationId: string) => Promise<void>;
   markAllRead: () => Promise<void>;
 }
@@ -205,6 +206,28 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     [notifications, persistSeenMarkerForUser, refresh, user?.email]
   );
 
+  const markLatestUnreadForTitle = useCallback(
+    async (tmdbId: number, mediaType: "movie" | "tv") => {
+      let candidate = notifications.find(
+        (row) => !row.is_read && row.tmdb_id === tmdbId && row.media_type === mediaType
+      );
+      if (!candidate) {
+        try {
+          const data = await getNotifications({ limit: 200, unreadOnly: true, refresh: false });
+          const rows = data.results || [];
+          candidate = rows.find(
+            (row) => !row.is_read && row.tmdb_id === tmdbId && row.media_type === mediaType
+          );
+        } catch {
+          return;
+        }
+      }
+      if (!candidate) return;
+      await markRead(candidate.id);
+    },
+    [markRead, notifications]
+  );
+
   const removeNotification = useCallback(
     async (notificationId: string) => {
       const target = notifications.find((row) => row.id === notificationId);
@@ -279,6 +302,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       refresh,
       clearUnreadIndicator,
       markRead,
+      markLatestUnreadForTitle,
       removeNotification,
       markAllRead,
     }),
@@ -288,6 +312,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       hasUnreadIndicator,
       loading,
       markAllRead,
+      markLatestUnreadForTitle,
       markRead,
       removeNotification,
       notifications,

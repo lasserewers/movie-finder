@@ -59,6 +59,7 @@ function AppContent() {
     clearUnreadIndicator,
     loading: notificationsLoading,
     markRead,
+    markLatestUnreadForTitle,
     removeNotification,
     markAllRead,
     refresh: refreshNotifications,
@@ -128,6 +129,7 @@ function AppContent() {
   const hasStoredContentModePrefRef = useRef(false);
   const handledTitleDeepLinkRef = useRef(false);
   const pendingNotificationReadRef = useRef<string | null>(null);
+  const pendingTitleReadRef = useRef<{ tmdbId: number; mediaType: "movie" | "tv" } | null>(null);
 
   const [regions, setRegions] = useState<Region[]>([]);
   const [countryNameMap, setCountryNameMap] = useState<Record<string, string>>({});
@@ -498,12 +500,18 @@ function AppContent() {
     handledTitleDeepLinkRef.current = true;
     if (notificationId) {
       pendingNotificationReadRef.current = notificationId;
+      pendingTitleReadRef.current = null;
+    } else {
+      pendingTitleReadRef.current = { tmdbId: targetId, mediaType: targetType };
     }
     setSelectedMovie(targetId);
     setSelectedMovieType(targetType);
     if (notificationId && user) {
       void markRead(notificationId);
       pendingNotificationReadRef.current = null;
+    } else if (user) {
+      void markLatestUnreadForTitle(targetId, targetType);
+      pendingTitleReadRef.current = null;
     }
     try {
       const url = new URL(window.location.href);
@@ -527,10 +535,16 @@ function AppContent() {
   useEffect(() => {
     if (authLoading || !user) return;
     const pendingNotificationId = pendingNotificationReadRef.current;
-    if (!pendingNotificationId) return;
-    pendingNotificationReadRef.current = null;
-    void markRead(pendingNotificationId);
-  }, [authLoading, markRead, user]);
+    if (pendingNotificationId) {
+      pendingNotificationReadRef.current = null;
+      void markRead(pendingNotificationId);
+      return;
+    }
+    const pendingTitle = pendingTitleReadRef.current;
+    if (!pendingTitle) return;
+    pendingTitleReadRef.current = null;
+    void markLatestUnreadForTitle(pendingTitle.tmdbId, pendingTitle.mediaType);
+  }, [authLoading, markLatestUnreadForTitle, markRead, user]);
 
   useEffect(() => {
     if (authLoading || !user || onboardingOpen) return;
