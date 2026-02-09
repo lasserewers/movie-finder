@@ -54,6 +54,7 @@ ADVANCED_SORT_BY_OPTIONS = {
     "votes.asc",
 }
 ADVANCED_PAGE_SCAN_LIMIT = 4
+ADVANCED_SEARCH_CACHE_VERSION = "2"
 
 
 def _normalize_result(item: dict) -> dict:
@@ -755,7 +756,7 @@ async def search_advanced(
     paid_key = int(include_paid_mode and filtered_mode)
 
     cache_key = (
-        f"search_advanced:{media_type}:{page}:{limit}:{keyword or ''}:{country_code or ''}:{language_code or ''}:"
+        f"search_advanced:v{ADVANCED_SEARCH_CACHE_VERSION}:{media_type}:{page}:{limit}:{keyword or ''}:{country_code or ''}:{language_code or ''}:"
         f"{year_from or ''}:{year_to or ''}:{','.join(str(x) for x in include_genres)}:"
         f"{','.join(str(x) for x in excluded_genres)}:{','.join(str(x) for x in actor_people)}:"
         f"{','.join(str(x) for x in director_people)}:{min_rating if min_rating is not None else ''}:"
