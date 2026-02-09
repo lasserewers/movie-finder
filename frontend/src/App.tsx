@@ -1087,11 +1087,9 @@ function AppContent() {
         onRemoveNotification={removeNotification}
         onSelectMovie={handleSelectMovie}
         onOpenAlerts={() => {
-          handleCloseNotifications();
           setNotificationAlertsOverlayOpen(true);
         }}
         onOpenSettings={() => {
-          handleCloseNotifications();
           setNotificationSettingsOverlayOpen(true);
         }}
       />
