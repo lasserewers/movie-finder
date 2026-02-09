@@ -84,65 +84,64 @@ export default function WatchlistOverlay({ open, onClose, items, onSelectMovie }
             exit={{ y: 40, scale: 0.97 }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
           >
-            <div className="flex items-start justify-between gap-3 p-6 sm:p-8 pb-0 sm:pb-0 max-sm:flex-col max-sm:items-stretch">
-              <div className="min-w-0">
+            <button
+              onClick={onClose}
+              className="absolute top-6 right-6 sm:top-8 sm:right-8 w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors z-10"
+            >
+              &times;
+            </button>
+
+            <div className="p-6 sm:p-8 pb-0 sm:pb-0">
+              <div className="min-w-0 pr-12">
                 <h3 className="font-display text-2xl">Your Watchlist</h3>
                 <p className="text-sm text-muted mt-1">
                   {items.length} {items.length === 1 ? "title" : "titles"} saved
                 </p>
               </div>
-              <div className="flex items-start justify-between gap-2 max-sm:w-full">
-                <div className="flex flex-col gap-2 flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <label htmlFor="watchlist-sort" className="text-xs text-muted uppercase tracking-wide whitespace-nowrap">
-                      Sort by
-                    </label>
-                    <select
-                      id="watchlist-sort"
-                      value={sortMode}
-                      onChange={(e) => setSortMode(e.target.value as SortMode)}
-                      className="h-9 px-3 border border-border rounded-full bg-panel text-text text-sm outline-none focus:border-accent-2 transition-colors"
-                    >
-                      {SORT_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex w-full items-center rounded-full border border-border bg-panel overflow-hidden h-9">
-                    <button
-                      onClick={() => setMediaFilter("all")}
-                      className={`flex-1 h-full px-2 text-xs sm:text-sm transition-colors ${
-                        mediaFilter === "all" ? "bg-accent/15 text-text" : "text-muted hover:text-text"
-                      }`}
-                    >
-                      All
-                    </button>
-                    <button
-                      onClick={() => setMediaFilter("movie")}
-                      className={`flex-1 h-full px-2 text-xs sm:text-sm transition-colors ${
-                        mediaFilter === "movie" ? "bg-accent/15 text-text" : "text-muted hover:text-text"
-                      }`}
-                    >
-                      Movies
-                    </button>
-                    <button
-                      onClick={() => setMediaFilter("tv")}
-                      className={`flex-1 h-full px-2 text-xs sm:text-sm transition-colors ${
-                        mediaFilter === "tv" ? "bg-accent/15 text-text" : "text-muted hover:text-text"
-                      }`}
-                    >
-                      TV Shows
-                    </button>
-                  </div>
+              <div className="flex flex-col gap-2 mt-3">
+                <div className="flex items-center gap-2">
+                  <label htmlFor="watchlist-sort" className="text-xs text-muted uppercase tracking-wide whitespace-nowrap">
+                    Sort by
+                  </label>
+                  <select
+                    id="watchlist-sort"
+                    value={sortMode}
+                    onChange={(e) => setSortMode(e.target.value as SortMode)}
+                    className="h-9 px-3 border border-border rounded-full bg-panel text-text text-sm outline-none focus:border-accent-2 transition-colors"
+                  >
+                    {SORT_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <button
-                  onClick={onClose}
-                  className="w-9 h-9 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors flex-shrink-0"
-                >
-                  &times;
-                </button>
+                <div className="flex w-full items-center rounded-full border border-border bg-panel overflow-hidden h-9">
+                  <button
+                    onClick={() => setMediaFilter("all")}
+                    className={`flex-1 h-full px-2 text-xs sm:text-sm transition-colors ${
+                      mediaFilter === "all" ? "bg-accent/15 text-text" : "text-muted hover:text-text"
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => setMediaFilter("movie")}
+                    className={`flex-1 h-full px-2 text-xs sm:text-sm transition-colors ${
+                      mediaFilter === "movie" ? "bg-accent/15 text-text" : "text-muted hover:text-text"
+                    }`}
+                  >
+                    Movies
+                  </button>
+                  <button
+                    onClick={() => setMediaFilter("tv")}
+                    className={`flex-1 h-full px-2 text-xs sm:text-sm transition-colors ${
+                      mediaFilter === "tv" ? "bg-accent/15 text-text" : "text-muted hover:text-text"
+                    }`}
+                  >
+                    TV Shows
+                  </button>
+                </div>
               </div>
             </div>
 
