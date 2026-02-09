@@ -4,7 +4,15 @@ import { getMovieProviders, getMovieScores, getMovieLinks, getTvProviders, getTv
 import { useConfig } from "../hooks/useConfig";
 import { useAuth } from "../hooks/useAuth";
 import { useWatchlist } from "../hooks/useWatchlist";
+import { useNotifications } from "../hooks/useNotifications";
 import { ApiError } from "../api/client";
+import {
+  cancelNotificationSubscription,
+  createNotificationSubscription,
+  getNotificationOptions,
+  type NotificationConditionType,
+  type NotificationOptionsResponse,
+} from "../api/notifications";
 import ProviderGrid from "./ProviderGrid";
 import CreditsModal from "./CreditsModal";
 import PersonWorksModal from "./PersonWorksModal";
@@ -296,6 +304,7 @@ export default function MovieOverlay({
   guestCountry,
 }: Props) {
   const { user } = useAuth();
+  const { refresh: refreshNotifications } = useNotifications();
   const { isInWatchlist, toggle } = useWatchlist();
   const { countries } = useConfig();
   const [movie, setMovie] = useState<Movie | null>(null);
@@ -307,6 +316,11 @@ export default function MovieOverlay({
   const [watchlistBusy, setWatchlistBusy] = useState(false);
   const [watchlistErr, setWatchlistErr] = useState("");
   const [scoresLoading, setScoresLoading] = useState(false);
+  const [alertOptions, setAlertOptions] = useState<NotificationOptionsResponse | null>(null);
+  const [alertOptionsLoading, setAlertOptionsLoading] = useState(false);
+  const [alertPanelOpen, setAlertPanelOpen] = useState(false);
+  const [alertBusyCondition, setAlertBusyCondition] = useState<NotificationConditionType | null>(null);
+  const [alertErr, setAlertErr] = useState("");
 
   useEffect(() => {
     if (!movieId) {
@@ -371,6 +385,37 @@ export default function MovieOverlay({
   }, [movieId, itemMediaType, guestCountry, countries]);
 
   useEffect(() => {
+    if (!movieId || !user) {
+      setAlertOptions(null);
+      setAlertOptionsLoading(false);
+      setAlertPanelOpen(false);
+      setAlertBusyCondition(null);
+      setAlertErr("");
+      return;
+    }
+    let cancelled = false;
+    setAlertOptionsLoading(true);
+    setAlertOptions(null);
+    setAlertPanelOpen(false);
+    setAlertBusyCondition(null);
+    setAlertErr("");
+    const mediaType: "movie" | "tv" = itemMediaType === "tv" ? "tv" : "movie";
+    getNotificationOptions(mediaType, movieId)
+      .then((data) => {
+        if (!cancelled) setAlertOptions(data);
+      })
+      .catch(() => {
+        if (!cancelled) setAlertOptions(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAlertOptionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [movieId, itemMediaType, user]);
+
+  useEffect(() => {
     if (!movieId) {
       setCreditsOpen(false);
       setSelectedPersonId(null);
@@ -412,6 +457,76 @@ export default function MovieOverlay({
       );
     } finally {
       setWatchlistBusy(false);
+    }
+  };
+
+  const pendingAlertOptions = (alertOptions?.options || []).filter((option) => !option.currently_met);
+  const hasRegisteredAlert = !!alertOptions?.options?.some((option) => option.already_subscribed);
+  const showAlertCta = !!user && !!alertOptions?.show_button && pendingAlertOptions.length > 0;
+
+  const handleCreateAlert = async (conditionType: NotificationConditionType) => {
+    if (!movie || !user || alertBusyCondition) return;
+    setAlertBusyCondition(conditionType);
+    setAlertErr("");
+    try {
+      const result = await createNotificationSubscription({
+        media_type: mediaTypeSafe,
+        tmdb_id: movie.id,
+        title: movie.title,
+        poster_path: movie.poster_path || null,
+        condition_type: conditionType,
+      });
+      setAlertOptions((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          options: prev.options.map((option) =>
+            option.condition_type === conditionType
+              ? {
+                  ...option,
+                  already_subscribed: true,
+                  active_subscription_id: result.subscription.id,
+                }
+              : {
+                  ...option,
+                  already_subscribed: false,
+                  active_subscription_id: null,
+                }
+          ),
+        };
+      });
+      void refreshNotifications(false);
+    } catch (err) {
+      const e = err as ApiError;
+      setAlertErr(err instanceof ApiError ? e.message : "Could not create alert.");
+    } finally {
+      setAlertBusyCondition(null);
+    }
+  };
+
+  const handleRemoveAlert = async (conditionType: NotificationConditionType) => {
+    if (alertBusyCondition) return;
+    const subscriptionId = alertOptions?.options.find(
+      (option) => option.condition_type === conditionType
+    )?.active_subscription_id;
+    if (!subscriptionId) return;
+    setAlertBusyCondition(conditionType);
+    setAlertErr("");
+    try {
+      await cancelNotificationSubscription(subscriptionId);
+      setAlertOptions((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          options: prev.options.map((option) => ({ ...option, already_subscribed: false, active_subscription_id: null })),
+        };
+      });
+      void refreshNotifications(false);
+    } catch (err) {
+      const e = err as ApiError;
+      setAlertErr(err instanceof ApiError ? e.message : "Could not remove alert.");
+    } finally {
+      setAlertBusyCondition(null);
     }
   };
 
@@ -480,6 +595,7 @@ export default function MovieOverlay({
                             <svg
                               width="12"
                               height="12"
+                              className="w-3 h-3 shrink-0"
                               viewBox="0 0 24 24"
                               fill={watchlisted ? "currentColor" : "none"}
                               stroke="currentColor"
@@ -538,6 +654,100 @@ export default function MovieOverlay({
                       )}
                     </div>
                   </div>
+
+                  {user && (
+                    <div className="mb-4 sm:mb-5">
+                      {alertOptionsLoading && (
+                        <div className="text-xs text-muted">Checking alert options...</div>
+                      )}
+                      {showAlertCta && (
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAlertPanelOpen((prev) => !prev);
+                              setAlertErr("");
+                            }}
+                            className={`h-[34px] px-3 border rounded-full text-xs sm:text-sm transition-colors inline-flex items-center gap-1.5 ${
+                              hasRegisteredAlert
+                                ? "border-accent/70 bg-accent/15 text-text"
+                                : "border-border bg-panel-2 text-muted hover:text-text hover:border-accent-2"
+                            }`}
+                          >
+                            <svg
+                              width="12"
+                              height="12"
+                              className="w-3 h-3 shrink-0"
+                              viewBox="0 0 24 24"
+                              fill={hasRegisteredAlert ? "currentColor" : "none"}
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                            </svg>
+                            <span>{alertOptions?.cta_text || "Set an availability alert"}</span>
+                          </button>
+                          {alertPanelOpen && (
+                            <div className="mt-2 rounded-xl border border-border bg-panel-2/70 p-3 max-w-[540px]">
+                              <div className="space-y-2">
+                                {pendingAlertOptions.map((option) => (
+                                  <div
+                                    key={option.condition_type}
+                                    className={`rounded-lg border p-2.5 ${
+                                      option.already_subscribed
+                                        ? "border-2 border-accent/80 bg-panel/70"
+                                        : "border-border/80 bg-panel/70"
+                                    }`}
+                                  >
+                                    <div className="text-xs text-text">{option.label}</div>
+                                    <div className="text-[0.7rem] text-muted mt-1">{option.description}</div>
+                                    <div className="mt-2 flex justify-end">
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          !!alertBusyCondition ||
+                                          (option.already_subscribed && !option.active_subscription_id)
+                                        }
+                                        onClick={() => {
+                                          if (option.already_subscribed) {
+                                            void handleRemoveAlert(option.condition_type);
+                                          } else {
+                                            void handleCreateAlert(option.condition_type);
+                                          }
+                                        }}
+                                        className={`h-7 px-2.5 rounded-full border text-[0.68rem] transition-colors disabled:opacity-55 disabled:cursor-not-allowed ${
+                                          option.already_subscribed
+                                            ? "border-red-500/60 bg-red-500/10 text-red-200 hover:border-red-400"
+                                            : "border-accent/70 bg-accent/15 text-text hover:border-accent-2"
+                                        }`}
+                                      >
+                                        {option.already_subscribed
+                                          ? alertBusyCondition === option.condition_type
+                                            ? "Removing..."
+                                            : "Remove"
+                                          : alertBusyCondition === option.condition_type
+                                            ? "Adding..."
+                                            : "Notify me"}
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {alertErr && (
+                                <div className="mt-2 text-xs text-red-300 bg-red-400/10 rounded-md px-2 py-1">
+                                  {alertErr}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <ProviderGrid
                     providers={providers}

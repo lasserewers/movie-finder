@@ -23,6 +23,18 @@ async def init_db():
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ NULL"))
+        await conn.execute(
+            text(
+                "ALTER TABLE user_preferences "
+                "ADD COLUMN IF NOT EXISTS notification_deliver_in_app BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_preferences "
+                "ADD COLUMN IF NOT EXISTS notification_deliver_email BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
 
         configured_admins = [
             email.strip().lower()

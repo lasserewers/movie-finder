@@ -38,6 +38,14 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    notification_subscriptions: Mapped[list["NotificationSubscription"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    notifications: Mapped[list["UserNotification"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class UserPreferences(Base):
@@ -47,6 +55,8 @@ class UserPreferences(Base):
     provider_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list)
     countries: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     theme: Mapped[str] = mapped_column(String, default="dark")
+    notification_deliver_in_app: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notification_deliver_email: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="preferences")
 
@@ -115,6 +125,62 @@ class WatchlistItem(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="watchlist_items")
+
+
+class NotificationSubscription(Base):
+    __tablename__ = "notification_subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    media_type: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
+    tmdb_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    poster_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    condition_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    deliver_in_app: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    deliver_email: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="notification_subscriptions")
+    notifications: Mapped[list["UserNotification"]] = relationship(back_populates="subscription")
+
+
+class UserNotification(Base):
+    __tablename__ = "user_notifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    subscription_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("notification_subscriptions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    media_type: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
+    tmdb_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    poster_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    condition_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="notifications")
+    subscription: Mapped["NotificationSubscription"] = relationship(back_populates="notifications")
 
 
 class AuditLog(Base):

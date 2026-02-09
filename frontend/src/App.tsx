@@ -2,12 +2,16 @@ import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "rea
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { ConfigProvider, useConfig } from "./hooks/useConfig";
 import { WatchlistProvider, useWatchlist } from "./hooks/useWatchlist";
+import { NotificationsProvider, useNotifications } from "./hooks/useNotifications";
 import Topbar from "./components/Topbar";
 import HeroSection from "./components/HeroSection";
 import MovieRow from "./components/MovieRow";
 import MovieOverlay from "./components/MovieOverlay";
 import SectionOverlay from "./components/SectionOverlay";
 import WatchlistOverlay from "./components/WatchlistOverlay";
+import NotificationsOverlay from "./components/NotificationsOverlay";
+import NotificationAlertsOverlay from "./components/NotificationAlertsOverlay";
+import NotificationSettingsOverlay from "./components/NotificationSettingsOverlay";
 import SearchOverlay from "./components/SearchOverlay";
 import AdvancedSearchModal from "./components/AdvancedSearchModal";
 import AuthModal from "./components/AuthModal";
@@ -49,6 +53,17 @@ function AppContent() {
   const { user, loading: authLoading } = useAuth();
   const { providerIds, countries, loadConfig, saveConfig } = useConfig();
   const { items: watchlistItems, loading: watchlistLoading } = useWatchlist();
+  const {
+    notifications,
+    unreadCount,
+    activeAlerts,
+    clearUnreadIndicator,
+    loading: notificationsLoading,
+    markRead,
+    removeNotification,
+    markAllRead,
+    refresh: refreshNotifications,
+  } = useNotifications();
 
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInitialMode, setAuthInitialMode] = useState<"login" | "signup">("login");
@@ -64,6 +79,9 @@ function AppContent() {
   const [selectedMovieType, setSelectedMovieType] = useState<"movie" | "tv">("movie");
   const [selectedSection, setSelectedSection] = useState<HomeSection | null>(null);
   const [watchlistOverlayOpen, setWatchlistOverlayOpen] = useState(false);
+  const [notificationsOverlayOpen, setNotificationsOverlayOpen] = useState(false);
+  const [notificationAlertsOverlayOpen, setNotificationAlertsOverlayOpen] = useState(false);
+  const [notificationSettingsOverlayOpen, setNotificationSettingsOverlayOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFiltered, setSearchFiltered] = useState(false);
@@ -531,6 +549,13 @@ function AppContent() {
     }
   }, [user, watchlistOverlayOpen]);
 
+  useEffect(() => {
+    if (user) return;
+    if (notificationsOverlayOpen) setNotificationsOverlayOpen(false);
+    if (notificationAlertsOverlayOpen) setNotificationAlertsOverlayOpen(false);
+    if (notificationSettingsOverlayOpen) setNotificationSettingsOverlayOpen(false);
+  }, [user, notificationsOverlayOpen, notificationAlertsOverlayOpen, notificationSettingsOverlayOpen]);
+
   const handleMediaTypeChange = (next: MediaType) => {
     setMediaType(next);
     if (next === "mix") setRowResetToken((v) => v + 1);
@@ -565,6 +590,15 @@ function AppContent() {
     }
     setWatchlistOverlayOpen(true);
   }, [openAuthModal, user]);
+  const handleOpenNotifications = useCallback(() => {
+    if (!user) {
+      openAuthModal("login");
+      return;
+    }
+    clearUnreadIndicator();
+    void refreshNotifications(true);
+    setNotificationsOverlayOpen(true);
+  }, [clearUnreadIndicator, openAuthModal, refreshNotifications, user]);
   const handleSeeMore = useCallback(
     (id: string) => {
       if (id === "__watchlist__") {
@@ -584,6 +618,9 @@ function AppContent() {
     selectedMovie !== null ||
     selectedSection !== null ||
     watchlistOverlayOpen ||
+    notificationsOverlayOpen ||
+    notificationAlertsOverlayOpen ||
+    notificationSettingsOverlayOpen ||
     searchOpen ||
     advancedSearchOpen ||
     settingsOpen ||
@@ -645,6 +682,7 @@ function AppContent() {
           onSelectMovie={handleSelectMovie}
           onLoginClick={() => openAuthModal("login")}
           onOpenProfile={() => setProfileOpen(true)}
+          onOpenNotifications={handleOpenNotifications}
           onOpenWatchlist={handleOpenWatchlist}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenCountries={() => setCountriesModalOpen(true)}
@@ -949,6 +987,38 @@ function AppContent() {
         onSelectMovie={handleSelectMovie}
       />
 
+      <NotificationsOverlay
+        open={notificationsOverlayOpen}
+        onClose={() => setNotificationsOverlayOpen(false)}
+        notifications={notifications}
+        loading={notificationsLoading}
+        unreadCount={unreadCount}
+        activeAlerts={activeAlerts}
+        onMarkRead={markRead}
+        onMarkAllRead={markAllRead}
+        onRemoveNotification={removeNotification}
+        onSelectMovie={handleSelectMovie}
+        onOpenAlerts={() => {
+          setNotificationsOverlayOpen(false);
+          setNotificationAlertsOverlayOpen(true);
+        }}
+        onOpenSettings={() => {
+          setNotificationsOverlayOpen(false);
+          setNotificationSettingsOverlayOpen(true);
+        }}
+      />
+
+      <NotificationAlertsOverlay
+        open={notificationAlertsOverlayOpen}
+        onClose={() => setNotificationAlertsOverlayOpen(false)}
+        onSelectMovie={handleSelectMovie}
+      />
+
+      <NotificationSettingsOverlay
+        open={notificationSettingsOverlayOpen}
+        onClose={() => setNotificationSettingsOverlayOpen(false)}
+      />
+
       <SearchOverlay
         open={searchOpen}
         query={searchQuery}
@@ -1024,11 +1094,13 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <WatchlistProvider>
-        <ConfigProvider>
-          <AppContent />
-        </ConfigProvider>
-      </WatchlistProvider>
+      <NotificationsProvider>
+        <WatchlistProvider>
+          <ConfigProvider>
+            <AppContent />
+          </ConfigProvider>
+        </WatchlistProvider>
+      </NotificationsProvider>
     </AuthProvider>
   );
 }

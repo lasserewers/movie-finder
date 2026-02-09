@@ -27,6 +27,7 @@ from .auth import get_current_user, get_optional_user, verify_csrf
 from .routes_auth import router as auth_router
 from .routes_admin import router as admin_router
 from .routes_watchlist import router as watchlist_router
+from .routes_notifications import router as notifications_router
 
 WATCH_PROVIDER_TTL = 6 * 60 * 60
 WATCH_PROVIDER_CACHE: dict[tuple[str, int], tuple[float, dict]] = {}
@@ -139,6 +140,7 @@ if ALLOWED_ORIGINS:
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(watchlist_router)
+app.include_router(notifications_router)
 
 
 def _parse_csv_int_values(raw: str | None, max_items: int = 12) -> list[int]:

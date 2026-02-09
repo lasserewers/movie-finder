@@ -339,3 +339,27 @@ async def send_account_reactivated_email(to_email: str) -> bool:
         cta_url=FRONTEND_BASE_URL,
     )
     return await send_email(to_email, subject, text_body, html_body)
+
+
+async def send_availability_notification_email(to_email: str, *, title: str, message: str) -> bool:
+    safe_title = (title or "Title").strip() or "Title"
+    safe_message = (message or f"{safe_title} has a new availability update.").strip()
+    escaped_message = html.escape(safe_message)
+    subject = f"Availability update: {safe_title}"
+    text_body = (
+        f"{safe_message}\n\n"
+        f"Open FullStreamer: {FRONTEND_BASE_URL}\n\n"
+        "You can manage your alerts from your profile dropdown."
+    )
+    html_body = _render_email_html(
+        preheader=f"Availability update for {safe_title}",
+        title="Availability Alert",
+        subtitle=f"We found a new availability update for {safe_title}.",
+        body_html=(
+            f"<p style=\"margin:0 0 12px 0;\">{escaped_message}</p>"
+            "<p style=\"margin:0;\">You can manage your alerts in FullStreamer from your profile dropdown.</p>"
+        ),
+        cta_label="Open FullStreamer",
+        cta_url=FRONTEND_BASE_URL,
+    )
+    return await send_email(to_email, subject, text_body, html_body)

@@ -8,6 +8,7 @@ interface Props {
   onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
   onLoginClick: () => void;
   onOpenProfile: () => void;
+  onOpenNotifications: () => void;
   onOpenWatchlist: () => void;
   onOpenSettings: () => void;
   onOpenCountries: () => void;
@@ -21,6 +22,7 @@ export default function Topbar({
   onSelectMovie,
   onLoginClick,
   onOpenProfile,
+  onOpenNotifications,
   onOpenWatchlist,
   onOpenSettings,
   onOpenCountries,
@@ -129,6 +131,7 @@ export default function Topbar({
         {user ? (
           <UserMenu
             onOpenProfile={onOpenProfile}
+            onOpenNotifications={onOpenNotifications}
             onOpenWatchlist={onOpenWatchlist}
             onOpenSettings={onOpenSettings}
             onOpenCountries={onOpenCountries}
