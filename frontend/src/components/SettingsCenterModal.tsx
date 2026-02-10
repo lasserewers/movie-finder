@@ -91,7 +91,7 @@ const SECTION_OPTIONS: Array<{ id: SettingsCenterSection; label: string }> = [
   { id: "countries", label: "Countries" },
   { id: "services", label: "Services" },
   { id: "home", label: "Home screen" },
-  { id: "linked", label: "Linked accounts" },
+  { id: "linked", label: "Sync accounts" },
   { id: "subscription", label: "Subscription" },
 ];
 
@@ -1384,7 +1384,7 @@ export default function SettingsCenterModal({
       return (
         <div className="space-y-4">
           <div>
-            <h4 className="text-sm font-semibold text-text">Linked accounts</h4>
+            <h4 className="text-sm font-semibold text-text">Sync accounts</h4>
             <p className="text-sm text-muted mt-1">
               Upload your Letterboxd data export ZIP to sync watchlist and watched titles.
             </p>
@@ -1569,28 +1569,27 @@ export default function SettingsCenterModal({
             <div className="text-sm text-red-300 bg-red-500/10 rounded-md px-3 py-2">{linkedErr}</div>
           )}
 
-          {linkedMessage && (
-            <div
-              className={`text-sm rounded-md px-3 py-2 ${
-                linkedStatus === "private" ||
-                linkedStatus === "not_found" ||
-                linkedStatus === "blocked" ||
-                linkedStatus === "unreachable" ||
-                linkedStatus === "empty" ||
-                linkedStatus === "no_matches"
-                  ? "text-red-300 bg-red-500/10"
-                  : "text-green-300 bg-green-500/10"
-              }`}
-            >
-              {linkedMessage}
-            </div>
-          )}
-
-          {(linkedStatus || linkedLastSyncAt) && (
+          {(linkedStatus || linkedLastSyncAt || linkedMessage) && (
             <div className="text-xs text-muted border border-border/70 rounded-lg px-3 py-2 space-y-1">
               {linkedLastUsername && <div>Last export username: {linkedLastUsername}</div>}
               <div>Status: {linkedStatus || "unknown"}</div>
               <div>Last sync: {linkedLastSyncAt ? new Date(linkedLastSyncAt).toLocaleString() : "Never"}</div>
+              {linkedMessage && (
+                <div
+                  className={
+                    linkedStatus === "private" ||
+                    linkedStatus === "not_found" ||
+                    linkedStatus === "blocked" ||
+                    linkedStatus === "unreachable" ||
+                    linkedStatus === "empty" ||
+                    linkedStatus === "no_matches"
+                      ? "text-red-300"
+                      : "text-green-300"
+                  }
+                >
+                  Last message: {linkedMessage}
+                </div>
+              )}
             </div>
           )}
         </div>
