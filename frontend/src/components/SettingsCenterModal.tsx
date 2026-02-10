@@ -10,11 +10,13 @@ import {
 import {
   getLetterboxdSyncState,
   syncLetterboxdWatchlist,
+  syncLetterboxdWatchedTitles,
   unlinkLetterboxdWatchlist,
   type LetterboxdSyncStatus,
 } from "../api/linkedAccounts";
 import { useAuth } from "../hooks/useAuth";
 import { useConfig } from "../hooks/useConfig";
+import { useWatched } from "../hooks/useWatched";
 import type { ProviderInfo, Region } from "../api/movies";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
@@ -99,6 +101,7 @@ export default function SettingsCenterModal({
 }: Props) {
   const { user, logout } = useAuth();
   const { providerIds, countries, allProviders, saveConfig, loadProviders, expandIds, theme, setTheme } = useConfig();
+  const { refresh: refreshWatched } = useWatched();
 
   const [activeSection, setActiveSection] = useState<SettingsCenterSection>(initialSection);
 
@@ -126,6 +129,7 @@ export default function SettingsCenterModal({
   const [notificationErr, setNotificationErr] = useState("");
   const [linkedLoading, setLinkedLoading] = useState(false);
   const [linkedSyncing, setLinkedSyncing] = useState(false);
+  const [linkedWatchedSyncing, setLinkedWatchedSyncing] = useState(false);
   const [linkedUnlinking, setLinkedUnlinking] = useState(false);
   const [linkedSavedUsername, setLinkedSavedUsername] = useState<string | null>(null);
   const [linkedUsernameInput, setLinkedUsernameInput] = useState("");
@@ -400,6 +404,8 @@ export default function SettingsCenterModal({
   const inputClass =
     "w-full px-3 py-2.5 text-sm border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors";
   const linkedIsConnected = Boolean((linkedSavedUsername || "").trim());
+  const resolveLinkedUsernameForSync = () =>
+    (linkedIsConnected ? linkedSavedUsername || "" : linkedUsernameInput).trim();
 
   const handleEmailSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -472,8 +478,8 @@ export default function SettingsCenterModal({
 
   const handleLetterboxdSync = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (linkedSyncing || linkedUnlinking) return;
-    const usernameToSync = (linkedIsConnected ? linkedSavedUsername || "" : linkedUsernameInput).trim();
+    if (linkedSyncing || linkedWatchedSyncing || linkedUnlinking) return;
+    const usernameToSync = resolveLinkedUsernameForSync();
     if (!usernameToSync) {
       setLinkedErr("Letterboxd username is required.");
       return;
@@ -501,8 +507,41 @@ export default function SettingsCenterModal({
     }
   };
 
+  const handleLetterboxdWatchedSync = async () => {
+    if (linkedSyncing || linkedWatchedSyncing || linkedUnlinking) return;
+    const usernameToSync = resolveLinkedUsernameForSync();
+    if (!usernameToSync) {
+      setLinkedErr("Letterboxd username is required.");
+      return;
+    }
+    setLinkedWatchedSyncing(true);
+    setLinkedErr("");
+    setLinkedMessage("");
+    try {
+      const result = await syncLetterboxdWatchedTitles(usernameToSync);
+      const normalizedUsername = (result.username || usernameToSync).trim();
+      setLinkedStatus(result.status);
+      setLinkedMessage(result.message || "");
+      setLinkedLastSyncAt(new Date().toISOString());
+      setLinkedSavedUsername(normalizedUsername || null);
+      setLinkedUsernameInput(normalizedUsername);
+      if (result.ok) {
+        await refreshWatched();
+        onSaved();
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 405) {
+        setLinkedErr("Linked watched sync is unavailable on the current backend process. Restart backend and try again.");
+      } else {
+        setLinkedErr(err instanceof ApiError ? err.message : "Could not sync watched titles from Letterboxd.");
+      }
+    } finally {
+      setLinkedWatchedSyncing(false);
+    }
+  };
+
   const handleLetterboxdUnlink = async () => {
-    if (linkedUnlinking || linkedSyncing || !linkedIsConnected) return;
+    if (linkedUnlinking || linkedSyncing || linkedWatchedSyncing || !linkedIsConnected) return;
     setLinkedUnlinking(true);
     setLinkedErr("");
     setLinkedMessage("");
@@ -1283,16 +1322,28 @@ export default function SettingsCenterModal({
           <div>
             <h4 className="text-sm font-semibold text-text">Linked accounts</h4>
             <p className="text-sm text-muted mt-1">
-              Connect your Letterboxd account to import and merge your Letterboxd watchlist.
+              Connect your Letterboxd account to sync both watchlist and watched titles.
             </p>
           </div>
 
           <form onSubmit={handleLetterboxdSync} className="space-y-3">
             {linkedIsConnected ? (
               <div className="rounded-lg border border-border/80 bg-bg/40 px-3 py-2.5">
-                <div className="text-sm font-semibold text-text">Linked to {linkedSavedUsername}</div>
-                <div className="text-xs text-muted mt-1">
-                  Unlink this account to connect a different Letterboxd username.
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-text truncate">Linked to {linkedSavedUsername}</div>
+                    <div className="text-xs text-muted mt-1">
+                      Unlink this account to connect a different Letterboxd username.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleLetterboxdUnlink}
+                    disabled={linkedSyncing || linkedWatchedSyncing || linkedLoading || linkedUnlinking}
+                    className="px-3 py-1.5 rounded-md border border-border/80 bg-panel text-text text-xs font-semibold hover:border-accent-2 transition-colors disabled:opacity-50 flex-shrink-0"
+                  >
+                    {linkedUnlinking ? "Unlinking..." : "Unlink"}
+                  </button>
                 </div>
               </div>
             ) : (
@@ -1309,31 +1360,34 @@ export default function SettingsCenterModal({
                   className={inputClass}
                   autoComplete="off"
                   spellCheck={false}
-                  disabled={linkedSyncing || linkedLoading || linkedUnlinking}
+                  disabled={linkedSyncing || linkedWatchedSyncing || linkedLoading || linkedUnlinking}
                 />
               </>
             )}
             <div className="text-xs text-muted">
               Syncs, adds, and merges titles from Letterboxd, and anything already in your FullStreamer watchlist stays there.
             </div>
+            {(linkedSyncing || linkedWatchedSyncing) && (
+              <div className="text-xs rounded-md border border-accent/35 bg-accent/10 px-3 py-2 text-accent-2">
+                Please wait. Syncing can take some time for large Letterboxd libraries.
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="submit"
-                disabled={linkedSyncing || linkedLoading || linkedUnlinking}
+                disabled={linkedSyncing || linkedWatchedSyncing || linkedLoading || linkedUnlinking}
                 className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 text-sm"
               >
                 {linkedSyncing ? "Syncing..." : linkedIsConnected ? "Sync watchlist now" : "Sync watchlist"}
               </button>
-              {linkedIsConnected && (
-                <button
-                  type="button"
-                  onClick={handleLetterboxdUnlink}
-                  disabled={linkedSyncing || linkedLoading || linkedUnlinking}
-                  className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-panel text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
-                >
-                  {linkedUnlinking ? "Unlinking..." : "Unlink"}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleLetterboxdWatchedSync}
+                disabled={linkedSyncing || linkedWatchedSyncing || linkedLoading || linkedUnlinking}
+                className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 text-sm"
+              >
+                {linkedWatchedSyncing ? "Syncing watched..." : linkedIsConnected ? "Sync watched titles now" : "Sync watched titles"}
+              </button>
             </div>
           </form>
 

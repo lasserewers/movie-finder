@@ -37,7 +37,16 @@ export async function syncLetterboxdWatchlist(username: string): Promise<Letterb
     method: "POST",
     body: JSON.stringify({ username }),
     // Large watchlists can take longer due to TMDB title matching.
-    timeoutMs: 180000,
+    timeoutMs: 600000,
+  });
+}
+
+export async function syncLetterboxdWatchedTitles(username: string): Promise<LetterboxdSyncResult> {
+  return apiFetch<LetterboxdSyncResult>("/api/watched/sync/letterboxd", {
+    method: "POST",
+    body: JSON.stringify({ username }),
+    // Watched histories can be very large.
+    timeoutMs: 1200000,
   });
 }
 
