@@ -4,6 +4,7 @@ import { getMovieProviders, getMovieScores, getMovieLinks, getTvProviders, getTv
 import { useConfig } from "../hooks/useConfig";
 import { useAuth } from "../hooks/useAuth";
 import { useWatchlist } from "../hooks/useWatchlist";
+import { useWatched } from "../hooks/useWatched";
 import { useNotifications } from "../hooks/useNotifications";
 import { ApiError } from "../api/client";
 import {
@@ -306,6 +307,7 @@ export default function MovieOverlay({
   const { user } = useAuth();
   const { refresh: refreshNotifications } = useNotifications();
   const { isInWatchlist, toggle } = useWatchlist();
+  const { isWatched, toggle: toggleWatched } = useWatched();
   const { countries } = useConfig();
   const [movie, setMovie] = useState<Movie | null>(null);
   const [providers, setProviders] = useState<Record<string, CountryProviders>>({});
@@ -315,6 +317,8 @@ export default function MovieOverlay({
   const [selectedPersonId, setSelectedPersonId] = useState<number | null>(null);
   const [watchlistBusy, setWatchlistBusy] = useState(false);
   const [watchlistErr, setWatchlistErr] = useState("");
+  const [watchedBusy, setWatchedBusy] = useState(false);
+  const [watchedErr, setWatchedErr] = useState("");
   const [scoresLoading, setScoresLoading] = useState(false);
   const [alertOptions, setAlertOptions] = useState<NotificationOptionsResponse | null>(null);
   const [alertOptionsLoading, setAlertOptionsLoading] = useState(false);
@@ -431,6 +435,7 @@ export default function MovieOverlay({
   const hideCreditsButtonOnDesktop = cast.length <= 6 && crew.length === 0;
   const mediaTypeSafe: "movie" | "tv" = itemMediaType || (movie?.number_of_seasons != null ? "tv" : "movie");
   const watchlisted = !!(movie && user && isInWatchlist(mediaTypeSafe, movie.id));
+  const watched = !!(movie && user && isWatched(mediaTypeSafe, movie.id));
 
   const posterUrl = movie?.poster_path ? `${TMDB_IMG}/w300${movie.poster_path}` : "";
   const handleToggleWatchlist = async () => {
@@ -457,6 +462,33 @@ export default function MovieOverlay({
       );
     } finally {
       setWatchlistBusy(false);
+    }
+  };
+
+  const handleToggleWatched = async () => {
+    if (!movie || !user || watchedBusy) return;
+    setWatchedBusy(true);
+    setWatchedErr("");
+    try {
+      await toggleWatched({
+        tmdb_id: movie.id,
+        media_type: mediaTypeSafe,
+        title: movie.title,
+        poster_path: movie.poster_path,
+        release_date: movie.release_date,
+      });
+    } catch (err) {
+      const e = err as ApiError;
+      console.error("Watched toggle failed", e.message || err);
+      setWatchedErr(
+        err instanceof ApiError
+          ? e.status === 401
+            ? "Please log in again."
+            : e.message || "Could not update watched status."
+          : "Could not update watched status."
+      );
+    } finally {
+      setWatchedBusy(false);
     }
   };
 
@@ -582,34 +614,66 @@ export default function MovieOverlay({
                       </p>
                       {user && (
                         <>
-                          <button
-                            type="button"
-                            onClick={handleToggleWatchlist}
-                            disabled={watchlistBusy}
-                            className={`mb-2 h-[34px] px-3 border rounded-full text-xs sm:text-sm transition-colors inline-flex items-center gap-1.5 ${
-                              watchlisted
-                                ? "border-accent/70 bg-accent/15 text-text"
-                                : "border-border bg-panel-2 text-muted hover:text-text hover:border-accent-2"
-                            } disabled:opacity-55 disabled:cursor-not-allowed`}
-                          >
-                            <svg
-                              width="12"
-                              height="12"
-                              className="w-3 h-3 shrink-0"
-                              viewBox="0 0 24 24"
-                              fill={watchlisted ? "currentColor" : "none"}
-                              stroke="currentColor"
-                              strokeWidth="2.1"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
+                          <div className="mb-2 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={handleToggleWatchlist}
+                              disabled={watchlistBusy}
+                              className={`h-[34px] px-3 border rounded-full text-xs sm:text-sm transition-colors inline-flex items-center gap-1.5 ${
+                                watchlisted
+                                  ? "border-accent/70 bg-accent/15 text-text"
+                                  : "border-border bg-panel-2 text-muted hover:text-text hover:border-accent-2"
+                              } disabled:opacity-55 disabled:cursor-not-allowed`}
                             >
-                              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
-                            </svg>
-                            <span>{watchlistBusy ? "Updating..." : watchlisted ? "Remove from watchlist" : "Add to watchlist"}</span>
-                          </button>
+                              <svg
+                                width="12"
+                                height="12"
+                                className="w-3 h-3 shrink-0"
+                                viewBox="0 0 24 24"
+                                fill={watchlisted ? "currentColor" : "none"}
+                                stroke="currentColor"
+                                strokeWidth="2.1"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                              </svg>
+                              <span>{watchlistBusy ? "Updating..." : watchlisted ? "Remove from watchlist" : "Add to watchlist"}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleToggleWatched}
+                              disabled={watchedBusy}
+                              className={`h-[34px] px-3 border rounded-full text-xs sm:text-sm transition-colors inline-flex items-center gap-1.5 ${
+                                watched
+                                  ? "border-accent/70 bg-accent/15 text-text"
+                                  : "border-border bg-panel-2 text-muted hover:text-text hover:border-accent-2"
+                              } disabled:opacity-55 disabled:cursor-not-allowed`}
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                className="w-3 h-3 shrink-0"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.1"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M20 6 9 17l-5-5" />
+                              </svg>
+                              <span>{watchedBusy ? "Updating..." : watched ? "Watched" : "Mark as watched"}</span>
+                            </button>
+                          </div>
                           {watchlistErr && (
                             <div className="mb-2 text-xs text-red-300 bg-red-400/10 rounded-md px-2 py-1 inline-block">
                               {watchlistErr}
+                            </div>
+                          )}
+                          {watchedErr && (
+                            <div className="mb-2 text-xs text-red-300 bg-red-400/10 rounded-md px-2 py-1 inline-block">
+                              {watchedErr}
                             </div>
                           )}
                         </>

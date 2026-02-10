@@ -38,6 +38,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    watched_items: Mapped[list["WatchedItem"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     notification_subscriptions: Mapped[list["NotificationSubscription"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -125,6 +129,35 @@ class WatchlistItem(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="watchlist_items")
+
+
+class WatchedItem(Base):
+    __tablename__ = "watched_items"
+    __table_args__ = (
+        UniqueConstraint("user_id", "media_type", "tmdb_id", name="uq_watched_user_media_tmdb"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    media_type: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
+    tmdb_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    poster_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    release_date: Mapped[str | None] = mapped_column(String, nullable=True)
+    watched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+    user: Mapped["User"] = relationship(back_populates="watched_items")
 
 
 class NotificationSubscription(Base):

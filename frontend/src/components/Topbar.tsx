@@ -10,6 +10,7 @@ interface Props {
   onOpenProfile: () => void;
   onOpenNotifications: () => void;
   onOpenWatchlist: () => void;
+  onOpenWatched: () => void;
   onOpenSettings: () => void;
   onOpenCountries: () => void;
   vpnEnabled?: boolean;
@@ -24,6 +25,7 @@ export default function Topbar({
   onOpenProfile,
   onOpenNotifications,
   onOpenWatchlist,
+  onOpenWatched,
   onOpenSettings,
   onOpenCountries,
   vpnEnabled = false,
@@ -133,6 +135,7 @@ export default function Topbar({
             onOpenProfile={onOpenProfile}
             onOpenNotifications={onOpenNotifications}
             onOpenWatchlist={onOpenWatchlist}
+            onOpenWatched={onOpenWatched}
             onOpenSettings={onOpenSettings}
             onOpenCountries={onOpenCountries}
           />

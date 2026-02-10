@@ -121,6 +121,10 @@ async def get_tv_details(tv_id: int) -> dict:
     return data
 
 
+async def get_tv_episode_groups(tv_id: int) -> dict:
+    return await _get(f"/tv/{tv_id}/episode_groups")
+
+
 async def get_tv_score_details(tv_id: int) -> dict:
     data = await _get(f"/tv/{tv_id}", {"append_to_response": "external_ids"})
     external_ids = data.get("external_ids") or {}

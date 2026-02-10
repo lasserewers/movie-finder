@@ -2,6 +2,8 @@ import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "rea
 import { AuthProvider, useAuth } from "./hooks/useAuth";
 import { ConfigProvider, useConfig } from "./hooks/useConfig";
 import { WatchlistProvider, useWatchlist } from "./hooks/useWatchlist";
+import { WatchedProvider } from "./hooks/useWatched";
+import { useWatched } from "./hooks/useWatched";
 import { NotificationsProvider, useNotifications } from "./hooks/useNotifications";
 import Topbar from "./components/Topbar";
 import HeroSection from "./components/HeroSection";
@@ -9,6 +11,7 @@ import MovieRow from "./components/MovieRow";
 import MovieOverlay from "./components/MovieOverlay";
 import SectionOverlay from "./components/SectionOverlay";
 import WatchlistOverlay from "./components/WatchlistOverlay";
+import WatchedOverlay from "./components/WatchedOverlay";
 import NotificationsOverlay from "./components/NotificationsOverlay";
 import NotificationAlertsOverlay from "./components/NotificationAlertsOverlay";
 import NotificationSettingsOverlay from "./components/NotificationSettingsOverlay";
@@ -53,6 +56,7 @@ function AppContent() {
   const { user, loading: authLoading } = useAuth();
   const { providerIds, countries, loadConfig, saveConfig } = useConfig();
   const { items: watchlistItems, loading: watchlistLoading } = useWatchlist();
+  const { items: watchedItems, loading: watchedLoading } = useWatched();
   const {
     notifications,
     activeAlerts,
@@ -79,6 +83,7 @@ function AppContent() {
   const [selectedMovieType, setSelectedMovieType] = useState<"movie" | "tv">("movie");
   const [selectedSection, setSelectedSection] = useState<HomeSection | null>(null);
   const [watchlistOverlayOpen, setWatchlistOverlayOpen] = useState(false);
+  const [watchedOverlayOpen, setWatchedOverlayOpen] = useState(false);
   const [notificationsOverlayOpen, setNotificationsOverlayOpen] = useState(false);
   const [notificationAlertsOverlayOpen, setNotificationAlertsOverlayOpen] = useState(false);
   const [notificationSettingsOverlayOpen, setNotificationSettingsOverlayOpen] = useState(false);
@@ -636,6 +641,12 @@ function AppContent() {
   }, [user, watchlistOverlayOpen]);
 
   useEffect(() => {
+    if (!user && watchedOverlayOpen) {
+      setWatchedOverlayOpen(false);
+    }
+  }, [user, watchedOverlayOpen]);
+
+  useEffect(() => {
     if (user) return;
     if (notificationsOverlayOpen) setNotificationsOverlayOpen(false);
     if (notificationAlertsOverlayOpen) setNotificationAlertsOverlayOpen(false);
@@ -676,6 +687,13 @@ function AppContent() {
     }
     setWatchlistOverlayOpen(true);
   }, [openAuthModal, user]);
+  const handleOpenWatched = useCallback(() => {
+    if (!user) {
+      openAuthModal("login");
+      return;
+    }
+    setWatchedOverlayOpen(true);
+  }, [openAuthModal, user]);
   const handleOpenNotifications = useCallback(() => {
     if (!user) {
       openAuthModal("login");
@@ -708,6 +726,7 @@ function AppContent() {
     selectedMovie !== null ||
     selectedSection !== null ||
     watchlistOverlayOpen ||
+    watchedOverlayOpen ||
     notificationsOverlayOpen ||
     notificationAlertsOverlayOpen ||
     notificationSettingsOverlayOpen ||
@@ -774,6 +793,7 @@ function AppContent() {
           onOpenProfile={() => setProfileOpen(true)}
           onOpenNotifications={handleOpenNotifications}
           onOpenWatchlist={handleOpenWatchlist}
+          onOpenWatched={handleOpenWatched}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenCountries={() => setCountriesModalOpen(true)}
           vpnEnabled={usingVpn}
@@ -1077,6 +1097,14 @@ function AppContent() {
         onSelectMovie={handleSelectMovie}
       />
 
+      <WatchedOverlay
+        open={watchedOverlayOpen}
+        onClose={() => setWatchedOverlayOpen(false)}
+        items={watchedItems}
+        loading={watchedLoading}
+        onSelectMovie={handleSelectMovie}
+      />
+
       <NotificationsOverlay
         open={notificationsOverlayOpen}
         onClose={handleCloseNotifications}
@@ -1181,11 +1209,13 @@ export default function App() {
   return (
     <AuthProvider>
       <NotificationsProvider>
-        <WatchlistProvider>
-          <ConfigProvider>
-            <AppContent />
-          </ConfigProvider>
-        </WatchlistProvider>
+        <WatchedProvider>
+          <WatchlistProvider>
+            <ConfigProvider>
+              <AppContent />
+            </ConfigProvider>
+          </WatchlistProvider>
+        </WatchedProvider>
       </NotificationsProvider>
     </AuthProvider>
   );

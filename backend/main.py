@@ -27,6 +27,7 @@ from .auth import get_current_user, get_optional_user, verify_csrf
 from .routes_auth import router as auth_router
 from .routes_admin import router as admin_router
 from .routes_watchlist import router as watchlist_router
+from .routes_watched import router as watched_router
 from .routes_notifications import router as notifications_router
 
 WATCH_PROVIDER_TTL = 6 * 60 * 60
@@ -141,6 +142,7 @@ if ALLOWED_ORIGINS:
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(watchlist_router)
+app.include_router(watched_router)
 app.include_router(notifications_router)
 
 
@@ -219,6 +221,91 @@ def _title_matches_keyword(item: dict, keyword: str | None) -> bool:
         ]
     ).lower()
     return keyword in candidate
+
+
+def _coerce_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw and raw.lstrip("-").isdigit():
+            try:
+                return int(raw)
+            except ValueError:
+                return None
+    return None
+
+
+def _preferred_tv_season_count(details: dict) -> int | None:
+    if not isinstance(details, dict):
+        return None
+    raw_count = _coerce_int(details.get("number_of_seasons"))
+    seasons = details.get("seasons")
+    if not isinstance(seasons, list) or not seasons:
+        return raw_count
+
+    today = date.today()
+    regular_total = 0
+    regular_aired = 0
+
+    for season in seasons:
+        if not isinstance(season, dict):
+            continue
+        season_number = _coerce_int(season.get("season_number"))
+        # TMDB season 0 is usually "Specials" and should not be shown as a main season.
+        if season_number is None or season_number <= 0:
+            continue
+        regular_total += 1
+
+        air_date_raw = str(season.get("air_date") or "").strip()
+        if not air_date_raw:
+            continue
+        try:
+            aired_on = date.fromisoformat(air_date_raw[:10])
+        except ValueError:
+            continue
+        if aired_on <= today:
+            regular_aired += 1
+
+    if regular_aired > 0:
+        return regular_aired
+    if regular_total > 0:
+        return regular_total
+    return raw_count
+
+
+def _season_count_from_episode_groups(episode_groups: dict, total_episodes: int | None) -> int | None:
+    if not isinstance(episode_groups, dict):
+        return None
+    rows = episode_groups.get("results")
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    candidates: list[tuple[int, int | None]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if _coerce_int(row.get("type")) != 6:
+            # TMDB type 6 = season-style grouping.
+            continue
+        group_count = _coerce_int(row.get("group_count"))
+        if group_count is None or group_count < 2:
+            continue
+        episode_count = _coerce_int(row.get("episode_count"))
+        candidates.append((group_count, episode_count))
+
+    if not candidates:
+        return None
+
+    if total_episodes is not None and total_episodes > 0:
+        exact = [group_count for group_count, ep_count in candidates if ep_count == total_episodes]
+        if exact:
+            return max(exact)
+        return None
+
+    return max(group_count for group_count, _ in candidates)
 
 
 def _parse_release_year(value: str | None) -> int | None:
@@ -1403,6 +1490,23 @@ async def tv_providers(tv_id: int):
         tmdb.get_tv_watch_providers(tv_id),
         tmdb.get_tv_details(tv_id),
     )
+    preferred_season_count = _preferred_tv_season_count(details)
+    total_episodes = _coerce_int(details.get("number_of_episodes"))
+    if (
+        (preferred_season_count is None or preferred_season_count <= 1)
+        and total_episodes is not None
+        and total_episodes > 24
+    ):
+        try:
+            episode_groups = await tmdb.get_tv_episode_groups(tv_id)
+            grouped_count = _season_count_from_episode_groups(episode_groups, total_episodes)
+            if grouped_count is not None and grouped_count > (preferred_season_count or 0):
+                preferred_season_count = grouped_count
+        except Exception:
+            # Fall back to the details-based season count.
+            pass
+    if preferred_season_count is not None:
+        details["number_of_seasons"] = preferred_season_count
     _normalize_result(details)
     return {"movie": details, "providers": providers}
 
