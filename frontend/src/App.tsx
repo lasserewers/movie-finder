@@ -14,12 +14,13 @@ import WatchlistOverlay from "./components/WatchlistOverlay";
 import WatchedOverlay from "./components/WatchedOverlay";
 import NotificationsOverlay from "./components/NotificationsOverlay";
 import NotificationAlertsOverlay from "./components/NotificationAlertsOverlay";
-import NotificationSettingsOverlay from "./components/NotificationSettingsOverlay";
 import SearchOverlay from "./components/SearchOverlay";
 import AdvancedSearchModal from "./components/AdvancedSearchModal";
 import AuthModal from "./components/AuthModal";
-import SettingsModal from "./components/SettingsModal";
-import ProfileModal from "./components/ProfileModal";
+import SettingsCenterModal, {
+  type SettingsCenterSection,
+  type HomeContentMode,
+} from "./components/SettingsCenterModal";
 import OnboardingModal from "./components/OnboardingModal";
 import VpnPromptModal from "./components/VpnPromptModal";
 import { SkeletonRow } from "./components/Skeleton";
@@ -36,7 +37,7 @@ const MEDIA_OPTIONS: { value: MediaType; label: string }[] = [
 const GUEST_COUNTRY_STORAGE_KEY = "guest_country";
 const USER_VIEW_PREFS_STORAGE_PREFIX = "user_view_prefs:";
 const DEFAULT_ONBOARDING_COUNTRY = "US";
-type UserContentMode = "all" | "available" | "streamable";
+type UserContentMode = HomeContentMode;
 const USER_CONTENT_LABEL: Record<UserContentMode, string> = {
   all: "All content",
   available: "Available",
@@ -71,10 +72,9 @@ function AppContent() {
 
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authInitialMode, setAuthInitialMode] = useState<"login" | "signup">("login");
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsCenterOpen, setSettingsCenterOpen] = useState(false);
+  const [settingsCenterSection, setSettingsCenterSection] = useState<SettingsCenterSection>("account");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
-  const [countriesModalOpen, setCountriesModalOpen] = useState(false);
   const [vpnPromptOpen, setVpnPromptOpen] = useState(false);
   const [vpnPromptCountryCount, setVpnPromptCountryCount] = useState(1);
   const [isOnboarding, setIsOnboarding] = useState(false);
@@ -86,7 +86,6 @@ function AppContent() {
   const [watchedOverlayOpen, setWatchedOverlayOpen] = useState(false);
   const [notificationsOverlayOpen, setNotificationsOverlayOpen] = useState(false);
   const [notificationAlertsOverlayOpen, setNotificationAlertsOverlayOpen] = useState(false);
-  const [notificationSettingsOverlayOpen, setNotificationSettingsOverlayOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFiltered, setSearchFiltered] = useState(false);
@@ -96,6 +95,7 @@ function AppContent() {
   const [rowResetToken, setRowResetToken] = useState(0);
   const [userContentMode, setUserContentMode] = useState<UserContentMode>("streamable");
   const [usingVpn, setUsingVpn] = useState(false);
+  const [showWatchlistOnHome, setShowWatchlistOnHome] = useState(true);
   const [viewPrefsReady, setViewPrefsReady] = useState(false);
   const [guestCountry, setGuestCountry] = useState(() => {
     try {
@@ -240,6 +240,7 @@ function AppContent() {
       setViewPrefsReady(false);
       setUsingVpn(false);
       setUserContentMode("streamable");
+      setShowWatchlistOnHome(true);
       return;
     }
 
@@ -253,6 +254,7 @@ function AppContent() {
         const parsed = JSON.parse(raw) as {
           usingVpn?: unknown;
           contentMode?: unknown;
+          showWatchlistOnHome?: unknown;
           showAllForUser?: unknown;
         };
         if (typeof parsed.usingVpn === "boolean") nextUsingVpn = parsed.usingVpn;
@@ -264,9 +266,17 @@ function AppContent() {
           nextMode = parsed.showAllForUser ? "available" : "streamable";
           hasStoredContentModePrefRef.current = true;
         }
+        if (typeof parsed.showWatchlistOnHome === "boolean") {
+          setShowWatchlistOnHome(parsed.showWatchlistOnHome);
+        } else {
+          setShowWatchlistOnHome(true);
+        }
+      } else {
+        setShowWatchlistOnHome(true);
       }
     } catch {
       // Ignore malformed localStorage values.
+      setShowWatchlistOnHome(true);
     }
 
     setUsingVpn(nextUsingVpn);
@@ -315,12 +325,13 @@ function AppContent() {
         JSON.stringify({
           usingVpn,
           contentMode: userContentMode,
+          showWatchlistOnHome,
         })
       );
     } catch {
       // Ignore localStorage write failures.
     }
-  }, [user?.email, viewPrefsReady, usingVpn, userContentMode]);
+  }, [user?.email, viewPrefsReady, usingVpn, userContentMode, showWatchlistOnHome]);
 
   // Prefetch next page in background
   const prefetchNextPage = useCallback(
@@ -572,6 +583,11 @@ function AppContent() {
     setOnboardingOpen(true);
   };
 
+  const openSettingsCenter = useCallback((section: SettingsCenterSection = "account") => {
+    setSettingsCenterSection(section);
+    setSettingsCenterOpen(true);
+  }, []);
+
   const handleOnboardingDone = async (selectedCountries: string[]) => {
     const chosenCountries = selectedCountries.length ? selectedCountries : [DEFAULT_ONBOARDING_COUNTRY];
     const shouldOpenServices = selectedCountries.length > 0;
@@ -581,7 +597,7 @@ function AppContent() {
       setIsOnboarding(false);
       setPendingVpnPrompt(shouldOpenServices);
       setVpnPromptCountryCount(Math.max(1, chosenCountries.length));
-      if (shouldOpenServices) setSettingsOpen(true);
+      if (shouldOpenServices) openSettingsCenter("services");
     }
   };
 
@@ -589,13 +605,7 @@ function AppContent() {
     void handleOnboardingDone([]);
   };
 
-  const handleCountriesDone = async (selectedCountries: string[]) => {
-    setCountriesModalOpen(false);
-    await saveConfig(Array.from(providerIds), selectedCountries);
-    loadHomeRows(true);
-  };
-
-  const handleSettingsSaved = () => {
+  const handleSettingsCenterSaved = () => {
     loadHomeRows(true);
     if (pendingVpnPrompt) {
       setPendingVpnPrompt(false);
@@ -603,8 +613,8 @@ function AppContent() {
     }
   };
 
-  const handleSettingsClose = () => {
-    setSettingsOpen(false);
+  const handleSettingsCenterClose = () => {
+    setSettingsCenterOpen(false);
     if (pendingVpnPrompt) setPendingVpnPrompt(false);
   };
 
@@ -650,13 +660,23 @@ function AppContent() {
     if (user) return;
     if (notificationsOverlayOpen) setNotificationsOverlayOpen(false);
     if (notificationAlertsOverlayOpen) setNotificationAlertsOverlayOpen(false);
-    if (notificationSettingsOverlayOpen) setNotificationSettingsOverlayOpen(false);
-  }, [user, notificationsOverlayOpen, notificationAlertsOverlayOpen, notificationSettingsOverlayOpen]);
+    if (settingsCenterOpen) setSettingsCenterOpen(false);
+  }, [user, notificationsOverlayOpen, notificationAlertsOverlayOpen, settingsCenterOpen]);
 
   const handleMediaTypeChange = (next: MediaType) => {
     setMediaType(next);
     if (next === "mix") setRowResetToken((v) => v + 1);
   };
+  const handleUserContentModeChange = useCallback(
+    (nextMode: UserContentMode) => {
+      if (providerIds.size === 0 && nextMode !== "all") {
+        openSettingsCenter("services");
+        return;
+      }
+      setUserContentMode(nextMode);
+    },
+    [openSettingsCenter, providerIds.size]
+  );
 
   const sectionMap = useMemo(() => new Map(sections.map((s) => [s.id, s])), [sections]);
   const watchlistSection = useMemo<HomeSection | null>(() => {
@@ -729,17 +749,14 @@ function AppContent() {
     watchedOverlayOpen ||
     notificationsOverlayOpen ||
     notificationAlertsOverlayOpen ||
-    notificationSettingsOverlayOpen ||
     searchOpen ||
     advancedSearchOpen ||
-    settingsOpen ||
-    profileOpen ||
+    settingsCenterOpen ||
     onboardingOpen ||
-    countriesModalOpen ||
     authModalOpen ||
     vpnPromptOpen;
 
-  const watchlistHomeBlock = user ? (
+  const watchlistHomeBlock = user && showWatchlistOnHome ? (
     watchlistLoading ? (
       <SkeletonRow />
     ) : watchlistSection ? (
@@ -790,12 +807,11 @@ function AppContent() {
         <Topbar
           onSelectMovie={handleSelectMovie}
           onLoginClick={() => openAuthModal("login")}
-          onOpenProfile={() => setProfileOpen(true)}
+          onOpenSettingsCenter={() => openSettingsCenter("account")}
           onOpenNotifications={handleOpenNotifications}
           onOpenWatchlist={handleOpenWatchlist}
           onOpenWatched={handleOpenWatched}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenCountries={() => setCountriesModalOpen(true)}
+          onOpenSettings={() => openSettingsCenter("services")}
           vpnEnabled={usingVpn}
           onSearchSubmit={handleSearchSubmit}
           onOpenAdvancedSearch={handleOpenAdvancedSearch}
@@ -870,11 +886,7 @@ function AppContent() {
                         : userContentMode === "available"
                           ? "streamable"
                           : "all";
-                    if (providerIds.size === 0 && nextMode !== "all") {
-                      setSettingsOpen(true);
-                      return;
-                    }
-                    setUserContentMode(nextMode);
+                    handleUserContentModeChange(nextMode);
                   }}
                   aria-label={`Content mode: ${USER_CONTENT_LABEL[userContentMode]}`}
                   className={`h-[42px] w-[270px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 max-sm:flex-1 max-sm:w-0 ${
@@ -914,7 +926,7 @@ function AppContent() {
                 {/* Icon buttons - own row on mobile with text */}
                 <div className="hidden max-sm:flex items-center gap-2 w-full">
                   <button
-                    onClick={() => setSettingsOpen(true)}
+                    onClick={() => openSettingsCenter("services")}
                     className="h-[42px] flex-1 border border-border rounded-full flex items-center justify-center gap-2 hover:border-accent-2 transition-colors bg-panel text-sm text-muted"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -925,7 +937,7 @@ function AppContent() {
                     Services
                   </button>
                   <button
-                    onClick={() => setCountriesModalOpen(true)}
+                    onClick={() => openSettingsCenter("countries")}
                     className="h-[42px] flex-1 border border-border rounded-full flex items-center justify-center gap-2 hover:border-accent-2 transition-colors bg-panel text-sm text-muted"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -939,7 +951,7 @@ function AppContent() {
                 {/* Desktop: icon buttons + media toggle in same row */}
                 <div className="flex items-center gap-2 max-sm:hidden">
                   <button
-                    onClick={() => setSettingsOpen(true)}
+                    onClick={() => openSettingsCenter("services")}
                     className="h-[42px] w-[80px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors bg-panel"
                     title="Manage services"
                   >
@@ -950,7 +962,7 @@ function AppContent() {
                     </svg>
                   </button>
                   <button
-                    onClick={() => setCountriesModalOpen(true)}
+                    onClick={() => openSettingsCenter("countries")}
                     className="h-[42px] w-[80px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors bg-panel"
                     title="Manage countries"
                   >
@@ -1118,7 +1130,7 @@ function AppContent() {
           setNotificationAlertsOverlayOpen(true);
         }}
         onOpenSettings={() => {
-          setNotificationSettingsOverlayOpen(true);
+          openSettingsCenter("notifications");
         }}
       />
 
@@ -1126,11 +1138,6 @@ function AppContent() {
         open={notificationAlertsOverlayOpen}
         onClose={() => setNotificationAlertsOverlayOpen(false)}
         onSelectMovie={handleSelectMovie}
-      />
-
-      <NotificationSettingsOverlay
-        open={notificationSettingsOverlayOpen}
-        onClose={() => setNotificationSettingsOverlayOpen(false)}
       />
 
       <SearchOverlay
@@ -1153,17 +1160,19 @@ function AppContent() {
         isLoggedIn={!!user}
       />
 
-      <SettingsModal
-        open={settingsOpen}
-        onClose={handleSettingsClose}
-        onSaved={handleSettingsSaved}
+      <SettingsCenterModal
+        open={settingsCenterOpen}
+        onClose={handleSettingsCenterClose}
+        onSaved={handleSettingsCenterSaved}
+        regions={regions}
         countryNameMap={countryNameMap}
-      />
-
-      <ProfileModal
-        open={profileOpen}
-        onClose={() => setProfileOpen(false)}
-        onSelectMovie={handleSelectMovie}
+        initialSection={settingsCenterSection}
+        homeContentMode={userContentMode}
+        homeUsingVpn={usingVpn}
+        homeShowWatchlist={showWatchlistOnHome}
+        onHomeContentModeChange={handleUserContentModeChange}
+        onHomeUsingVpnChange={setUsingVpn}
+        onHomeShowWatchlistChange={setShowWatchlistOnHome}
       />
 
       {/* Onboarding (post-signup) */}
@@ -1173,16 +1182,6 @@ function AppContent() {
         countryNameMap={countryNameMap}
         onDone={handleOnboardingDone}
         onClose={handleOnboardingClose}
-      />
-
-      {/* Edit countries from dropdown */}
-      <OnboardingModal
-        open={countriesModalOpen}
-        regions={regions}
-        countryNameMap={countryNameMap}
-        initialCountries={countries}
-        onDone={handleCountriesDone}
-        onClose={() => setCountriesModalOpen(false)}
       />
 
       <AuthModal

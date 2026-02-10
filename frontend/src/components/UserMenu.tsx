@@ -4,21 +4,17 @@ import { useConfig } from "../hooks/useConfig";
 import { useNotifications } from "../hooks/useNotifications";
 
 interface Props {
-  onOpenProfile: () => void;
+  onOpenSettingsCenter: () => void;
   onOpenNotifications: () => void;
   onOpenWatchlist: () => void;
   onOpenWatched: () => void;
-  onOpenSettings: () => void;
-  onOpenCountries: () => void;
 }
 
 export default function UserMenu({
-  onOpenProfile,
+  onOpenSettingsCenter,
   onOpenNotifications,
   onOpenWatchlist,
   onOpenWatched,
-  onOpenSettings,
-  onOpenCountries,
 }: Props) {
   const { user, logout } = useAuth();
   const { theme, setTheme } = useConfig();
@@ -63,15 +59,15 @@ export default function UserMenu({
           <button
             onClick={() => {
               setOpen(false);
-              onOpenProfile();
+              onOpenSettingsCenter();
             }}
             className="w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-muted hover:text-text flex items-center gap-2.5"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 0 1 0 2.8 2 2 0 0 1-2.8 0l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.2a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.2a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 0 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3h.1a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.2a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.2a1.6 1.6 0 0 0-1.4 1z" />
             </svg>
-            Profile
+            Settings
           </button>
           <button
             onClick={() => {
@@ -111,34 +107,6 @@ export default function UserMenu({
               <polyline points="20 6 9 17 4 12" />
             </svg>
             Watched
-          </button>
-          <button
-            onClick={() => {
-              setOpen(false);
-              onOpenCountries();
-            }}
-            className="w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-muted hover:text-text flex items-center gap-2.5"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="2" y1="12" x2="22" y2="12" />
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-            </svg>
-            Manage countries
-          </button>
-          <button
-            onClick={() => {
-              setOpen(false);
-              onOpenSettings();
-            }}
-            className="w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-muted hover:text-text flex items-center gap-2.5"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="3" width="20" height="14" rx="2" />
-              <path d="M8 21h8" />
-              <path d="M12 17v4" />
-            </svg>
-            Manage services
           </button>
           {user.is_admin && (
             <button

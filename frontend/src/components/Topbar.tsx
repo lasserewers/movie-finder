@@ -7,12 +7,11 @@ import { IOS_BRAVE } from "../utils/platform";
 interface Props {
   onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
   onLoginClick: () => void;
-  onOpenProfile: () => void;
+  onOpenSettingsCenter: () => void;
   onOpenNotifications: () => void;
   onOpenWatchlist: () => void;
   onOpenWatched: () => void;
   onOpenSettings: () => void;
-  onOpenCountries: () => void;
   vpnEnabled?: boolean;
   onSearchSubmit?: (query: string, filtered: boolean) => void;
   onOpenAdvancedSearch?: (initialQuery: string) => void;
@@ -22,12 +21,11 @@ interface Props {
 export default function Topbar({
   onSelectMovie,
   onLoginClick,
-  onOpenProfile,
+  onOpenSettingsCenter,
   onOpenNotifications,
   onOpenWatchlist,
   onOpenWatched,
   onOpenSettings,
-  onOpenCountries,
   vpnEnabled = false,
   onSearchSubmit,
   onOpenAdvancedSearch,
@@ -132,12 +130,10 @@ export default function Topbar({
         )}
         {user ? (
           <UserMenu
-            onOpenProfile={onOpenProfile}
+            onOpenSettingsCenter={onOpenSettingsCenter}
             onOpenNotifications={onOpenNotifications}
             onOpenWatchlist={onOpenWatchlist}
             onOpenWatched={onOpenWatched}
-            onOpenSettings={onOpenSettings}
-            onOpenCountries={onOpenCountries}
           />
         ) : (
           <button
