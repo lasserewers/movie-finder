@@ -253,7 +253,8 @@ export async function getHome(
   unfiltered = false,
   vpn = false,
   includePaid = false,
-  countries?: string[]
+  countries?: string[],
+  hideWatched = false
 ): Promise<HomeResponse> {
   const ids = providerIds.join(",");
   const providerParam = ids ? `&provider_ids=${ids}` : (unfiltered ? "&provider_ids=," : "");
@@ -261,9 +262,10 @@ export async function getHome(
   const unfilteredParam = unfiltered ? "&unfiltered=1" : "";
   const vpnParam = vpn ? "&vpn=1" : "";
   const includePaidParam = includePaid ? "&include_paid=1" : "";
+  const hideWatchedParam = hideWatched ? "&hide_watched=1" : "";
   const countriesParam = countries && countries.length ? `&countries=${encodeURIComponent(countries.join(","))}` : "";
   return apiFetch(
-    `/api/home?page=${page}&page_size=${pageSize}${providerParam}${countryParam}${countriesParam}${unfilteredParam}${vpnParam}${includePaidParam}&media_type=${mediaType}`
+    `/api/home?page=${page}&page_size=${pageSize}${providerParam}${countryParam}${countriesParam}${unfilteredParam}${vpnParam}${includePaidParam}${hideWatchedParam}&media_type=${mediaType}`
   );
 }
 
@@ -278,7 +280,8 @@ export async function getSection(
   unfiltered = false,
   vpn = false,
   includePaid = false,
-  countries?: string[]
+  countries?: string[],
+  hideWatched = false
 ): Promise<HomeSection & { next_cursor?: string }> {
   const ids = providerIds.join(",");
   const providerParam = ids ? `&provider_ids=${ids}` : (unfiltered ? "&provider_ids=," : "");
@@ -288,8 +291,9 @@ export async function getSection(
   const unfilteredParam = unfiltered ? "&unfiltered=1" : "";
   const vpnParam = vpn ? "&vpn=1" : "";
   const includePaidParam = includePaid ? "&include_paid=1" : "";
+  const hideWatchedParam = hideWatched ? "&hide_watched=1" : "";
   return apiFetch(
-    `/api/section?section_id=${encodeURIComponent(sectionId)}&page=${page}&pages=${pages}${providerParam}${cursorParam}${countryParam}${countriesParam}${unfilteredParam}${vpnParam}${includePaidParam}&media_type=${mediaType}`
+    `/api/section?section_id=${encodeURIComponent(sectionId)}&page=${page}&pages=${pages}${providerParam}${cursorParam}${countryParam}${countriesParam}${unfilteredParam}${vpnParam}${includePaidParam}${hideWatchedParam}&media_type=${mediaType}`
   );
 }
 

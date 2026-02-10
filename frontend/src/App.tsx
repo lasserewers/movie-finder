@@ -95,6 +95,7 @@ function AppContent() {
   const [rowResetToken, setRowResetToken] = useState(0);
   const [userContentMode, setUserContentMode] = useState<UserContentMode>("streamable");
   const [usingVpn, setUsingVpn] = useState(false);
+  const [hideWatchedOnHome, setHideWatchedOnHome] = useState(false);
   const [showWatchlistOnHome, setShowWatchlistOnHome] = useState(true);
   const [viewPrefsReady, setViewPrefsReady] = useState(false);
   const [guestCountry, setGuestCountry] = useState(() => {
@@ -182,7 +183,7 @@ function AppContent() {
     // Build cache key from config values
     const providerKey = Array.from(providerIds).sort().join(",");
     const countryKey = countries.join(",");
-    const newCacheKey = `${user?.email || "guest"}:${providerKey}:${countryKey}:${guestCountry}:${userContentMode}:${usingVpn}`;
+    const newCacheKey = `${user?.email || "guest"}:${providerKey}:${countryKey}:${guestCountry}:${userContentMode}:${usingVpn}:${hideWatchedOnHome}`;
 
     // Clear cache if config changed
     if (cacheKeyRef.current !== newCacheKey) {
@@ -203,7 +204,7 @@ function AppContent() {
     // Clear sections immediately to show loading spinner
     setSections([]);
     loadHomeRows(true);
-  }, [homeInitialized, providerIds, mediaType, user, guestCountry, userContentMode, usingVpn, countries]);
+  }, [homeInitialized, providerIds, mediaType, user, guestCountry, userContentMode, usingVpn, hideWatchedOnHome, countries]);
 
   // Clear guest country on logout so geo-detection runs again
   useEffect(() => {
@@ -240,6 +241,7 @@ function AppContent() {
       setViewPrefsReady(false);
       setUsingVpn(false);
       setUserContentMode("streamable");
+      setHideWatchedOnHome(false);
       setShowWatchlistOnHome(true);
       return;
     }
@@ -254,6 +256,7 @@ function AppContent() {
         const parsed = JSON.parse(raw) as {
           usingVpn?: unknown;
           contentMode?: unknown;
+          hideWatchedOnHome?: unknown;
           showWatchlistOnHome?: unknown;
           showAllForUser?: unknown;
         };
@@ -266,16 +269,23 @@ function AppContent() {
           nextMode = parsed.showAllForUser ? "available" : "streamable";
           hasStoredContentModePrefRef.current = true;
         }
+        if (typeof parsed.hideWatchedOnHome === "boolean") {
+          setHideWatchedOnHome(parsed.hideWatchedOnHome);
+        } else {
+          setHideWatchedOnHome(false);
+        }
         if (typeof parsed.showWatchlistOnHome === "boolean") {
           setShowWatchlistOnHome(parsed.showWatchlistOnHome);
         } else {
           setShowWatchlistOnHome(true);
         }
       } else {
+        setHideWatchedOnHome(false);
         setShowWatchlistOnHome(true);
       }
     } catch {
       // Ignore malformed localStorage values.
+      setHideWatchedOnHome(false);
       setShowWatchlistOnHome(true);
     }
 
@@ -325,13 +335,14 @@ function AppContent() {
         JSON.stringify({
           usingVpn,
           contentMode: userContentMode,
+          hideWatchedOnHome,
           showWatchlistOnHome,
         })
       );
     } catch {
       // Ignore localStorage write failures.
     }
-  }, [user?.email, viewPrefsReady, usingVpn, userContentMode, showWatchlistOnHome]);
+  }, [user?.email, viewPrefsReady, usingVpn, userContentMode, hideWatchedOnHome, showWatchlistOnHome]);
 
   // Prefetch next page in background
   const prefetchNextPage = useCallback(
@@ -344,7 +355,7 @@ function AppContent() {
       const scopedCountries = user && !usingVpn ? countries : undefined;
       const ids = unfiltered ? [] : Array.from(providerIds);
       try {
-        const data = await getHome(nextPage, 6, ids, currentMediaType, country, unfiltered, usingVpn, includePaid, scopedCountries);
+        const data = await getHome(nextPage, 6, ids, currentMediaType, country, unfiltered, usingVpn, includePaid, scopedCountries, hideWatchedOnHome);
         prefetchCacheRef.current[currentMediaType] = {
           page: nextPage,
           data: data.sections || [],
@@ -354,7 +365,7 @@ function AppContent() {
         // Prefetch failed, ignore
       }
     },
-    [user, userContentMode, countries, guestCountry, providerIds, usingVpn]
+    [user, userContentMode, countries, guestCountry, providerIds, usingVpn, hideWatchedOnHome]
   );
 
   const loadHomeRows = useCallback(
@@ -396,7 +407,7 @@ function AppContent() {
         const country = unfiltered ? guestCountry : undefined;
         const scopedCountries = user && !usingVpn ? countries : undefined;
         const ids = unfiltered ? [] : Array.from(providerIds);
-        const data = await getHome(page, homePageSize, ids, mediaType, country, unfiltered, usingVpn, includePaid, scopedCountries);
+        const data = await getHome(page, homePageSize, ids, mediaType, country, unfiltered, usingVpn, includePaid, scopedCountries, hideWatchedOnHome);
         const newHasMore = data.has_more ?? false;
         const newPage = data.next_page ?? page + 1;
 
@@ -433,7 +444,7 @@ function AppContent() {
         setHomeLoading(false);
       }
     },
-    [homeLoading, homePage, homeHasMore, providerIds, mediaType, user, guestCountry, userContentMode, countries, usingVpn, prefetchNextPage]
+    [homeLoading, homePage, homeHasMore, providerIds, mediaType, user, guestCountry, userContentMode, countries, usingVpn, hideWatchedOnHome, prefetchNextPage]
   );
 
   const sentinelRef = useInfiniteScroll(
@@ -679,12 +690,21 @@ function AppContent() {
   );
 
   const sectionMap = useMemo(() => new Map(sections.map((s) => [s.id, s])), [sections]);
+  const watchedItemKeys = useMemo(
+    () => new Set(watchedItems.map((item) => `${item.media_type}:${item.tmdb_id}`)),
+    [watchedItems]
+  );
+  const watchlistItemsForHome = useMemo(() => {
+    if (!hideWatchedOnHome) return watchlistItems;
+    return watchlistItems.filter((entry) => !watchedItemKeys.has(`${entry.media_type}:${entry.tmdb_id}`));
+  }, [hideWatchedOnHome, watchlistItems, watchedItemKeys]);
+  const watchlistFullyWatchedHidden = hideWatchedOnHome && watchlistItems.length > 0 && watchlistItemsForHome.length === 0;
   const watchlistSection = useMemo<HomeSection | null>(() => {
-    if (!user || !watchlistItems.length) return null;
+    if (!user || !watchlistItemsForHome.length) return null;
     return {
       id: "__watchlist__",
       title: "Your Watchlist",
-      results: watchlistItems.map((entry) => ({
+      results: watchlistItemsForHome.map((entry) => ({
         id: entry.tmdb_id,
         title: entry.title,
         poster_path: entry.poster_path || undefined,
@@ -692,7 +712,7 @@ function AppContent() {
         media_type: entry.media_type,
       })),
     };
-  }, [user, watchlistItems]);
+  }, [user, watchlistItemsForHome]);
   const watchlistAnchorIndex = useMemo(() => {
     const trendingIndex = sections.findIndex(
       (section) => section.id === "trending_day" || section.title.trim().toLowerCase() === "trending today"
@@ -773,7 +793,9 @@ function AppContent() {
       <div className="rounded-2xl border border-border bg-panel/65 p-4 sm:p-5">
         <h3 className="text-lg sm:text-xl font-semibold text-text">Your Watchlist</h3>
         <p className="text-sm text-muted mt-1">
-          Your watchlist is empty. Tap the bookmark icon on any title to add it here.
+          {watchlistFullyWatchedHidden
+            ? "You've watched everything in your watchlist."
+            : "Your watchlist is empty. Tap the bookmark icon on any title to add it here."}
         </p>
       </div>
     )
@@ -853,31 +875,32 @@ function AppContent() {
             )}
             {user && (
               <div className="flex items-center gap-2 max-sm:w-full">
-                {/* VPN toggle - same width as two icon buttons + gap (80 + 8 + 80 = 168px) */}
-                <button
-                  onClick={() => setUsingVpn((prev) => !prev)}
-                  aria-pressed={usingVpn}
-                  className={`h-[42px] w-[168px] px-3 border rounded-full text-sm font-medium transition-colors flex items-center justify-between gap-2 max-sm:flex-1 max-sm:w-0 ${
-                    usingVpn
-                      ? "border-accent/60 bg-accent/10 text-text"
-                      : "border-border bg-panel text-muted"
-                  }`}
-                >
-                  <span className="truncate">{usingVpn ? "Using VPN" : "Not using VPN"}</span>
-                  <span
-                    className={`relative h-5 w-9 flex-shrink-0 rounded-full border transition-colors ${
+                {userContentMode === "streamable" && (
+                  <button
+                    onClick={() => setUsingVpn((prev) => !prev)}
+                    aria-pressed={usingVpn}
+                    className={`h-[42px] w-[220px] px-3 border rounded-full text-sm font-medium transition-colors flex items-center justify-between gap-2 max-sm:flex-1 max-sm:w-0 ${
                       usingVpn
-                        ? "bg-accent border-accent"
-                        : "bg-panel-2 border-border"
+                        ? "border-accent/60 bg-accent/10 text-text"
+                        : "border-border bg-panel text-muted"
                     }`}
                   >
+                    <span className="truncate">{usingVpn ? "Using VPN" : "Not using VPN"}</span>
                     <span
-                      className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-white transition-transform ${
-                        usingVpn ? "translate-x-4" : ""
+                      className={`relative h-5 w-9 flex-shrink-0 rounded-full border transition-colors ${
+                        usingVpn
+                          ? "bg-accent border-accent"
+                          : "bg-panel-2 border-border"
                       }`}
-                    />
-                  </span>
-                </button>
+                    >
+                      <span
+                        className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-white transition-transform ${
+                          usingVpn ? "translate-x-4" : ""
+                        }`}
+                      />
+                    </span>
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     const nextMode: UserContentMode =
@@ -923,54 +946,32 @@ function AppContent() {
             )}
             {user && (
               <>
-                {/* Icon buttons - own row on mobile with text */}
-                <div className="hidden max-sm:flex items-center gap-2 w-full">
-                  <button
-                    onClick={() => openSettingsCenter("services")}
-                    className="h-[42px] flex-1 border border-border rounded-full flex items-center justify-center gap-2 hover:border-accent-2 transition-colors bg-panel text-sm text-muted"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="2" y="3" width="20" height="14" rx="2" />
-                      <path d="M8 21h8" />
-                      <path d="M12 17v4" />
-                    </svg>
-                    Services
-                  </button>
-                  <button
-                    onClick={() => openSettingsCenter("countries")}
-                    className="h-[42px] flex-1 border border-border rounded-full flex items-center justify-center gap-2 hover:border-accent-2 transition-colors bg-panel text-sm text-muted"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="2" y1="12" x2="22" y2="12" />
-                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                    </svg>
-                    Countries
-                  </button>
-                </div>
-                {/* Desktop: icon buttons + media toggle in same row */}
+                {/* Desktop: watched toggle + media toggle in same row */}
                 <div className="flex items-center gap-2 max-sm:hidden">
                   <button
-                    onClick={() => openSettingsCenter("services")}
-                    className="h-[42px] w-[80px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors bg-panel"
-                    title="Manage services"
+                    onClick={() => setHideWatchedOnHome((prev) => !prev)}
+                    aria-pressed={hideWatchedOnHome}
+                    aria-label={hideWatchedOnHome ? "Hiding watched titles" : "Showing watched titles"}
+                    className={`h-[42px] w-[220px] px-3 border rounded-full text-sm font-medium transition-colors flex items-center justify-between gap-2 ${
+                      hideWatchedOnHome
+                        ? "border-accent/60 bg-accent/10 text-text"
+                        : "border-border bg-panel text-muted"
+                    }`}
                   >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted">
-                      <rect x="2" y="3" width="20" height="14" rx="2" />
-                      <path d="M8 21h8" />
-                      <path d="M12 17v4" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => openSettingsCenter("countries")}
-                    className="h-[42px] w-[80px] border border-border rounded-full flex items-center justify-center hover:border-accent-2 transition-colors bg-panel"
-                    title="Manage countries"
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted">
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="2" y1="12" x2="22" y2="12" />
-                      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                    </svg>
+                    <span className="truncate">{hideWatchedOnHome ? "Hiding watched" : "Showing watched"}</span>
+                    <span
+                      className={`relative h-5 w-9 flex-shrink-0 rounded-full border transition-colors ${
+                        hideWatchedOnHome
+                          ? "bg-accent border-accent"
+                          : "bg-panel-2 border-border"
+                      }`}
+                    >
+                      <span
+                        className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-white transition-transform ${
+                          hideWatchedOnHome ? "translate-x-4" : ""
+                        }`}
+                      />
+                    </span>
                   </button>
                   <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[270px]">
                     {MEDIA_OPTIONS.map((opt) => (
@@ -987,6 +988,34 @@ function AppContent() {
                       </button>
                     ))}
                   </div>
+                </div>
+                {/* Mobile: watched toggle */}
+                <div className="hidden max-sm:flex items-center w-full">
+                  <button
+                    onClick={() => setHideWatchedOnHome((prev) => !prev)}
+                    aria-pressed={hideWatchedOnHome}
+                    aria-label={hideWatchedOnHome ? "Hiding watched titles" : "Showing watched titles"}
+                    className={`h-[42px] w-full px-3 border rounded-full text-sm font-medium transition-colors flex items-center justify-between gap-2 ${
+                      hideWatchedOnHome
+                        ? "border-accent/60 bg-accent/10 text-text"
+                        : "border-border bg-panel text-muted"
+                    }`}
+                  >
+                    <span className="truncate">{hideWatchedOnHome ? "Hiding watched" : "Showing watched"}</span>
+                    <span
+                      className={`relative h-5 w-9 flex-shrink-0 rounded-full border transition-colors ${
+                        hideWatchedOnHome
+                          ? "bg-accent border-accent"
+                          : "bg-panel-2 border-border"
+                      }`}
+                    >
+                      <span
+                        className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-white transition-transform ${
+                          hideWatchedOnHome ? "translate-x-4" : ""
+                        }`}
+                      />
+                    </span>
+                  </button>
                 </div>
                 {/* Mobile: media toggle on its own row */}
                 <div className="hidden max-sm:flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-full">
@@ -1100,6 +1129,7 @@ function AppContent() {
         unfiltered={unfilteredMode}
         vpn={usingVpn}
         includePaid={includePaidMode}
+        hideWatched={!!user && hideWatchedOnHome}
       />
 
       <WatchlistOverlay

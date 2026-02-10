@@ -16,6 +16,7 @@ interface Props {
   unfiltered?: boolean;
   vpn?: boolean;
   includePaid?: boolean;
+  hideWatched?: boolean;
 }
 
 export default function SectionOverlay({
@@ -28,6 +29,7 @@ export default function SectionOverlay({
   unfiltered = false,
   vpn = false,
   includePaid = false,
+  hideWatched = false,
 }: Props) {
   const { providerIds } = useConfig();
   const [results, setResults] = useState<Movie[]>([]);
@@ -52,7 +54,7 @@ export default function SectionOverlay({
     setResults([]);
     setHasMore(true);
     loadMore();
-  }, [section?.id, country, countries, unfiltered, vpn, includePaid]);
+  }, [section?.id, country, countries, unfiltered, vpn, includePaid, hideWatched]);
 
   const loadMore = useCallback(async () => {
     if (!section || loading) return;
@@ -74,7 +76,8 @@ export default function SectionOverlay({
         unfiltered,
         vpn,
         includePaid,
-        countries
+        countries,
+        hideWatched
       );
       const items = (data.results || []).filter((m) => {
         if (seenRef.current.has(m.id)) return false;
@@ -95,7 +98,7 @@ export default function SectionOverlay({
     } finally {
       setLoading(false);
     }
-  }, [section, loading, providerIds, results.length, mediaType, country, countries, unfiltered, vpn, includePaid]);
+  }, [section, loading, providerIds, results.length, mediaType, country, countries, unfiltered, vpn, includePaid, hideWatched]);
 
   const sentinelRef = useInfiniteScroll(loadMore, hasMore && !loading, panelRef.current);
 

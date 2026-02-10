@@ -22,7 +22,7 @@ from slowapi.errors import RateLimitExceeded
 
 from . import tmdb, streaming_availability, ratings
 from .database import get_db, init_db, close_db
-from .models import User, UserPreferences
+from .models import User, UserPreferences, WatchedItem
 from .auth import get_current_user, get_optional_user, verify_csrf
 from .routes_auth import router as auth_router
 from .routes_admin import router as admin_router
@@ -2114,6 +2114,34 @@ def _item_row_key(item: dict, fallback_media_type: str = "movie") -> tuple[str, 
         return None
 
 
+def _exclude_watched_items(items: list[dict], excluded_keys: set[tuple[str, int]], fallback_media_type: str) -> list[dict]:
+    if not excluded_keys:
+        return items
+    filtered: list[dict] = []
+    for item in items:
+        key = _item_row_key(item, fallback_media_type=fallback_media_type)
+        if key and key in excluded_keys:
+            continue
+        filtered.append(item)
+    return filtered
+
+
+async def _get_user_watched_keys(db: AsyncSession, user_id, media_type: str = "mix") -> set[tuple[str, int]]:
+    query = select(WatchedItem.media_type, WatchedItem.tmdb_id).where(WatchedItem.user_id == user_id)
+    if media_type in ("movie", "tv"):
+        query = query.where(WatchedItem.media_type == media_type)
+    rows = (await db.execute(query)).all()
+    keys: set[tuple[str, int]] = set()
+    for media, tmdb_id in rows:
+        if media not in ("movie", "tv"):
+            continue
+        try:
+            keys.add((media, int(tmdb_id)))
+        except (TypeError, ValueError):
+            continue
+    return keys
+
+
 def _diversify_sections(sections: list[dict], media_type: str, per_section_limit: int = 24) -> list[dict]:
     global_seen: set[tuple[str, int]] = set()
     diversified: list[dict] = []
@@ -2411,12 +2439,21 @@ async def _guest_section_config(media_type: str, country: str) -> list[dict]:
     return sections
 
 
-async def _guest_home(page: int, page_size: int, media_type: str, country: str) -> dict:
+async def _guest_home(
+    page: int,
+    page_size: int,
+    media_type: str,
+    country: str,
+    exclude_keys: set[tuple[str, int]] | None = None,
+) -> dict:
+    excluded = exclude_keys or set()
+    use_cache = len(excluded) == 0
     cache_key = f"guest:{country}:{page}:{page_size}:{media_type}"
     now = time.time()
-    cached = HOME_CACHE.get(cache_key)
-    if cached and (now - cached[0]) < HOME_CACHE_TTL:
-        return cached[1]
+    if use_cache:
+        cached = HOME_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < HOME_CACHE_TTL:
+            return cached[1]
 
     sections_config = await _guest_section_config(media_type, country)
     total_sections = len(sections_config)
@@ -2444,7 +2481,7 @@ async def _guest_home(page: int, page_size: int, media_type: str, country: str) 
                 break
             for m in raw:
                 key = _item_row_key(m, fallback_media_type=media_type)
-                if not key or key in seen:
+                if not key or key in seen or (excluded and key in excluded):
                     continue
                 seen.add(key)
                 pool.append(m)
@@ -2483,17 +2520,28 @@ async def _guest_home(page: int, page_size: int, media_type: str, country: str) 
         "has_more": has_more,
         "next_page": page + 1 if has_more else None,
     }
-    HOME_CACHE[cache_key] = (time.time(), payload)
+    if use_cache:
+        HOME_CACHE[cache_key] = (time.time(), payload)
     return payload
 
 
-async def _guest_section(section_id: str, page: int, pages: int, media_type: str, country: str) -> dict:
+async def _guest_section(
+    section_id: str,
+    page: int,
+    pages: int,
+    media_type: str,
+    country: str,
+    exclude_keys: set[tuple[str, int]] | None = None,
+) -> dict:
     pages = max(1, min(5, pages))
+    excluded = exclude_keys or set()
+    use_cache = len(excluded) == 0
     cache_key = f"guest:{section_id}:{country}:{page}:{pages}:{media_type}"
     now = time.time()
-    cached = SECTION_CACHE.get(cache_key)
-    if cached and (now - cached[0]) < SECTION_CACHE_TTL:
-        return cached[1]
+    if use_cache:
+        cached = SECTION_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < SECTION_CACHE_TTL:
+            return cached[1]
 
     sections = await _guest_section_config(media_type, country)
     section_def = next((s for s in sections if s["id"] == section_id), None)
@@ -2502,7 +2550,7 @@ async def _guest_section(section_id: str, page: int, pages: int, media_type: str
 
     target_count = pages * 20
     results: list = []
-    seen_ids: set[int] = set()
+    seen_keys: set[tuple[str, int]] = set()
     total_pages = 0
     p = page
     scanned = 0
@@ -2517,10 +2565,10 @@ async def _guest_section(section_id: str, page: int, pages: int, media_type: str
         if not raw:
             break
         for m in raw:
-            mid = m.get("id")
-            if not mid or mid in seen_ids:
+            key = _item_row_key(m, fallback_media_type=media_type)
+            if not key or key in seen_keys or (excluded and key in excluded):
                 continue
-            seen_ids.add(mid)
+            seen_keys.add(key)
             results.append(m)
             if len(results) >= target_count:
                 break
@@ -2540,7 +2588,8 @@ async def _guest_section(section_id: str, page: int, pages: int, media_type: str
         "total_pages": total_pages,
         "filtered": False,
     }
-    SECTION_CACHE[cache_key] = (time.time(), payload)
+    if use_cache:
+        SECTION_CACHE[cache_key] = (time.time(), payload)
     return payload
 
 
@@ -2555,6 +2604,7 @@ async def home(
     unfiltered: bool = False,
     vpn: bool = False,
     include_paid: bool = False,
+    hide_watched: bool = False,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2569,6 +2619,9 @@ async def home(
         ids = set()
     user_countries = list(prefs.countries) if prefs and prefs.countries else []
     requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
+    exclude_watched_keys: set[tuple[str, int]] = set()
+    if user and hide_watched:
+        exclude_watched_keys = await _get_user_watched_keys(db, user.id, media_type)
 
     guest_country = _normalize_country_code(country)
     if unfiltered:
@@ -2577,13 +2630,13 @@ async def home(
             guest_country = _normalize_country_code(fallback) or "US"
         page = max(1, page)
         page_size = max(3, min(10, page_size))
-        return await _guest_home(page, page_size, media_type, guest_country)
+        return await _guest_home(page, page_size, media_type, guest_country, exclude_keys=exclude_watched_keys)
 
     if not ids:
         if guest_country:
             page = max(1, page)
             page_size = max(3, min(10, page_size))
-            return await _guest_home(page, page_size, media_type, guest_country)
+            return await _guest_home(page, page_size, media_type, guest_country, exclude_keys=exclude_watched_keys)
         return {"sections": [], "filtered": True, "message": "Select streaming services to see available titles."}
 
     allowed_countries, effective_vpn = _resolve_country_scope(
@@ -2596,11 +2649,13 @@ async def home(
     country_scope_key = ",".join(sorted(allowed_countries)) if allowed_countries else "*"
     page = max(1, page)
     page_size = max(3, min(10, page_size))
-    cache_key = f"{','.join(str(pid) for pid in sorted(ids))}:{','.join(user_countries)}:{page}:{page_size}:{media_type}:vpn={int(effective_vpn)}:paid={int(include_paid)}:scope={country_scope_key}"
+    cache_key = f"{','.join(str(pid) for pid in sorted(ids))}:{','.join(user_countries)}:{page}:{page_size}:{media_type}:vpn={int(effective_vpn)}:paid={int(include_paid)}:scope={country_scope_key}:hide_watched={int(bool(user and hide_watched))}"
+    disable_home_cache = bool(user and hide_watched)
     now = time.time()
-    cached = HOME_CACHE.get(cache_key)
-    if cached and (now - cached[0]) < HOME_CACHE_TTL:
-        return cached[1]
+    if not disable_home_cache:
+        cached = HOME_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < HOME_CACHE_TTL:
+            return cached[1]
     sections_config = await _home_section_config(ids, section_countries, media_type)
     total_sections = len(sections_config)
     start = (page - 1) * page_size
@@ -2626,7 +2681,8 @@ async def home(
             "total_sections": total_sections,
             "has_more": False,
         }
-        HOME_CACHE[cache_key] = (time.time(), payload)
+        if not disable_home_cache:
+            HOME_CACHE[cache_key] = (time.time(), payload)
         return payload
 
     async def build_section_pool(section: dict) -> dict:
@@ -2672,7 +2728,7 @@ async def home(
         def add_to_pool(items: list[dict], limit: int):
             for item in items:
                 key = _item_row_key(item, fallback_media_type=media_type)
-                if not key or key in section_seen:
+                if not key or key in section_seen or (exclude_watched_keys and key in exclude_watched_keys):
                     continue
                 section_seen.add(key)
                 pool.append(item)
@@ -2788,7 +2844,8 @@ async def home(
         "has_more": has_more,
         "next_page": page + 1 if has_more else None,
     }
-    HOME_CACHE[cache_key] = (time.time(), payload)
+    if not disable_home_cache:
+        HOME_CACHE[cache_key] = (time.time(), payload)
     return payload
 
 
@@ -2805,6 +2862,7 @@ async def section(
     unfiltered: bool = False,
     vpn: bool = False,
     include_paid: bool = False,
+    hide_watched: bool = False,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2819,6 +2877,9 @@ async def section(
         ids = set()
     user_countries = list(prefs.countries) if prefs and prefs.countries else []
     requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
+    exclude_watched_keys: set[tuple[str, int]] = set()
+    if user and hide_watched:
+        exclude_watched_keys = await _get_user_watched_keys(db, user.id, media_type)
 
     guest_country = _normalize_country_code(country)
     if unfiltered:
@@ -2826,12 +2887,12 @@ async def section(
             fallback = user_countries[0] if user_countries else "US"
             guest_country = _normalize_country_code(fallback) or "US"
         page = max(1, page)
-        return await _guest_section(section_id, page, pages, media_type, guest_country)
+        return await _guest_section(section_id, page, pages, media_type, guest_country, exclude_keys=exclude_watched_keys)
 
     if not ids:
         if guest_country:
             page = max(1, page)
-            return await _guest_section(section_id, page, pages, media_type, guest_country)
+            return await _guest_section(section_id, page, pages, media_type, guest_country, exclude_keys=exclude_watched_keys)
         return {"id": section_id, "results": [], "filtered": True, "message": "Select streaming services first."}
 
     allowed_countries, effective_vpn = _resolve_country_scope(
@@ -2842,11 +2903,13 @@ async def section(
     )
     section_countries = sorted(allowed_countries) if allowed_countries else user_countries
     country_scope_key = ",".join(sorted(allowed_countries)) if allowed_countries else "*"
-    cache_key = f"{section_id}:{','.join(str(pid) for pid in sorted(ids))}:{','.join(sorted(user_countries))}:{page}:{pages}:{cursor or ''}:{media_type}:vpn={int(effective_vpn)}:paid={int(include_paid)}:scope={country_scope_key}"
+    cache_key = f"{section_id}:{','.join(str(pid) for pid in sorted(ids))}:{','.join(sorted(user_countries))}:{page}:{pages}:{cursor or ''}:{media_type}:vpn={int(effective_vpn)}:paid={int(include_paid)}:scope={country_scope_key}:hide_watched={int(bool(user and hide_watched))}"
+    disable_section_cache = bool(user and hide_watched)
     now = time.time()
-    cached = SECTION_CACHE.get(cache_key)
-    if cached and (now - cached[0]) < SECTION_CACHE_TTL:
-        return cached[1]
+    if not disable_section_cache:
+        cached = SECTION_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < SECTION_CACHE_TTL:
+            return cached[1]
 
     sections = await _home_section_config(ids, section_countries, media_type)
     section_def = next((s for s in sections if s["id"] == section_id), None)
@@ -2878,6 +2941,7 @@ async def section(
                 include_paid=include_paid,
                 allowed_countries=allowed_countries,
             )
+        results = _exclude_watched_items(results, exclude_watched_keys, media_type)
         target = pages * 20
         if len(results) > target:
             results = results[:target]
@@ -2889,7 +2953,8 @@ async def section(
             "next_cursor": next_cursor,
             "filtered": True,
         }
-        SECTION_CACHE[cache_key] = (time.time(), payload)
+        if not disable_section_cache:
+            SECTION_CACHE[cache_key] = (time.time(), payload)
         return payload
 
     # Fetch raw results, filter each page, accumulate
@@ -2899,7 +2964,7 @@ async def section(
     target_count = pages * 20
     max_scan_pages = pages * 5
     results: list = []
-    seen_ids: set = set()
+    seen_keys: set[tuple[str, int]] = set()
     total_pages = 0
     last_page = page - 1
     scanned = 0
@@ -2942,10 +3007,10 @@ async def section(
                 allowed_countries=allowed_countries,
             )
         for m in filtered:
-            mid = m.get("id")
-            if not mid or mid in seen_ids:
+            key = _item_row_key(m, fallback_media_type=media_type)
+            if not key or key in seen_keys or (exclude_watched_keys and key in exclude_watched_keys):
                 continue
-            seen_ids.add(mid)
+            seen_keys.add(key)
             results.append(m)
             if len(results) >= target_count:
                 break
@@ -2966,7 +3031,8 @@ async def section(
         "total_pages": total_pages,
         "filtered": True,
     }
-    SECTION_CACHE[cache_key] = (time.time(), payload)
+    if not disable_section_cache:
+        SECTION_CACHE[cache_key] = (time.time(), payload)
     return payload
 
 
