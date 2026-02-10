@@ -1,8 +1,10 @@
+import asyncio
 from datetime import datetime, timezone
 import os
 import re
 from typing import Literal
 from urllib.parse import urljoin
+import xml.etree.ElementTree as ET
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import tmdb
 from .audit import add_audit_log
 from .auth import get_current_user
 from .database import get_db
@@ -23,10 +26,12 @@ from .routes_watchlist import (
     _entry_resolution_key,
     _looks_like_cloudflare_challenge,
     _normalize_letterboxd_username,
+    _coerce_year,
     _parse_html_attributes,
     _resolve_tmdb_movies_bounded,
     _split_title_year,
     _text_contains_any,
+    _xml_local_name,
 )
 
 router = APIRouter(prefix="/api/watched", tags=["watched"])
@@ -107,6 +112,78 @@ def _parse_letterboxd_watched_html_page(html_text: str) -> tuple[list[Letterboxd
     return entries, max_page
 
 
+def _parse_positive_int(value: str | int | None) -> int | None:
+    if isinstance(value, int):
+        return value if value > 0 else None
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _parse_letterboxd_profile_rss(xml_text: str) -> list[LetterboxdWatchlistEntry]:
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return []
+
+    entries: list[LetterboxdWatchlistEntry] = []
+    seen: set[str] = set()
+    for item in root.findall(".//item"):
+        values: dict[str, str] = {}
+        for child in list(item):
+            tag = _xml_local_name(child.tag).lower()
+            values[tag] = (child.text or "").strip()
+
+        raw_title = values.get("filmtitle") or values.get("title") or ""
+        title, year_from_title = _split_title_year(raw_title)
+        year = _coerce_year(values.get("filmyear")) or year_from_title
+        if not title:
+            continue
+
+        tmdb_id = _parse_positive_int(values.get("movieid"))
+        dedupe_key = f"tmdb:{tmdb_id}" if tmdb_id else f"title:{title.lower()}::{year or ''}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        link = (values.get("link") or "").strip() or None
+        entries.append(
+            LetterboxdWatchlistEntry(
+                title=title,
+                year=year,
+                url=link,
+                tmdb_id=tmdb_id,
+            )
+        )
+
+    return entries
+
+
+async def _resolve_tmdb_movies_by_id_bounded(tmdb_ids: list[int]) -> dict[int, dict]:
+    if not tmdb_ids:
+        return {}
+
+    semaphore = asyncio.Semaphore(6)
+    results: dict[int, dict] = {}
+
+    async def _worker(tmdb_id: int) -> None:
+        async with semaphore:
+            try:
+                details = await tmdb.get_movie_details(tmdb_id)
+            except Exception:
+                return
+            if isinstance(details, dict) and int(details.get("id") or 0) > 0:
+                results[tmdb_id] = details
+
+    await asyncio.gather(*(_worker(tmdb_id) for tmdb_id in tmdb_ids))
+    return results
+
+
 async def _fetch_letterboxd_watched_films(username: str) -> tuple[str, str, list[LetterboxdWatchlistEntry]]:
     headers = {
         "User-Agent": (
@@ -116,13 +193,70 @@ async def _fetch_letterboxd_watched_films(username: str) -> tuple[str, str, list
         ),
         "Accept-Language": "en-US,en;q=0.9",
     }
+    rss_headers = {
+        **headers,
+        "Accept": "application/rss+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+    }
     profile_url = f"{LETTERBOXD_BASE_URL}/{username}/"
     films_url = f"{LETTERBOXD_BASE_URL}/{username}/films/"
+    profile_rss_url = f"{profile_url}rss/"
     empty_message = "No public watched films found on this Letterboxd profile."
+    blocked_message = "Letterboxd blocked automated access from this server. Please try again later."
+    recent_fallback_message = (
+        "Synced recent watched titles from Letterboxd. "
+        "Full history is temporarily limited because Letterboxd blocked film-page access from this server."
+    )
 
     async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
         blocked_detected = False
-        watchlist_blocked = False
+        films_blocked = False
+        rss_result: tuple[str, str, list[LetterboxdWatchlistEntry]] | None = None
+
+        async def _fetch_recent_rss_once() -> tuple[str, str, list[LetterboxdWatchlistEntry]]:
+            nonlocal rss_result
+            if rss_result is not None:
+                return rss_result
+
+            try:
+                rss_resp = await client.get(profile_rss_url, headers=rss_headers)
+            except Exception:
+                rss_result = (
+                    "unreachable",
+                    "Could not read this Letterboxd profile activity feed right now. Please try again.",
+                    [],
+                )
+                return rss_result
+
+            if _looks_like_cloudflare_challenge(rss_resp):
+                rss_result = ("blocked", blocked_message, [])
+                return rss_result
+
+            rss_text = rss_resp.text or ""
+            if _text_contains_any(rss_text, LETTERBOXD_PRIVATE_MARKERS):
+                rss_result = (
+                    "private",
+                    "This Letterboxd account is private, so FullStreamer cannot sync watched titles.",
+                    [],
+                )
+                return rss_result
+            if rss_resp.status_code == 404 or _text_contains_any(rss_text, LETTERBOXD_NOT_FOUND_MARKERS):
+                rss_result = ("not_found", "Letterboxd user was not found.", [])
+                return rss_result
+            if rss_resp.status_code != 200 or "<rss" not in rss_text.lower():
+                rss_result = (
+                    "unreachable",
+                    "Could not read this Letterboxd profile activity feed right now. Please try again.",
+                    [],
+                )
+                return rss_result
+
+            rss_entries = _parse_letterboxd_profile_rss(rss_text)
+            if rss_entries:
+                rss_result = ("ok", recent_fallback_message, rss_entries)
+                return rss_result
+
+            rss_result = ("empty", empty_message, [])
+            return rss_result
 
         try:
             profile_resp = await client.get(profile_url)
@@ -150,7 +284,7 @@ async def _fetch_letterboxd_watched_films(username: str) -> tuple[str, str, list
         if films_resp is not None:
             if _looks_like_cloudflare_challenge(films_resp):
                 blocked_detected = True
-                watchlist_blocked = True
+                films_blocked = True
             else:
                 films_text = films_resp.text or ""
                 if _text_contains_any(films_text, LETTERBOXD_PRIVATE_MARKERS):
@@ -181,7 +315,7 @@ async def _fetch_letterboxd_watched_films(username: str) -> tuple[str, str, list
 
                         if _looks_like_cloudflare_challenge(page_resp):
                             blocked_detected = True
-                            watchlist_blocked = True
+                            films_blocked = True
                             break
 
                         page_text = page_resp.text or ""
@@ -211,12 +345,11 @@ async def _fetch_letterboxd_watched_films(username: str) -> tuple[str, str, list
 
                     if all_entries:
                         return ("ok", "Watched titles synced from Letterboxd.", all_entries)
-                    if watchlist_blocked:
-                        return (
-                            "blocked",
-                            "Letterboxd blocked automated access from this server. Please try again later.",
-                            [],
-                        )
+                    if films_blocked:
+                        fallback_status, fallback_message, fallback_entries = await _fetch_recent_rss_once()
+                        if fallback_status in {"ok", "empty", "private", "not_found"}:
+                            return (fallback_status, fallback_message, fallback_entries)
+                        return ("blocked", blocked_message, [])
                     return ("empty", empty_message, [])
 
                 if films_resp.status_code == 404:
@@ -224,12 +357,17 @@ async def _fetch_letterboxd_watched_films(username: str) -> tuple[str, str, list
                         return ("empty", empty_message, [])
                     return ("not_found", "Letterboxd user was not found.", [])
 
-        if watchlist_blocked or (blocked_detected and films_resp is None):
-            return (
-                "blocked",
-                "Letterboxd blocked automated access from this server. Please try again later.",
-                [],
-            )
+        if films_blocked or (blocked_detected and films_resp is None):
+            fallback_status, fallback_message, fallback_entries = await _fetch_recent_rss_once()
+            if fallback_status in {"ok", "empty", "private", "not_found"}:
+                return (fallback_status, fallback_message, fallback_entries)
+            return ("blocked", blocked_message, [])
+
+        fallback_status, fallback_message, fallback_entries = await _fetch_recent_rss_once()
+        if fallback_status in {"ok", "empty", "private", "not_found"}:
+            return (fallback_status, fallback_message, fallback_entries)
+        if fallback_status == "blocked":
+            return ("blocked", blocked_message, [])
 
         return (
             "unreachable",
@@ -382,7 +520,12 @@ async def sync_watched_from_letterboxd(
     unique_entries: list[LetterboxdWatchlistEntry] = []
     unique_keys: list[tuple[str, int | None]] = []
     seen_unique: set[tuple[str, int | None]] = set()
+    tmdb_ids_from_feed: set[int] = set()
     for entry in entries:
+        feed_tmdb_id = int(entry.tmdb_id or 0)
+        if feed_tmdb_id > 0:
+            tmdb_ids_from_feed.add(feed_tmdb_id)
+            continue
         key = _entry_resolution_key(entry)
         if key in seen_unique:
             continue
@@ -390,16 +533,22 @@ async def sync_watched_from_letterboxd(
         unique_keys.append(key)
         unique_entries.append(entry)
 
-    resolved_unique = await _resolve_tmdb_movies_bounded(unique_entries)
+    resolved_unique = await _resolve_tmdb_movies_bounded(unique_entries) if unique_entries else []
     resolved_by_key = {key: resolved_unique[i] for i, key in enumerate(unique_keys)}
+    resolved_direct_tmdb = await _resolve_tmdb_movies_by_id_bounded(list(tmdb_ids_from_feed))
 
     for entry in entries:
-        resolved = resolved_by_key.get(_entry_resolution_key(entry))
-        if not resolved:
-            unmatched_count += 1
-            continue
+        resolved: dict | None = None
+        tmdb_id = int(entry.tmdb_id or 0)
+        if tmdb_id <= 0:
+            resolved = resolved_by_key.get(_entry_resolution_key(entry))
+            if not resolved:
+                unmatched_count += 1
+                continue
+            tmdb_id = int(resolved.get("id") or 0)
+        else:
+            resolved = resolved_direct_tmdb.get(tmdb_id)
 
-        tmdb_id = int(resolved.get("id") or 0)
         if tmdb_id <= 0:
             unmatched_count += 1
             continue
@@ -409,14 +558,16 @@ async def sync_watched_from_letterboxd(
             continue
         seen_import_ids.add(tmdb_id)
 
-        title = str(resolved.get("title") or entry.title).strip() or entry.title
-        poster_path = str(resolved.get("poster_path") or "").strip() or None
-        release_date = str(resolved.get("release_date") or "").strip() or None
+        title = str((resolved or {}).get("title") or entry.title).strip() or entry.title
+        poster_path = str((resolved or {}).get("poster_path") or "").strip() or None
+        release_date = str((resolved or {}).get("release_date") or "").strip() or None
         existing_row = existing_by_tmdb_id.get(tmdb_id)
         if existing_row:
             existing_row.title = title
-            existing_row.poster_path = poster_path
-            existing_row.release_date = release_date
+            if poster_path is not None:
+                existing_row.poster_path = poster_path
+            if release_date is not None:
+                existing_row.release_date = release_date
             existing_row.watched_at = sync_mark_time
             already_exists_count += 1
             continue
@@ -441,10 +592,15 @@ async def sync_watched_from_letterboxd(
     if total_items > 0 and added_count == 0 and already_exists_count == 0:
         status = "no_matches"
         message = "No watched titles could be matched from Letterboxd to TMDB."
+        if fetch_message and fetch_message != "Watched titles synced from Letterboxd.":
+            message = f"{fetch_message} {message}"
     else:
         status = "ok"
+        prefix = ""
+        if fetch_message and fetch_message != "Watched titles synced from Letterboxd.":
+            prefix = f"{fetch_message} "
         message = (
-            f"Synced Letterboxd watched titles. Added {added_count}. "
+            f"{prefix}Synced Letterboxd watched titles. Added {added_count}. "
             f"{already_exists_count} already marked watched. "
             f"{unmatched_count} unmatched."
         )

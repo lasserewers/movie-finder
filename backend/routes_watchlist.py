@@ -51,6 +51,7 @@ class LetterboxdWatchlistEntry:
     title: str
     year: int | None
     url: str | None = None
+    tmdb_id: int | None = None
 
 
 class AddWatchlistRequest(BaseModel):
