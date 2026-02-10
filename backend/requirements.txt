@@ -8,3 +8,4 @@ python-jose[cryptography]
 slowapi
 pydantic[email]
 python-dotenv
+python-multipart

@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 import xml.etree.ElementTree as ET
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +26,7 @@ from .routes_watchlist import (
     _entry_resolution_key,
     _looks_like_cloudflare_challenge,
     _normalize_letterboxd_username,
+    _parse_letterboxd_export_zip_bytes,
     _coerce_year,
     _parse_html_attributes,
     _resolve_tmdb_movies_bounded,
@@ -440,60 +441,38 @@ async def add_watched_item(
 
 @router.post("/sync/letterboxd")
 async def sync_watched_from_letterboxd(
-    body: LetterboxdWatchedSyncRequest,
+    file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    username = _normalize_letterboxd_username(body.username)
     sync_time = datetime.now(timezone.utc)
     sync_mark_time = datetime.now(timezone.utc)
     prefs = await _get_or_create_preferences(db, user.id)
-    prefs.letterboxd_username = username
-
-    fetch_status, fetch_message, entries = await _fetch_letterboxd_watched_films(username)
+    zip_bytes = await file.read()
+    export_bundle = _parse_letterboxd_export_zip_bytes(zip_bytes)
+    username = (export_bundle.username or "").strip()
+    entries = list(export_bundle.watched_entries)
+    limit_applied = False
     if LETTERBOXD_WATCHED_IMPORT_LIMIT > 0 and len(entries) > LETTERBOXD_WATCHED_IMPORT_LIMIT:
         entries = entries[:LETTERBOXD_WATCHED_IMPORT_LIMIT]
-        fetch_message = (
-            f"{fetch_message} Imported the first {LETTERBOXD_WATCHED_IMPORT_LIMIT} titles."
-            if fetch_message
-            else f"Imported the first {LETTERBOXD_WATCHED_IMPORT_LIMIT} titles."
-        )
+        limit_applied = True
 
-    if fetch_status in {"private", "not_found", "blocked", "unreachable"}:
+    if not entries:
+        empty_message = "No titles found in watched.csv in this Letterboxd export."
         add_audit_log(
             db,
             action="user.watched_sync_letterboxd",
-            message=f"Letterboxd watched sync failed ({fetch_status}).",
-            actor_user=user,
-            target_user=user,
-            reason=fetch_message,
-        )
-        await db.commit()
-        return {
-            "ok": False,
-            "status": fetch_status,
-            "username": username,
-            "message": fetch_message,
-            "total_items": 0,
-            "added_count": 0,
-            "already_exists_count": 0,
-            "unmatched_count": 0,
-        }
-
-    if fetch_status == "empty":
-        add_audit_log(
-            db,
-            action="user.watched_sync_letterboxd",
-            message="Letterboxd watched sync completed with no importable titles.",
+            message="Letterboxd watched ZIP sync completed with no importable titles.",
             actor_user=user,
             target_user=user,
         )
+        prefs.letterboxd_username = username or None
         await db.commit()
         return {
             "ok": True,
             "status": "empty",
-            "username": username,
-            "message": fetch_message,
+            "username": username or None,
+            "message": empty_message,
             "total_items": 0,
             "added_count": 0,
             "already_exists_count": 0,
@@ -592,18 +571,15 @@ async def sync_watched_from_letterboxd(
     if total_items > 0 and added_count == 0 and already_exists_count == 0:
         status = "no_matches"
         message = "No watched titles could be matched from Letterboxd to TMDB."
-        if fetch_message and fetch_message != "Watched titles synced from Letterboxd.":
-            message = f"{fetch_message} {message}"
     else:
         status = "ok"
-        prefix = ""
-        if fetch_message and fetch_message != "Watched titles synced from Letterboxd.":
-            prefix = f"{fetch_message} "
         message = (
-            f"{prefix}Synced Letterboxd watched titles. Added {added_count}. "
+            f"Synced Letterboxd watched titles. Added {added_count}. "
             f"{already_exists_count} already marked watched. "
             f"{unmatched_count} unmatched."
         )
+    if limit_applied:
+        message = f"{message} Imported the first {LETTERBOXD_WATCHED_IMPORT_LIMIT} titles."
 
     add_audit_log(
         db,
@@ -615,13 +591,14 @@ async def sync_watched_from_letterboxd(
         actor_user=user,
         target_user=user,
     )
+    prefs.letterboxd_username = username or None
     prefs.letterboxd_watchlist_last_sync_at = sync_time
     await db.commit()
 
     return {
         "ok": True,
         "status": status,
-        "username": username,
+        "username": username or None,
         "message": message,
         "total_items": total_items,
         "added_count": added_count,

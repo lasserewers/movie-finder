@@ -1,15 +1,18 @@
 import asyncio
+import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from html import unescape
+import io
 import re
 from typing import Literal
 from urllib.parse import urljoin, urlparse
 import xml.etree.ElementTree as ET
+import zipfile
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +47,7 @@ LETTERBOXD_HTML_ATTR_RE = re.compile(
 )
 LETTERBOXD_WATCHLIST_PAGE_RE = re.compile(r"/watchlist/page/(?P<page>\d+)/", flags=re.IGNORECASE)
 LETTERBOXD_RESOLVE_CONCURRENCY = 4
+LETTERBOXD_EXPORT_MAX_BYTES = 30 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -158,6 +162,114 @@ def _split_title_year(value: str) -> tuple[str, int | None]:
         if title:
             return title, year
     return text, None
+
+
+@dataclass(frozen=True)
+class LetterboxdExportBundle:
+    username: str | None
+    watchlist_entries: list[LetterboxdWatchlistEntry]
+    watched_entries: list[LetterboxdWatchlistEntry]
+
+
+def _decode_letterboxd_csv_bytes(raw: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise HTTPException(status_code=400, detail="Could not decode CSV files in the uploaded Letterboxd export.")
+
+
+def _zip_member_name_case_insensitive(names: list[str], target_name: str) -> str | None:
+    target = target_name.strip("/").lower()
+    for name in names:
+        if name.strip("/").lower() == target:
+            return name
+    return None
+
+
+def _read_zip_text(archive: zipfile.ZipFile, member_name: str) -> str | None:
+    names = archive.namelist()
+    actual_name = _zip_member_name_case_insensitive(names, member_name)
+    if not actual_name:
+        return None
+    try:
+        raw = archive.read(actual_name)
+    except KeyError:
+        return None
+    return _decode_letterboxd_csv_bytes(raw)
+
+
+def _parse_letterboxd_export_entries_from_csv(csv_text: str) -> list[LetterboxdWatchlistEntry]:
+    reader = csv.DictReader(io.StringIO(csv_text))
+    entries: list[LetterboxdWatchlistEntry] = []
+    seen: set[tuple[str, int | None]] = set()
+    for row in reader:
+        if not isinstance(row, dict):
+            continue
+        raw_title = str(row.get("Name") or row.get("Film Name") or row.get("Title") or "").strip()
+        if not raw_title:
+            continue
+        title, year_from_title = _split_title_year(raw_title)
+        if not title:
+            continue
+        year = _coerce_year(row.get("Year")) or year_from_title
+        uri = str(row.get("Letterboxd URI") or row.get("URI") or row.get("URL") or "").strip() or None
+        dedupe_key = (title.lower(), year)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        entries.append(LetterboxdWatchlistEntry(title=title, year=year, url=uri))
+    return entries
+
+
+def _parse_letterboxd_export_profile_username(csv_text: str) -> str | None:
+    reader = csv.DictReader(io.StringIO(csv_text))
+    row = next(reader, None)
+    if not isinstance(row, dict):
+        return None
+    username = str(row.get("Username") or "").strip().lower()
+    if not username:
+        return None
+    if LETTERBOXD_USERNAME_RE.fullmatch(username):
+        return username
+    return None
+
+
+def _parse_letterboxd_export_zip_bytes(zip_bytes: bytes) -> LetterboxdExportBundle:
+    if not zip_bytes:
+        raise HTTPException(status_code=400, detail="Upload a Letterboxd export ZIP file.")
+    if len(zip_bytes) > LETTERBOXD_EXPORT_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="ZIP file is too large. Please upload a smaller Letterboxd export.")
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid ZIP file. Please upload the Letterboxd export ZIP.")
+
+    with archive:
+        profile_csv = _read_zip_text(archive, "profile.csv")
+        watchlist_csv = _read_zip_text(archive, "watchlist.csv")
+        watched_csv = _read_zip_text(archive, "watched.csv")
+        diary_csv = _read_zip_text(archive, "diary.csv")
+
+    if not profile_csv and not watchlist_csv and not watched_csv and not diary_csv:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not find Letterboxd export files in ZIP. Use the ZIP from Settings > Data > Export your data.",
+        )
+
+    username = _parse_letterboxd_export_profile_username(profile_csv or "")
+    watchlist_entries = _parse_letterboxd_export_entries_from_csv(watchlist_csv or "") if watchlist_csv else []
+    watched_entries = _parse_letterboxd_export_entries_from_csv(watched_csv or "") if watched_csv else []
+    if not watched_entries and diary_csv:
+        watched_entries = _parse_letterboxd_export_entries_from_csv(diary_csv)
+
+    return LetterboxdExportBundle(
+        username=username,
+        watchlist_entries=watchlist_entries,
+        watched_entries=watched_entries,
+    )
 
 
 def _parse_letterboxd_watchlist_rss(xml_text: str) -> list[LetterboxdWatchlistEntry]:
@@ -628,57 +740,30 @@ async def unlink_letterboxd_watchlist_sync(
 
 @router.post("/sync/letterboxd")
 async def sync_watchlist_from_letterboxd(
-    body: LetterboxdWatchlistSyncRequest,
+    file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    username = _normalize_letterboxd_username(body.username)
     sync_time = datetime.now(timezone.utc)
     prefs = await _get_or_create_preferences(db, user.id)
-
-    fetch_status, fetch_message, entries = await _fetch_letterboxd_watchlist(username)
+    zip_bytes = await file.read()
+    export_bundle = _parse_letterboxd_export_zip_bytes(zip_bytes)
+    username = (export_bundle.username or "").strip()
+    entries = list(export_bundle.watchlist_entries)
+    limit_applied = False
     if len(entries) > LETTERBOXD_IMPORT_LIMIT:
         entries = entries[:LETTERBOXD_IMPORT_LIMIT]
-        fetch_message = (
-            f"{fetch_message} Imported the first {LETTERBOXD_IMPORT_LIMIT} titles."
-            if fetch_message
-            else f"Imported the first {LETTERBOXD_IMPORT_LIMIT} titles."
-        )
-
-    if fetch_status in {"private", "not_found", "blocked", "unreachable"}:
-        prefs.letterboxd_username = username
-        prefs.letterboxd_watchlist_sync_status = fetch_status
-        prefs.letterboxd_watchlist_sync_message = fetch_message
-        prefs.letterboxd_watchlist_last_sync_at = sync_time
-        add_audit_log(
-            db,
-            action="user.watchlist_sync_letterboxd",
-            message=f"Letterboxd watchlist sync failed ({fetch_status}).",
-            actor_user=user,
-            target_user=user,
-            reason=fetch_message,
-        )
-        await db.commit()
-        return {
-            "ok": False,
-            "status": fetch_status,
-            "username": username,
-            "message": fetch_message,
-            "total_items": 0,
-            "added_count": 0,
-            "already_exists_count": 0,
-            "unmatched_count": 0,
-        }
-
-    if fetch_status == "empty":
-        prefs.letterboxd_username = username
+        limit_applied = True
+    if not entries:
+        empty_message = "No titles found in watchlist.csv in this Letterboxd export."
+        prefs.letterboxd_username = username or None
         prefs.letterboxd_watchlist_sync_status = "empty"
-        prefs.letterboxd_watchlist_sync_message = fetch_message
+        prefs.letterboxd_watchlist_sync_message = empty_message
         prefs.letterboxd_watchlist_last_sync_at = sync_time
         add_audit_log(
             db,
             action="user.watchlist_sync_letterboxd",
-            message="Letterboxd watchlist sync completed with no importable titles.",
+            message="Letterboxd watchlist ZIP sync completed with no importable titles.",
             actor_user=user,
             target_user=user,
         )
@@ -686,8 +771,8 @@ async def sync_watchlist_from_letterboxd(
         return {
             "ok": True,
             "status": "empty",
-            "username": username,
-            "message": fetch_message,
+            "username": username or None,
+            "message": empty_message,
             "total_items": 0,
             "added_count": 0,
             "already_exists_count": 0,
@@ -779,8 +864,10 @@ async def sync_watchlist_from_letterboxd(
             f"{already_exists_count} already in watchlist. "
             f"{unmatched_count} unmatched."
         )
+    if limit_applied:
+        message = f"{message} Imported the first {LETTERBOXD_IMPORT_LIMIT} titles."
 
-    prefs.letterboxd_username = username
+    prefs.letterboxd_username = username or None
     prefs.letterboxd_watchlist_sync_status = status
     prefs.letterboxd_watchlist_sync_message = message
     prefs.letterboxd_watchlist_last_sync_at = sync_time
@@ -800,7 +887,7 @@ async def sync_watchlist_from_letterboxd(
     return {
         "ok": True,
         "status": status,
-        "username": username,
+        "username": username or None,
         "message": message,
         "total_items": total_items,
         "added_count": added_count,

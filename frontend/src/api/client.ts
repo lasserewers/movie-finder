@@ -56,9 +56,14 @@ export async function apiFetch<T = unknown>(
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   };
+  const body = options.body;
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
+  const hasContentType = Object.keys(headers).some((key) => key.toLowerCase() === "content-type");
 
   if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
-    headers["Content-Type"] = "application/json";
+    if (!isFormData && !hasContentType) {
+      headers["Content-Type"] = "application/json";
+    }
     headers["X-CSRF-Token"] = getCsrfToken();
   }
 

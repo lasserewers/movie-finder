@@ -11,7 +11,6 @@ import {
   getLetterboxdSyncState,
   syncLetterboxdWatchlist,
   syncLetterboxdWatchedTitles,
-  unlinkLetterboxdWatchlist,
   type LetterboxdSyncStatus,
 } from "../api/linkedAccounts";
 import { useAuth } from "../hooks/useAuth";
@@ -28,6 +27,28 @@ const HOME_CONTENT_LABEL: Record<HomeContentMode, string> = {
 
 function countryFlag(code: string) {
   return String.fromCodePoint(...[...code.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(1)} GB`;
+}
+
+function isLikelyZipFile(file: File): boolean {
+  const lowerName = (file.name || "").toLowerCase();
+  const lowerType = (file.type || "").toLowerCase();
+  return (
+    lowerName.endsWith(".zip") ||
+    lowerType === "application/zip" ||
+    lowerType === "application/x-zip-compressed" ||
+    lowerType === "multipart/x-zip"
+  );
 }
 
 export type SettingsCenterSection =
@@ -129,14 +150,15 @@ export default function SettingsCenterModal({
   const [notificationErr, setNotificationErr] = useState("");
   const [linkedLoading, setLinkedLoading] = useState(false);
   const [linkedSyncing, setLinkedSyncing] = useState(false);
+  const [linkedWatchlistSyncing, setLinkedWatchlistSyncing] = useState(false);
   const [linkedWatchedSyncing, setLinkedWatchedSyncing] = useState(false);
-  const [linkedUnlinking, setLinkedUnlinking] = useState(false);
-  const [linkedSavedUsername, setLinkedSavedUsername] = useState<string | null>(null);
-  const [linkedUsernameInput, setLinkedUsernameInput] = useState("");
+  const [linkedExportFile, setLinkedExportFile] = useState<File | null>(null);
+  const [linkedDropActive, setLinkedDropActive] = useState(false);
   const [linkedStatus, setLinkedStatus] = useState<LetterboxdSyncStatus>(null);
   const [linkedMessage, setLinkedMessage] = useState("");
   const [linkedErr, setLinkedErr] = useState("");
   const [linkedLastSyncAt, setLinkedLastSyncAt] = useState<string | null>(null);
+  const [linkedLastUsername, setLinkedLastUsername] = useState<string | null>(null);
 
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
   const [countryQuery, setCountryQuery] = useState("");
@@ -162,6 +184,7 @@ export default function SettingsCenterModal({
   const homeOrderZoneRef = useRef<HTMLDivElement | null>(null);
   const homeOrderDragArmedIndexRef = useRef<number | null>(null);
   const homeOrderDragPointerYRef = useRef<number | null>(null);
+  const linkedFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -192,8 +215,9 @@ export default function SettingsCenterModal({
     setLinkedMessage("");
     setLinkedStatus(null);
     setLinkedLastSyncAt(null);
-    setLinkedSavedUsername(null);
-    setLinkedUsernameInput("");
+    setLinkedLastUsername(null);
+    setLinkedExportFile(null);
+    setLinkedDropActive(false);
   }, [open, initialSection, countries, providerIds]);
 
   useEffect(() => {
@@ -303,14 +327,7 @@ export default function SettingsCenterModal({
       .then((state) => {
         if (cancelled) return;
         const savedUsername = (state.username || "").trim();
-        setLinkedSavedUsername(savedUsername || null);
-        setLinkedUsernameInput(savedUsername);
-        if (!savedUsername) {
-          setLinkedStatus(null);
-          setLinkedMessage("");
-          setLinkedLastSyncAt(null);
-          return;
-        }
+        setLinkedLastUsername(savedUsername || null);
         setLinkedStatus(state.status || null);
         setLinkedMessage(state.message || "");
         setLinkedLastSyncAt(state.last_sync_at || null);
@@ -403,9 +420,48 @@ export default function SettingsCenterModal({
 
   const inputClass =
     "w-full px-3 py-2.5 text-sm border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors";
-  const linkedIsConnected = Boolean((linkedSavedUsername || "").trim());
-  const resolveLinkedUsernameForSync = () =>
-    (linkedIsConnected ? linkedSavedUsername || "" : linkedUsernameInput).trim();
+  const linkedCanSync = Boolean(linkedExportFile);
+  const linkedUploadDisabled = linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedLoading;
+
+  const setLinkedFile = useCallback((nextFile: File | null) => {
+    setLinkedExportFile(nextFile);
+    setLinkedErr("");
+    if (!nextFile) {
+      setLinkedMessage("");
+    }
+  }, []);
+
+  const openLinkedFilePicker = useCallback(() => {
+    const input = linkedFileInputRef.current;
+    if (!input) return;
+    input.value = "";
+    input.click();
+  }, []);
+
+  const resetLinkedSelectedFile = useCallback(() => {
+    const input = linkedFileInputRef.current;
+    if (input) {
+      input.value = "";
+    }
+    setLinkedDropActive(false);
+    setLinkedFile(null);
+  }, [setLinkedFile]);
+
+  const handleLinkedFileChange = useCallback(
+    (nextFile: File | null) => {
+      setLinkedDropActive(false);
+      if (!nextFile) {
+        setLinkedFile(null);
+        return;
+      }
+      if (!isLikelyZipFile(nextFile)) {
+        setLinkedErr("Please upload a .zip export file from Letterboxd.");
+        return;
+      }
+      setLinkedFile(nextFile);
+    },
+    [setLinkedFile]
+  );
 
   const handleEmailSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -478,85 +534,93 @@ export default function SettingsCenterModal({
 
   const handleLetterboxdSync = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (linkedSyncing || linkedWatchedSyncing || linkedUnlinking) return;
-    const usernameToSync = resolveLinkedUsernameForSync();
-    if (!usernameToSync) {
-      setLinkedErr("Letterboxd username is required.");
+    if (linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing) return;
+    if (!linkedExportFile) {
+      setLinkedErr("Upload your Letterboxd export ZIP before syncing.");
       return;
     }
     setLinkedSyncing(true);
     setLinkedErr("");
     setLinkedMessage("");
     try {
-      const result = await syncLetterboxdWatchlist(usernameToSync);
-      const normalizedUsername = (result.username || usernameToSync).trim();
-      setLinkedStatus(result.status);
-      setLinkedMessage(result.message || "");
-      setLinkedLastSyncAt(new Date().toISOString());
-      setLinkedSavedUsername(normalizedUsername || null);
-      setLinkedUsernameInput(normalizedUsername);
-      if (result.ok) onSaved();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 405) {
-        setLinkedErr("Linked account sync is unavailable on the current backend process. Restart backend and try again.");
-      } else {
-        setLinkedErr(err instanceof ApiError ? err.message : "Could not sync Letterboxd watchlist.");
+      const watchlistResult = await syncLetterboxdWatchlist(linkedExportFile);
+      const watchedResult = await syncLetterboxdWatchedTitles(linkedExportFile);
+      const resolvedUsername = (watchlistResult.username || watchedResult.username || "").trim();
+      if (resolvedUsername) {
+        setLinkedLastUsername(resolvedUsername);
       }
+      setLinkedStatus(watchedResult.status || watchlistResult.status);
+      setLinkedMessage(
+        `Watchlist: ${watchlistResult.message || "No update."} Watched: ${watchedResult.message || "No update."}`
+      );
+      setLinkedLastSyncAt(new Date().toISOString());
+      if (watchedResult.ok) {
+        await refreshWatched();
+      }
+      if (watchlistResult.ok || watchedResult.ok) {
+        onSaved();
+      }
+    } catch (err) {
+      setLinkedErr(err instanceof ApiError ? err.message : "Could not sync Letterboxd export.");
     } finally {
       setLinkedSyncing(false);
     }
   };
 
+  const handleLetterboxdWatchlistSync = async () => {
+    if (linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing) return;
+    if (!linkedExportFile) {
+      setLinkedErr("Upload your Letterboxd export ZIP before syncing.");
+      return;
+    }
+    setLinkedWatchlistSyncing(true);
+    setLinkedErr("");
+    setLinkedMessage("");
+    try {
+      const result = await syncLetterboxdWatchlist(linkedExportFile);
+      const normalizedUsername = (result.username || "").trim();
+      setLinkedStatus(result.status);
+      setLinkedMessage(result.message || "");
+      setLinkedLastSyncAt(new Date().toISOString());
+      if (normalizedUsername) {
+        setLinkedLastUsername(normalizedUsername);
+      }
+      if (result.ok) {
+        onSaved();
+      }
+    } catch (err) {
+      setLinkedErr(err instanceof ApiError ? err.message : "Could not sync watchlist from Letterboxd export.");
+    } finally {
+      setLinkedWatchlistSyncing(false);
+    }
+  };
+
   const handleLetterboxdWatchedSync = async () => {
-    if (linkedSyncing || linkedWatchedSyncing || linkedUnlinking) return;
-    const usernameToSync = resolveLinkedUsernameForSync();
-    if (!usernameToSync) {
-      setLinkedErr("Letterboxd username is required.");
+    if (linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing) return;
+    if (!linkedExportFile) {
+      setLinkedErr("Upload your Letterboxd export ZIP before syncing.");
       return;
     }
     setLinkedWatchedSyncing(true);
     setLinkedErr("");
     setLinkedMessage("");
     try {
-      const result = await syncLetterboxdWatchedTitles(usernameToSync);
-      const normalizedUsername = (result.username || usernameToSync).trim();
+      const result = await syncLetterboxdWatchedTitles(linkedExportFile);
+      const normalizedUsername = (result.username || "").trim();
       setLinkedStatus(result.status);
       setLinkedMessage(result.message || "");
       setLinkedLastSyncAt(new Date().toISOString());
-      setLinkedSavedUsername(normalizedUsername || null);
-      setLinkedUsernameInput(normalizedUsername);
+      if (normalizedUsername) {
+        setLinkedLastUsername(normalizedUsername);
+      }
       if (result.ok) {
         await refreshWatched();
         onSaved();
       }
     } catch (err) {
-      if (err instanceof ApiError && err.status === 405) {
-        setLinkedErr("Linked watched sync is unavailable on the current backend process. Restart backend and try again.");
-      } else {
-        setLinkedErr(err instanceof ApiError ? err.message : "Could not sync watched titles from Letterboxd.");
-      }
+      setLinkedErr(err instanceof ApiError ? err.message : "Could not sync watched titles from Letterboxd export.");
     } finally {
       setLinkedWatchedSyncing(false);
-    }
-  };
-
-  const handleLetterboxdUnlink = async () => {
-    if (linkedUnlinking || linkedSyncing || linkedWatchedSyncing || !linkedIsConnected) return;
-    setLinkedUnlinking(true);
-    setLinkedErr("");
-    setLinkedMessage("");
-    try {
-      await unlinkLetterboxdWatchlist();
-      setLinkedSavedUsername(null);
-      setLinkedUsernameInput("");
-      setLinkedStatus(null);
-      setLinkedMessage("Letterboxd account unlinked. Enter a new username to link another account.");
-      setLinkedLastSyncAt(null);
-      onSaved();
-    } catch (err) {
-      setLinkedErr(err instanceof ApiError ? err.message : "Could not unlink Letterboxd account.");
-    } finally {
-      setLinkedUnlinking(false);
     }
   };
 
@@ -1322,73 +1386,179 @@ export default function SettingsCenterModal({
           <div>
             <h4 className="text-sm font-semibold text-text">Linked accounts</h4>
             <p className="text-sm text-muted mt-1">
-              Connect your Letterboxd account to sync both watchlist and watched titles.
+              Upload your Letterboxd data export ZIP to sync watchlist and watched titles.
             </p>
           </div>
 
           <form onSubmit={handleLetterboxdSync} className="space-y-3">
-            {linkedIsConnected ? (
-              <div className="rounded-lg border border-border/80 bg-bg/40 px-3 py-2.5">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-text truncate">Linked to {linkedSavedUsername}</div>
-                    <div className="text-xs text-muted mt-1">
-                      Unlink this account to connect a different Letterboxd username.
+            <div className="rounded-lg border border-border/80 bg-bg/40 px-3 py-2.5 text-xs text-muted space-y-1">
+              <div>1. Log into Letterboxd.</div>
+              <div>2. Go to `Settings`.</div>
+              <div>3. Open `Data` and click `Export your data`.</div>
+              <div>4. Upload the downloaded ZIP file below.</div>
+            </div>
+
+            <input
+              ref={linkedFileInputRef}
+              id="letterboxd-export-zip"
+              type="file"
+              accept=".zip,application/zip,application/x-zip-compressed"
+              onChange={(event) => {
+                const nextFile = event.target.files && event.target.files.length > 0 ? event.target.files[0] : null;
+                handleLinkedFileChange(nextFile);
+              }}
+              className="sr-only"
+              disabled={linkedUploadDisabled}
+            />
+
+            {!linkedExportFile && (
+              <div
+                role="button"
+                tabIndex={linkedUploadDisabled ? -1 : 0}
+                onClick={() => {
+                  if (linkedUploadDisabled) return;
+                  openLinkedFilePicker();
+                }}
+                onKeyDown={(event) => {
+                  if (linkedUploadDisabled) return;
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  openLinkedFilePicker();
+                }}
+                onDragEnter={(event) => {
+                  if (linkedUploadDisabled) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setLinkedDropActive(true);
+                }}
+                onDragOver={(event) => {
+                  if (linkedUploadDisabled) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setLinkedDropActive(true);
+                }}
+                onDragLeave={(event) => {
+                  if (linkedUploadDisabled) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const related = event.relatedTarget as Node | null;
+                  if (related && event.currentTarget.contains(related)) return;
+                  setLinkedDropActive(false);
+                }}
+                onDrop={(event) => {
+                  if (linkedUploadDisabled) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setLinkedDropActive(false);
+                  const droppedFile = event.dataTransfer.files && event.dataTransfer.files.length > 0
+                    ? event.dataTransfer.files[0]
+                    : null;
+                  handleLinkedFileChange(droppedFile);
+                }}
+                className={`rounded-2xl border-[2.5px] border-dashed px-4 py-6 sm:px-5 sm:py-7 transition-colors ${
+                  linkedUploadDisabled
+                    ? "border-border/50 bg-bg/30 opacity-70 cursor-not-allowed"
+                    : linkedDropActive
+                      ? "border-accent-2 bg-accent/10 cursor-pointer"
+                      : "border-border/80 bg-panel/35 hover:border-accent/65 cursor-pointer"
+                }`}
+              >
+                <div className="flex flex-col items-center justify-center text-center gap-3">
+                  <div className="w-11 h-11 rounded-full border border-border/70 bg-bg/70 flex items-center justify-center text-muted">
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <path d="M12 3v10" strokeLinecap="round" />
+                      <path d="m8 9 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M4 16.5v1A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5v-1" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold text-text">
+                      {linkedDropActive ? "Drop your ZIP file here" : "Drag and drop your Letterboxd ZIP file"}
+                    </div>
+                    <div className="text-xs text-muted">or choose a file manually</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (linkedUploadDisabled) return;
+                      openLinkedFilePicker();
+                    }}
+                    disabled={linkedUploadDisabled}
+                    className="px-4 py-2 rounded-lg border border-border/80 bg-bg/60 text-sm font-semibold text-text hover:border-accent-2 transition-colors disabled:opacity-50"
+                  >
+                    Upload ZIP file
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {linkedExportFile && (
+              <div className="rounded-xl border border-border/70 bg-panel/35 px-4 py-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="w-11 h-11 rounded-lg border border-border/70 bg-bg/70 flex items-center justify-center text-text/90 shrink-0">
+                      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                        <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M14 2v5h5" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M9 13h6M9 17h6" strokeLinecap="round" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm sm:text-[0.95rem] font-semibold text-text truncate">{linkedExportFile.name}</div>
+                      <div className="text-xs sm:text-sm text-muted">{formatFileSize(linkedExportFile.size)}</div>
                     </div>
                   </div>
                   <button
                     type="button"
-                    onClick={handleLetterboxdUnlink}
-                    disabled={linkedSyncing || linkedWatchedSyncing || linkedLoading || linkedUnlinking}
-                    className="px-3 py-1.5 rounded-md border border-border/80 bg-panel text-text text-xs font-semibold hover:border-accent-2 transition-colors disabled:opacity-50 flex-shrink-0"
+                    onClick={resetLinkedSelectedFile}
+                    disabled={linkedUploadDisabled}
+                    className="w-full sm:w-auto px-3.5 py-2 rounded-lg border border-border/80 bg-bg/60 text-xs sm:text-sm font-semibold text-text hover:border-accent-2 transition-colors disabled:opacity-50"
                   >
-                    {linkedUnlinking ? "Unlinking..." : "Unlink"}
+                    Choose a different ZIP file
                   </button>
                 </div>
               </div>
-            ) : (
-              <>
-                <label htmlFor="letterboxd-username" className="text-xs font-semibold uppercase tracking-wider text-muted">
-                  Letterboxd username
-                </label>
-                <input
-                  id="letterboxd-username"
-                  type="text"
-                  value={linkedUsernameInput}
-                  onChange={(event) => setLinkedUsernameInput(event.target.value)}
-                  placeholder="username or https://letterboxd.com/username/"
-                  className={inputClass}
-                  autoComplete="off"
-                  spellCheck={false}
-                  disabled={linkedSyncing || linkedWatchedSyncing || linkedLoading || linkedUnlinking}
-                />
-              </>
             )}
+
             <div className="text-xs text-muted">
-              Syncs, adds, and merges titles from Letterboxd, and anything already in your FullStreamer watchlist stays there.
+              Syncing from ZIP adds and merges titles. Anything already in your FullStreamer watchlist stays there.
             </div>
-            {(linkedSyncing || linkedWatchedSyncing) && (
+            {(linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing) && (
               <div className="text-xs rounded-md border border-accent/35 bg-accent/10 px-3 py-2 text-accent-2">
                 Please wait. Syncing can take some time for large Letterboxd libraries.
               </div>
             )}
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="submit"
-                disabled={linkedSyncing || linkedWatchedSyncing || linkedLoading || linkedUnlinking}
-                className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 text-sm"
-              >
-                {linkedSyncing ? "Syncing..." : linkedIsConnected ? "Sync watchlist now" : "Sync watchlist"}
-              </button>
-              <button
-                type="button"
-                onClick={handleLetterboxdWatchedSync}
-                disabled={linkedSyncing || linkedWatchedSyncing || linkedLoading || linkedUnlinking}
-                className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 text-sm"
-              >
-                {linkedWatchedSyncing ? "Syncing watched..." : linkedIsConnected ? "Sync watched titles now" : "Sync watched titles"}
-              </button>
-            </div>
+            {linkedCanSync ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedLoading}
+                  className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 text-sm"
+                >
+                  {linkedSyncing ? "Syncing all..." : "Sync all"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLetterboxdWatchlistSync}
+                  disabled={linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedLoading}
+                  className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
+                >
+                  {linkedWatchlistSyncing ? "Syncing watchlist..." : "Sync watchlist"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLetterboxdWatchedSync}
+                  disabled={linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedLoading}
+                  className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
+                >
+                  {linkedWatchedSyncing ? "Syncing watched..." : "Sync watched titles"}
+                </button>
+              </div>
+            ) : (
+              <div className="text-xs text-muted">Upload a ZIP file to show sync buttons.</div>
+            )}
           </form>
 
           {linkedLoading && (
@@ -1418,6 +1588,7 @@ export default function SettingsCenterModal({
 
           {(linkedStatus || linkedLastSyncAt) && (
             <div className="text-xs text-muted border border-border/70 rounded-lg px-3 py-2 space-y-1">
+              {linkedLastUsername && <div>Last export username: {linkedLastUsername}</div>}
               <div>Status: {linkedStatus || "unknown"}</div>
               <div>Last sync: {linkedLastSyncAt ? new Date(linkedLastSyncAt).toLocaleString() : "Never"}</div>
             </div>
