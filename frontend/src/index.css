@@ -182,6 +182,17 @@ html.light *::-webkit-scrollbar-thumb:hover {
   appearance: textfield;
 }
 
+.list-order-input::-webkit-outer-spin-button,
+.list-order-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.list-order-input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 .advanced-year-span-toggle-track {
   position: relative;
   display: inline-flex;

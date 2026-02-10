@@ -28,6 +28,7 @@ from .routes_auth import router as auth_router
 from .routes_admin import router as admin_router
 from .routes_watchlist import router as watchlist_router
 from .routes_watched import router as watched_router
+from .routes_lists import router as lists_router
 from .routes_notifications import router as notifications_router
 
 WATCH_PROVIDER_TTL = 6 * 60 * 60
@@ -143,6 +144,7 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(watchlist_router)
 app.include_router(watched_router)
+app.include_router(lists_router)
 app.include_router(notifications_router)
 
 

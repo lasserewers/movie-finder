@@ -6,6 +6,7 @@ import { useNotifications } from "../hooks/useNotifications";
 interface Props {
   onOpenSettingsCenter: () => void;
   onOpenNotifications: () => void;
+  onOpenLists: () => void;
   onOpenWatchlist: () => void;
   onOpenWatched: () => void;
 }
@@ -13,6 +14,7 @@ interface Props {
 export default function UserMenu({
   onOpenSettingsCenter,
   onOpenNotifications,
+  onOpenLists,
   onOpenWatchlist,
   onOpenWatched,
 }: Props) {
@@ -83,6 +85,23 @@ export default function UserMenu({
             </svg>
             <span className="flex-1">Notifications</span>
             {hasUnreadIndicator && <span className="w-2.5 h-2.5 rounded-full bg-amber-400 border border-amber-300/70" />}
+          </button>
+          <button
+            onClick={() => {
+              setOpen(false);
+              onOpenLists();
+            }}
+            className="w-full text-left px-4 py-2.5 text-sm hover:bg-white/5 transition-colors text-muted hover:text-text flex items-center gap-2.5"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="8" y1="6" x2="21" y2="6" />
+              <line x1="8" y1="12" x2="21" y2="12" />
+              <line x1="8" y1="18" x2="21" y2="18" />
+              <circle cx="4" cy="6" r="1.5" />
+              <circle cx="4" cy="12" r="1.5" />
+              <circle cx="4" cy="18" r="1.5" />
+            </svg>
+            Lists
           </button>
           <button
             onClick={() => {

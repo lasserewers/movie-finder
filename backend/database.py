@@ -35,6 +35,66 @@ async def init_db():
                 "ADD COLUMN IF NOT EXISTS notification_deliver_email BOOLEAN NOT NULL DEFAULT FALSE"
             )
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_preferences "
+                "ADD COLUMN IF NOT EXISTS letterboxd_username VARCHAR(80)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_preferences "
+                "ADD COLUMN IF NOT EXISTS letterboxd_watchlist_sync_status VARCHAR(40)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_preferences "
+                "ADD COLUMN IF NOT EXISTS letterboxd_watchlist_sync_message TEXT"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_preferences "
+                "ADD COLUMN IF NOT EXISTS letterboxd_watchlist_last_sync_at TIMESTAMPTZ NULL"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_list_items "
+                "ADD COLUMN IF NOT EXISTS sort_index INTEGER"
+            )
+        )
+        await conn.execute(
+            text(
+                "UPDATE user_list_items AS target "
+                "SET sort_index = ranked.rn "
+                "FROM ("
+                "  SELECT id, ROW_NUMBER() OVER (PARTITION BY list_id ORDER BY created_at DESC, id) AS rn "
+                "  FROM user_list_items"
+                ") AS ranked "
+                "WHERE target.id = ranked.id "
+                "AND (target.sort_index IS NULL OR target.sort_index <= 0)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_user_list_items_list_sort_index "
+                "ON user_list_items (list_id, sort_index)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_list_items "
+                "ALTER COLUMN sort_index SET DEFAULT 0"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_list_items "
+                "ALTER COLUMN sort_index SET NOT NULL"
+            )
+        )
 
         configured_admins = [
             email.strip().lower()

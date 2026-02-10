@@ -17,6 +17,7 @@ interface Props {
   index?: number;
   fill?: boolean;
   mediaType?: "movie" | "tv";
+  showWatchlistButton?: boolean;
 }
 
 function MovieCard({
@@ -29,6 +30,7 @@ function MovieCard({
   index = 0,
   fill = false,
   mediaType,
+  showWatchlistButton = true,
 }: Props) {
   const { user } = useAuth();
   const { isInWatchlist, toggle } = useWatchlist();
@@ -92,7 +94,7 @@ function MovieCard({
             TV
           </span>
         )}
-        {user && (
+        {user && showWatchlistButton && (
           <button
             type="button"
             onClick={toggleWatchlist}
@@ -122,7 +124,9 @@ function MovieCard({
       </div>
       <span className="text-[0.78rem] sm:text-[0.85rem] text-text leading-tight line-clamp-2">{title}</span>
       <span className="text-[0.68rem] sm:text-xs text-muted">{year}</span>
-      {watchlistErr && <span className="text-[0.64rem] text-red-300 leading-tight line-clamp-2">{watchlistErr}</span>}
+      {showWatchlistButton && watchlistErr && (
+        <span className="text-[0.64rem] text-red-300 leading-tight line-clamp-2">{watchlistErr}</span>
+      )}
     </>
   );
 

@@ -4,6 +4,7 @@ import { ConfigProvider, useConfig } from "./hooks/useConfig";
 import { WatchlistProvider, useWatchlist } from "./hooks/useWatchlist";
 import { WatchedProvider } from "./hooks/useWatched";
 import { useWatched } from "./hooks/useWatched";
+import { ListsProvider, useLists } from "./hooks/useLists";
 import { NotificationsProvider, useNotifications } from "./hooks/useNotifications";
 import Topbar from "./components/Topbar";
 import HeroSection from "./components/HeroSection";
@@ -12,6 +13,7 @@ import MovieOverlay from "./components/MovieOverlay";
 import SectionOverlay from "./components/SectionOverlay";
 import WatchlistOverlay from "./components/WatchlistOverlay";
 import WatchedOverlay from "./components/WatchedOverlay";
+import ListsOverlay from "./components/ListsOverlay";
 import NotificationsOverlay from "./components/NotificationsOverlay";
 import NotificationAlertsOverlay from "./components/NotificationAlertsOverlay";
 import SearchOverlay from "./components/SearchOverlay";
@@ -27,6 +29,7 @@ import { SkeletonRow } from "./components/Skeleton";
 import Spinner from "./components/Spinner";
 import { useInfiniteScroll } from "./hooks/useInfiniteScroll";
 import { getHome, getRegions, getGeoCountry, type HomeSection, type Region, type MediaType } from "./api/movies";
+import type { UserListItem } from "./api/lists";
 import { IOS_BRAVE } from "./utils/platform";
 
 const MEDIA_OPTIONS: { value: MediaType; label: string }[] = [
@@ -44,6 +47,8 @@ const USER_CONTENT_LABEL: Record<UserContentMode, string> = {
   streamable: "Streamable",
 };
 const SIGNUP_ONBOARDING_STORAGE_KEY = "signup_onboarding_pending";
+const USER_LIST_HOME_SECTION_PREFIX = "__userlist__:";
+const HOME_SECTION_WATCHLIST_ID = "__home_watchlist__";
 
 function userViewPrefsKey(email: string) {
   return `${USER_VIEW_PREFS_STORAGE_PREFIX}${email.trim().toLowerCase()}`;
@@ -56,8 +61,9 @@ function countryFlag(code: string) {
 function AppContent() {
   const { user, loading: authLoading } = useAuth();
   const { providerIds, countries, loadConfig, saveConfig } = useConfig();
-  const { items: watchlistItems, loading: watchlistLoading } = useWatchlist();
+  const { items: watchlistItems, loading: watchlistLoading, refresh: refreshWatchlist } = useWatchlist();
   const { items: watchedItems, loading: watchedLoading } = useWatched();
+  const { lists, getItems } = useLists();
   const {
     notifications,
     activeAlerts,
@@ -84,6 +90,8 @@ function AppContent() {
   const [selectedSection, setSelectedSection] = useState<HomeSection | null>(null);
   const [watchlistOverlayOpen, setWatchlistOverlayOpen] = useState(false);
   const [watchedOverlayOpen, setWatchedOverlayOpen] = useState(false);
+  const [listsOverlayOpen, setListsOverlayOpen] = useState(false);
+  const [listsOverlayInitialListId, setListsOverlayInitialListId] = useState<string | null>(null);
   const [notificationsOverlayOpen, setNotificationsOverlayOpen] = useState(false);
   const [notificationAlertsOverlayOpen, setNotificationAlertsOverlayOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -97,6 +105,9 @@ function AppContent() {
   const [usingVpn, setUsingVpn] = useState(false);
   const [hideWatchedOnHome, setHideWatchedOnHome] = useState(false);
   const [showWatchlistOnHome, setShowWatchlistOnHome] = useState(true);
+  const [homeListIds, setHomeListIds] = useState<string[]>([]);
+  const [homeSectionOrder, setHomeSectionOrder] = useState<string[]>([HOME_SECTION_WATCHLIST_ID]);
+  const [homeListItemsById, setHomeListItemsById] = useState<Record<string, UserListItem[]>>({});
   const [viewPrefsReady, setViewPrefsReady] = useState(false);
   const [guestCountry, setGuestCountry] = useState(() => {
     try {
@@ -243,6 +254,9 @@ function AppContent() {
       setUserContentMode("streamable");
       setHideWatchedOnHome(false);
       setShowWatchlistOnHome(true);
+      setHomeListIds([]);
+      setHomeSectionOrder([HOME_SECTION_WATCHLIST_ID]);
+      setHomeListItemsById({});
       return;
     }
 
@@ -258,6 +272,8 @@ function AppContent() {
           contentMode?: unknown;
           hideWatchedOnHome?: unknown;
           showWatchlistOnHome?: unknown;
+          homeListIds?: unknown;
+          homeSectionOrder?: unknown;
           showAllForUser?: unknown;
         };
         if (typeof parsed.usingVpn === "boolean") nextUsingVpn = parsed.usingVpn;
@@ -279,14 +295,34 @@ function AppContent() {
         } else {
           setShowWatchlistOnHome(true);
         }
+        if (Array.isArray(parsed.homeListIds)) {
+          const normalized = parsed.homeListIds
+            .map((value) => String(value).trim())
+            .filter((value, index, arr) => value && arr.indexOf(value) === index);
+          setHomeListIds(normalized);
+        } else {
+          setHomeListIds([]);
+        }
+        if (Array.isArray(parsed.homeSectionOrder)) {
+          const normalized = parsed.homeSectionOrder
+            .map((value) => String(value).trim())
+            .filter((value, index, arr) => value && arr.indexOf(value) === index);
+          setHomeSectionOrder(normalized.length ? normalized : [HOME_SECTION_WATCHLIST_ID]);
+        } else {
+          setHomeSectionOrder([HOME_SECTION_WATCHLIST_ID]);
+        }
       } else {
         setHideWatchedOnHome(false);
         setShowWatchlistOnHome(true);
+        setHomeListIds([]);
+        setHomeSectionOrder([HOME_SECTION_WATCHLIST_ID]);
       }
     } catch {
       // Ignore malformed localStorage values.
       setHideWatchedOnHome(false);
       setShowWatchlistOnHome(true);
+      setHomeListIds([]);
+      setHomeSectionOrder([HOME_SECTION_WATCHLIST_ID]);
     }
 
     setUsingVpn(nextUsingVpn);
@@ -337,12 +373,85 @@ function AppContent() {
           contentMode: userContentMode,
           hideWatchedOnHome,
           showWatchlistOnHome,
+          homeListIds,
+          homeSectionOrder,
         })
       );
     } catch {
       // Ignore localStorage write failures.
     }
-  }, [user?.email, viewPrefsReady, usingVpn, userContentMode, hideWatchedOnHome, showWatchlistOnHome]);
+  }, [user?.email, viewPrefsReady, usingVpn, userContentMode, hideWatchedOnHome, showWatchlistOnHome, homeListIds, homeSectionOrder]);
+
+  useEffect(() => {
+    if (!user) return;
+    const validListIds = new Set(lists.map((entry) => entry.id));
+    setHomeListIds((prev) => {
+      const filtered = prev.filter((listId) => validListIds.has(listId));
+      return filtered.length === prev.length ? prev : filtered;
+    });
+  }, [user, lists]);
+
+  useEffect(() => {
+    if (!user) {
+      setHomeSectionOrder([HOME_SECTION_WATCHLIST_ID]);
+      return;
+    }
+    const defaultOrder = [
+      ...(showWatchlistOnHome ? [HOME_SECTION_WATCHLIST_ID] : []),
+      ...homeListIds,
+    ];
+    const allowed = new Set<string>(defaultOrder);
+    setHomeSectionOrder((prev) => {
+      const next: string[] = [];
+      const seen = new Set<string>();
+      for (const key of prev) {
+        if (!allowed.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        next.push(key);
+      }
+      for (const key of defaultOrder) {
+        if (seen.has(key)) continue;
+        seen.add(key);
+        next.push(key);
+      }
+      return next.length === prev.length && next.every((value, index) => value === prev[index]) ? prev : next;
+    });
+  }, [user, homeListIds, showWatchlistOnHome]);
+
+  useEffect(() => {
+    if (!user) {
+      setHomeListItemsById({});
+      return;
+    }
+    const validListIds = new Set(lists.map((entry) => entry.id));
+    const targetIds = homeListIds.filter((listId) => validListIds.has(listId));
+    if (!targetIds.length) {
+      setHomeListItemsById({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const loaded = await Promise.all(
+        targetIds.map(async (listId) => {
+          try {
+            const items = await getItems(listId);
+            return [listId, items] as const;
+          } catch {
+            return [listId, [] as UserListItem[]] as const;
+          }
+        })
+      );
+      if (cancelled) return;
+      const next: Record<string, UserListItem[]> = {};
+      for (const [listId, items] of loaded) {
+        next[listId] = items;
+      }
+      setHomeListItemsById(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, lists, homeListIds, getItems]);
 
   // Prefetch next page in background
   const prefetchNextPage = useCallback(
@@ -617,6 +726,7 @@ function AppContent() {
   };
 
   const handleSettingsCenterSaved = () => {
+    void refreshWatchlist();
     loadHomeRows(true);
     if (pendingVpnPrompt) {
       setPendingVpnPrompt(false);
@@ -668,6 +778,12 @@ function AppContent() {
   }, [user, watchedOverlayOpen]);
 
   useEffect(() => {
+    if (!user && listsOverlayOpen) {
+      setListsOverlayOpen(false);
+    }
+  }, [user, listsOverlayOpen]);
+
+  useEffect(() => {
     if (user) return;
     if (notificationsOverlayOpen) setNotificationsOverlayOpen(false);
     if (notificationAlertsOverlayOpen) setNotificationAlertsOverlayOpen(false);
@@ -694,6 +810,56 @@ function AppContent() {
     () => new Set(watchedItems.map((item) => `${item.media_type}:${item.tmdb_id}`)),
     [watchedItems]
   );
+  const homeListSections = useMemo<HomeSection[]>(() => {
+    if (!user || !homeListIds.length) return [];
+    const summariesById = new Map(lists.map((entry) => [entry.id, entry]));
+    return homeListIds.flatMap((listId) => {
+      const listSummary = summariesById.get(listId);
+      if (!listSummary) return [];
+      let items = homeListItemsById[listId] || [];
+      if (mediaType === "movie" || mediaType === "tv") {
+        items = items.filter((entry) => entry.media_type === mediaType);
+      }
+      if (hideWatchedOnHome) {
+        items = items.filter((entry) => !watchedItemKeys.has(`${entry.media_type}:${entry.tmdb_id}`));
+      }
+      if (!items.length) return [];
+      return [
+        {
+          id: `${USER_LIST_HOME_SECTION_PREFIX}${listId}`,
+          title: listSummary.name,
+          results: items.map((entry) => ({
+            id: entry.tmdb_id,
+            title: entry.title,
+            poster_path: entry.poster_path || undefined,
+            release_date: entry.release_date || undefined,
+            media_type: entry.media_type,
+          })),
+        },
+      ];
+    });
+  }, [user, homeListIds, lists, homeListItemsById, mediaType, hideWatchedOnHome, watchedItemKeys]);
+  const homeListSectionByListId = useMemo(() => {
+    const map = new Map<string, HomeSection>();
+    for (const section of homeListSections) {
+      if (!section.id.startsWith(USER_LIST_HOME_SECTION_PREFIX)) continue;
+      const listId = section.id.slice(USER_LIST_HOME_SECTION_PREFIX.length);
+      if (!listId) continue;
+      map.set(listId, section);
+    }
+    return map;
+  }, [homeListSections]);
+  const homeSectionOrderItems = useMemo(() => {
+    if (!user) return [];
+    const listNameById = new Map(lists.map((entry) => [entry.id, entry.name]));
+    return [
+      ...(showWatchlistOnHome ? [{ id: HOME_SECTION_WATCHLIST_ID, label: "Watchlist" }] : []),
+      ...homeListIds.flatMap((listId) => {
+        const label = listNameById.get(listId);
+        return label ? [{ id: listId, label }] : [];
+      }),
+    ];
+  }, [user, lists, homeListIds, showWatchlistOnHome]);
   const watchlistItemsForHome = useMemo(() => {
     if (!hideWatchedOnHome) return watchlistItems;
     return watchlistItems.filter((entry) => !watchedItemKeys.has(`${entry.media_type}:${entry.tmdb_id}`));
@@ -713,70 +879,25 @@ function AppContent() {
       })),
     };
   }, [user, watchlistItemsForHome]);
-  const watchlistAnchorIndex = useMemo(() => {
-    const trendingIndex = sections.findIndex(
-      (section) => section.id === "trending_day" || section.title.trim().toLowerCase() === "trending today"
-    );
-    if (trendingIndex >= 0) return trendingIndex;
-    return sections.length > 0 ? 0 : -1;
-  }, [sections]);
-  const handleOpenWatchlist = useCallback(() => {
-    if (!user) {
-      openAuthModal("login");
-      return;
-    }
-    setWatchlistOverlayOpen(true);
-  }, [openAuthModal, user]);
-  const handleOpenWatched = useCallback(() => {
-    if (!user) {
-      openAuthModal("login");
-      return;
-    }
-    setWatchedOverlayOpen(true);
-  }, [openAuthModal, user]);
-  const handleOpenNotifications = useCallback(() => {
-    if (!user) {
-      openAuthModal("login");
-      return;
-    }
-    clearUnreadIndicator();
-    void refreshNotifications(true);
-    setNotificationsOverlayOpen(true);
-  }, [clearUnreadIndicator, openAuthModal, refreshNotifications, user]);
-  const handleCloseNotifications = useCallback(() => {
-    setNotificationsOverlayOpen(false);
-    void markAllRead();
-  }, [markAllRead]);
   const handleSeeMore = useCallback(
     (id: string) => {
       if (id === "__watchlist__") {
         setWatchlistOverlayOpen(true);
         return;
       }
+      if (id.startsWith(USER_LIST_HOME_SECTION_PREFIX)) {
+        const listId = id.slice(USER_LIST_HOME_SECTION_PREFIX.length);
+        if (listId) {
+          setListsOverlayInitialListId(listId);
+          setListsOverlayOpen(true);
+        }
+        return;
+      }
       setSelectedSection(sectionMap.get(id) || null);
     },
     [sectionMap]
   );
-  const unfilteredMode = !user || userContentMode === "all";
-  const includePaidMode = !!user && userContentMode === "available";
-  const discoveryCountry = user
-    ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY)
-    : (guestCountry || DEFAULT_ONBOARDING_COUNTRY);
-  const hasBlockingOverlay =
-    selectedMovie !== null ||
-    selectedSection !== null ||
-    watchlistOverlayOpen ||
-    watchedOverlayOpen ||
-    notificationsOverlayOpen ||
-    notificationAlertsOverlayOpen ||
-    searchOpen ||
-    advancedSearchOpen ||
-    settingsCenterOpen ||
-    onboardingOpen ||
-    authModalOpen ||
-    vpnPromptOpen;
-
-  const watchlistHomeBlock = user && showWatchlistOnHome ? (
+  const watchlistHomeBlock = user ? (
     watchlistLoading ? (
       <SkeletonRow />
     ) : watchlistSection ? (
@@ -800,6 +921,141 @@ function AppContent() {
       </div>
     )
   ) : null;
+  const personalHomeBlocks = useMemo(() => {
+    if (!user) return [];
+    const orderedKeys = [...homeSectionOrder];
+    for (const item of homeSectionOrderItems) {
+      if (orderedKeys.includes(item.id)) continue;
+      orderedKeys.push(item.id);
+    }
+    const blocks: React.ReactNode[] = [];
+    const used = new Set<string>();
+    for (const key of orderedKeys) {
+      if (used.has(key)) continue;
+      used.add(key);
+      if (key === HOME_SECTION_WATCHLIST_ID) {
+        if (showWatchlistOnHome && watchlistHomeBlock) {
+          blocks.push(<Fragment key={`${HOME_SECTION_WATCHLIST_ID}:${rowResetToken}`}>{watchlistHomeBlock}</Fragment>);
+        }
+        continue;
+      }
+      const section = homeListSectionByListId.get(key);
+      if (!section) continue;
+      blocks.push(
+        <MovieRow
+          key={`${section.id}:${rowResetToken}`}
+          section={section}
+          onSelectMovie={handleSelectMovie}
+          onSeeMore={handleSeeMore}
+          resetToken={rowResetToken}
+          mediaType={mediaType}
+          forceSeeMore
+        />
+      );
+    }
+    return blocks;
+  }, [
+    user,
+    homeSectionOrder,
+    homeSectionOrderItems,
+    showWatchlistOnHome,
+    watchlistHomeBlock,
+    homeListSectionByListId,
+    rowResetToken,
+    handleSelectMovie,
+    handleSeeMore,
+    mediaType,
+  ]);
+  const watchlistAnchorIndex = useMemo(() => {
+    const trendingIndex = sections.findIndex(
+      (section) => section.id === "trending_day" || section.title.trim().toLowerCase() === "trending today"
+    );
+    if (trendingIndex >= 0) return trendingIndex;
+    return sections.length > 0 ? 0 : -1;
+  }, [sections]);
+  const handleOpenWatchlist = useCallback(() => {
+    if (!user) {
+      openAuthModal("login");
+      return;
+    }
+    setWatchlistOverlayOpen(true);
+  }, [openAuthModal, user]);
+  const handleOpenWatched = useCallback(() => {
+    if (!user) {
+      openAuthModal("login");
+      return;
+    }
+    setWatchedOverlayOpen(true);
+  }, [openAuthModal, user]);
+  const handleOpenLists = useCallback(() => {
+    if (!user) {
+      openAuthModal("login");
+      return;
+    }
+    setListsOverlayInitialListId(null);
+    setListsOverlayOpen(true);
+  }, [openAuthModal, user]);
+  const handleOpenListsFromSettings = useCallback(() => {
+    setSettingsCenterOpen(false);
+    handleOpenLists();
+  }, [handleOpenLists]);
+  const handleToggleListOnHome = useCallback((listId: string) => {
+    setHomeListIds((prev) => (prev.includes(listId) ? prev.filter((entry) => entry !== listId) : [...prev, listId]));
+  }, []);
+  const handleHomeShowWatchlistChange = useCallback((next: boolean) => {
+    setShowWatchlistOnHome(next);
+    setHomeSectionOrder((prev) => {
+      if (!next) return prev.filter((entry) => entry !== HOME_SECTION_WATCHLIST_ID);
+      const without = prev.filter((entry) => entry !== HOME_SECTION_WATCHLIST_ID);
+      return [HOME_SECTION_WATCHLIST_ID, ...without];
+    });
+  }, []);
+  const handleHomeRemoveSection = useCallback(
+    (sectionId: string) => {
+      if (sectionId === HOME_SECTION_WATCHLIST_ID) {
+        handleHomeShowWatchlistChange(false);
+        return;
+      }
+      setHomeListIds((prev) => prev.filter((entry) => entry !== sectionId));
+      setHomeSectionOrder((prev) => prev.filter((entry) => entry !== sectionId));
+    },
+    [handleHomeShowWatchlistChange]
+  );
+  const handleHomeSectionOrderChange = useCallback((next: string[]) => {
+    setHomeSectionOrder(next);
+  }, []);
+  const handleOpenNotifications = useCallback(() => {
+    if (!user) {
+      openAuthModal("login");
+      return;
+    }
+    clearUnreadIndicator();
+    void refreshNotifications(true);
+    setNotificationsOverlayOpen(true);
+  }, [clearUnreadIndicator, openAuthModal, refreshNotifications, user]);
+  const handleCloseNotifications = useCallback(() => {
+    setNotificationsOverlayOpen(false);
+    void markAllRead();
+  }, [markAllRead]);
+  const unfilteredMode = !user || userContentMode === "all";
+  const includePaidMode = !!user && userContentMode === "available";
+  const discoveryCountry = user
+    ? (countries[0] || DEFAULT_ONBOARDING_COUNTRY)
+    : (guestCountry || DEFAULT_ONBOARDING_COUNTRY);
+  const hasBlockingOverlay =
+    selectedMovie !== null ||
+    selectedSection !== null ||
+    watchlistOverlayOpen ||
+    watchedOverlayOpen ||
+    listsOverlayOpen ||
+    notificationsOverlayOpen ||
+    notificationAlertsOverlayOpen ||
+    searchOpen ||
+    advancedSearchOpen ||
+    settingsCenterOpen ||
+    onboardingOpen ||
+    authModalOpen ||
+    vpnPromptOpen;
 
   useEffect(() => {
     if (hasBlockingOverlay) {
@@ -831,6 +1087,7 @@ function AppContent() {
           onLoginClick={() => openAuthModal("login")}
           onOpenSettingsCenter={() => openSettingsCenter("account")}
           onOpenNotifications={handleOpenNotifications}
+          onOpenLists={handleOpenLists}
           onOpenWatchlist={handleOpenWatchlist}
           onOpenWatched={handleOpenWatched}
           onOpenSettings={() => openSettingsCenter("services")}
@@ -1065,11 +1322,11 @@ function AppContent() {
                 resetToken={rowResetToken}
                 mediaType={mediaType}
               />
-              {watchlistHomeBlock && index === watchlistAnchorIndex && watchlistHomeBlock}
+              {personalHomeBlocks.length > 0 && index === watchlistAnchorIndex && personalHomeBlocks}
             </Fragment>
           ))}
 
-          {watchlistHomeBlock && sections.length === 0 && !homeLoading && watchlistHomeBlock}
+          {personalHomeBlocks.length > 0 && sections.length === 0 && !homeLoading && personalHomeBlocks}
 
           {homeLoading && sections.length === 0 && (
             <>
@@ -1097,7 +1354,7 @@ function AppContent() {
             </div>
           )}
 
-          {!homeLoading && sections.length === 0 && user && userContentMode !== "all" && (
+          {!homeLoading && sections.length === 0 && personalHomeBlocks.length === 0 && user && userContentMode !== "all" && (
             <div className="text-center text-muted py-12">
               Select streaming services to see available titles.
             </div>
@@ -1145,6 +1402,18 @@ function AppContent() {
         items={watchedItems}
         loading={watchedLoading}
         onSelectMovie={handleSelectMovie}
+      />
+
+      <ListsOverlay
+        open={listsOverlayOpen}
+        onClose={() => {
+          setListsOverlayOpen(false);
+          setListsOverlayInitialListId(null);
+        }}
+        onSelectMovie={handleSelectMovie}
+        initialListId={listsOverlayInitialListId}
+        homeListIds={homeListIds}
+        onToggleHomeList={handleToggleListOnHome}
       />
 
       <NotificationsOverlay
@@ -1200,9 +1469,14 @@ function AppContent() {
         homeContentMode={userContentMode}
         homeUsingVpn={usingVpn}
         homeShowWatchlist={showWatchlistOnHome}
+        homeSectionOrder={homeSectionOrder}
+        homeSectionOrderItems={homeSectionOrderItems}
         onHomeContentModeChange={handleUserContentModeChange}
         onHomeUsingVpnChange={setUsingVpn}
-        onHomeShowWatchlistChange={setShowWatchlistOnHome}
+        onHomeShowWatchlistChange={handleHomeShowWatchlistChange}
+        onHomeRemoveSection={handleHomeRemoveSection}
+        onHomeSectionOrderChange={handleHomeSectionOrderChange}
+        onOpenLists={handleOpenListsFromSettings}
       />
 
       {/* Onboarding (post-signup) */}
@@ -1238,13 +1512,15 @@ export default function App() {
   return (
     <AuthProvider>
       <NotificationsProvider>
-        <WatchedProvider>
-          <WatchlistProvider>
-            <ConfigProvider>
-              <AppContent />
-            </ConfigProvider>
-          </WatchlistProvider>
-        </WatchedProvider>
+        <ListsProvider>
+          <WatchedProvider>
+            <WatchlistProvider>
+              <ConfigProvider>
+                <AppContent />
+              </ConfigProvider>
+            </WatchlistProvider>
+          </WatchedProvider>
+        </ListsProvider>
       </NotificationsProvider>
     </AuthProvider>
   );

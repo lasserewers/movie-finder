@@ -9,6 +9,7 @@ interface Props {
   onLoginClick: () => void;
   onOpenSettingsCenter: () => void;
   onOpenNotifications: () => void;
+  onOpenLists: () => void;
   onOpenWatchlist: () => void;
   onOpenWatched: () => void;
   onOpenSettings: () => void;
@@ -23,6 +24,7 @@ export default function Topbar({
   onLoginClick,
   onOpenSettingsCenter,
   onOpenNotifications,
+  onOpenLists,
   onOpenWatchlist,
   onOpenWatched,
   onOpenSettings,
@@ -132,6 +134,7 @@ export default function Topbar({
           <UserMenu
             onOpenSettingsCenter={onOpenSettingsCenter}
             onOpenNotifications={onOpenNotifications}
+            onOpenLists={onOpenLists}
             onOpenWatchlist={onOpenWatchlist}
             onOpenWatched={onOpenWatched}
           />

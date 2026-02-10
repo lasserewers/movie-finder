@@ -38,8 +38,11 @@ async def _get(path: str, params: dict | None = None) -> dict:
     return resp.json()
 
 
-async def search_movie(query: str, page: int = 1) -> dict:
-    return await _get("/search/movie", {"query": query, "page": page})
+async def search_movie(query: str, page: int = 1, year: int | None = None) -> dict:
+    params: dict[str, str | int] = {"query": query, "page": page}
+    if year is not None:
+        params["year"] = int(year)
+    return await _get("/search/movie", params)
 
 
 async def search_tv(query: str, page: int = 1) -> dict:

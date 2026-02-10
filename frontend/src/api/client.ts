@@ -8,6 +8,7 @@ const AUTH_REFRESH_PATH = "/api/auth/refresh";
 
 type ApiRequestInit = RequestInit & {
   _retry401?: boolean;
+  timeoutMs?: number;
 };
 
 let refreshPromise: Promise<boolean> | null = null;
@@ -62,7 +63,8 @@ export async function apiFetch<T = unknown>(
   }
 
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const requestTimeoutMs = Math.max(1000, Number(options.timeoutMs || DEFAULT_TIMEOUT_MS));
+  const timeout = window.setTimeout(() => controller.abort(), requestTimeoutMs);
   const externalSignal = options.signal;
   const onAbort = () => controller.abort();
   if (externalSignal) externalSignal.addEventListener("abort", onAbort);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ApiError } from "../api/client";
 import { changeEmail, changePassword, deleteAccount } from "../api/auth";
@@ -7,6 +7,12 @@ import {
   updateNotificationSettings,
   type NotificationDelivery,
 } from "../api/notifications";
+import {
+  getLetterboxdSyncState,
+  syncLetterboxdWatchlist,
+  unlinkLetterboxdWatchlist,
+  type LetterboxdSyncStatus,
+} from "../api/linkedAccounts";
 import { useAuth } from "../hooks/useAuth";
 import { useConfig } from "../hooks/useConfig";
 import type { ProviderInfo, Region } from "../api/movies";
@@ -31,6 +37,10 @@ export type SettingsCenterSection =
   | "linked"
   | "subscription";
 export type HomeContentMode = "all" | "available" | "streamable";
+export interface HomeSectionOrderItem {
+  id: string;
+  label: string;
+}
 
 interface Props {
   open: boolean;
@@ -42,9 +52,14 @@ interface Props {
   homeContentMode: HomeContentMode;
   homeUsingVpn: boolean;
   homeShowWatchlist: boolean;
+  homeSectionOrder: string[];
+  homeSectionOrderItems: HomeSectionOrderItem[];
   onHomeContentModeChange: (next: HomeContentMode) => void;
   onHomeUsingVpnChange: (next: boolean) => void;
   onHomeShowWatchlistChange: (next: boolean) => void;
+  onHomeRemoveSection: (sectionId: string) => void;
+  onHomeSectionOrderChange: (next: string[]) => void;
+  onOpenLists: () => void;
 }
 
 const SECTION_OPTIONS: Array<{ id: SettingsCenterSection; label: string }> = [
@@ -73,9 +88,14 @@ export default function SettingsCenterModal({
   homeContentMode,
   homeUsingVpn,
   homeShowWatchlist,
+  homeSectionOrder,
+  homeSectionOrderItems,
   onHomeContentModeChange,
   onHomeUsingVpnChange,
   onHomeShowWatchlistChange,
+  onHomeRemoveSection,
+  onHomeSectionOrderChange,
+  onOpenLists,
 }: Props) {
   const { user, logout } = useAuth();
   const { providerIds, countries, allProviders, saveConfig, loadProviders, expandIds, theme, setTheme } = useConfig();
@@ -104,6 +124,15 @@ export default function SettingsCenterModal({
   const [notificationSaving, setNotificationSaving] = useState(false);
   const [notificationDelivery, setNotificationDelivery] = useState<NotificationDelivery>("in_app");
   const [notificationErr, setNotificationErr] = useState("");
+  const [linkedLoading, setLinkedLoading] = useState(false);
+  const [linkedSyncing, setLinkedSyncing] = useState(false);
+  const [linkedUnlinking, setLinkedUnlinking] = useState(false);
+  const [linkedSavedUsername, setLinkedSavedUsername] = useState<string | null>(null);
+  const [linkedUsernameInput, setLinkedUsernameInput] = useState("");
+  const [linkedStatus, setLinkedStatus] = useState<LetterboxdSyncStatus>(null);
+  const [linkedMessage, setLinkedMessage] = useState("");
+  const [linkedErr, setLinkedErr] = useState("");
+  const [linkedLastSyncAt, setLinkedLastSyncAt] = useState<string | null>(null);
 
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
   const [countryQuery, setCountryQuery] = useState("");
@@ -117,6 +146,18 @@ export default function SettingsCenterModal({
   const [activeServiceCountries, setActiveServiceCountries] = useState<Set<string>>(new Set());
   const [servicesSaving, setServicesSaving] = useState(false);
   const [servicesErr, setServicesErr] = useState("");
+  const [homeOrderDraft, setHomeOrderDraft] = useState<string[]>([]);
+  const [homeOrderDragIndex, setHomeOrderDragIndex] = useState<number | null>(null);
+  const [homeOrderDragOverIndex, setHomeOrderDragOverIndex] = useState<number | null>(null);
+  const [homeOrderPositionDrafts, setHomeOrderPositionDrafts] = useState<Record<string, string>>({});
+  const [mobileOrderMode, setMobileOrderMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 640;
+  });
+  const contentScrollRef = useRef<HTMLElement | null>(null);
+  const homeOrderZoneRef = useRef<HTMLDivElement | null>(null);
+  const homeOrderDragArmedIndexRef = useRef<number | null>(null);
+  const homeOrderDragPointerYRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -143,7 +184,88 @@ export default function SettingsCenterModal({
     setShowAllServiceCountries(false);
     setActiveServiceCountries(nextCountries.size ? nextCountries : new Set(countries));
     setServicesErr("");
+    setLinkedErr("");
+    setLinkedMessage("");
+    setLinkedStatus(null);
+    setLinkedLastSyncAt(null);
+    setLinkedSavedUsername(null);
+    setLinkedUsernameInput("");
   }, [open, initialSection, countries, providerIds]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleResize = () => {
+      setMobileOrderMode(window.innerWidth < 640);
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const validIds = new Set(homeSectionOrderItems.map((item) => item.id));
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const id of homeSectionOrder) {
+      if (!validIds.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      normalized.push(id);
+    }
+    for (const item of homeSectionOrderItems) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      normalized.push(item.id);
+    }
+    setHomeOrderDraft(normalized);
+    setHomeOrderDragIndex(null);
+    setHomeOrderDragOverIndex(null);
+    setHomeOrderPositionDrafts({});
+    homeOrderDragArmedIndexRef.current = null;
+    homeOrderDragPointerYRef.current = null;
+  }, [open, homeSectionOrder, homeSectionOrderItems]);
+
+  useEffect(() => {
+    if (!open || activeSection !== "home" || mobileOrderMode || homeOrderDragIndex == null) return;
+    const container = contentScrollRef.current;
+    if (!container) return;
+
+    const topThreshold = window.innerWidth < 640 ? 54 : 64;
+    const bottomThreshold = window.innerWidth < 640 ? 86 : 108;
+    const maxUpSpeed = window.innerWidth < 640 ? 8 : 11;
+    const maxDownSpeed = window.innerWidth < 640 ? 18 : 24;
+    let frameId = 0;
+
+    const tick = () => {
+      const pointerY = homeOrderDragPointerYRef.current;
+      if (pointerY != null && container.scrollHeight > container.clientHeight) {
+        const rect = container.getBoundingClientRect();
+        const upperEdge = rect.top + topThreshold;
+        const lowerEdge = rect.bottom - bottomThreshold;
+        let delta = 0;
+
+        if (pointerY < upperEdge) {
+          const strength = Math.min(1, (upperEdge - pointerY) / topThreshold);
+          delta = -Math.max(1.2, strength * maxUpSpeed);
+        } else if (pointerY > lowerEdge) {
+          const strength = Math.min(1, (pointerY - lowerEdge) / bottomThreshold);
+          delta = Math.max(1.8, strength * maxDownSpeed);
+        }
+
+        if (delta !== 0) {
+          container.scrollTop += delta;
+        }
+      }
+      frameId = window.requestAnimationFrame(tick);
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [open, activeSection, mobileOrderMode, homeOrderDragIndex]);
 
   useEffect(() => {
     if (!open || activeSection !== "notifications") return;
@@ -162,6 +284,46 @@ export default function SettingsCenterModal({
       })
       .finally(() => {
         if (!cancelled) setNotificationLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, activeSection]);
+
+  useEffect(() => {
+    if (!open || activeSection !== "linked") return;
+    let cancelled = false;
+    setLinkedLoading(true);
+    setLinkedErr("");
+    getLetterboxdSyncState()
+      .then((state) => {
+        if (cancelled) return;
+        const savedUsername = (state.username || "").trim();
+        setLinkedSavedUsername(savedUsername || null);
+        setLinkedUsernameInput(savedUsername);
+        if (!savedUsername) {
+          setLinkedStatus(null);
+          setLinkedMessage("");
+          setLinkedLastSyncAt(null);
+          return;
+        }
+        setLinkedStatus(state.status || null);
+        setLinkedMessage(state.message || "");
+        setLinkedLastSyncAt(state.last_sync_at || null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 404) {
+          // Backward-compatible fallback for environments not yet exposing this endpoint.
+          setLinkedStatus(null);
+          setLinkedMessage("");
+          setLinkedLastSyncAt(null);
+          return;
+        }
+        setLinkedErr(err instanceof ApiError ? err.message : "Could not load linked account state.");
+      })
+      .finally(() => {
+        if (!cancelled) setLinkedLoading(false);
       });
     return () => {
       cancelled = true;
@@ -222,8 +384,22 @@ export default function SettingsCenterModal({
     );
   }, [regions, countryQuery]);
 
+  const homeOrderLabelById = useMemo(
+    () => new Map(homeSectionOrderItems.map((item) => [item.id, item.label])),
+    [homeSectionOrderItems]
+  );
+  const homeOrderEntries = useMemo(
+    () => homeOrderDraft.map((id) => ({ id, label: homeOrderLabelById.get(id) || "List" })),
+    [homeOrderDraft, homeOrderLabelById]
+  );
+  const homeOrderInputWidthRem = useMemo(() => {
+    const digits = Math.max(2, String(Math.max(1, homeOrderEntries.length)).length);
+    return Math.max(2.8, 1.8 + digits * 0.7);
+  }, [homeOrderEntries.length]);
+
   const inputClass =
     "w-full px-3 py-2.5 text-sm border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors";
+  const linkedIsConnected = Boolean((linkedSavedUsername || "").trim());
 
   const handleEmailSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -291,6 +467,57 @@ export default function SettingsCenterModal({
       setNotificationErr(err instanceof ApiError ? e.message : "Could not update notification settings.");
     } finally {
       setNotificationSaving(false);
+    }
+  };
+
+  const handleLetterboxdSync = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (linkedSyncing || linkedUnlinking) return;
+    const usernameToSync = (linkedIsConnected ? linkedSavedUsername || "" : linkedUsernameInput).trim();
+    if (!usernameToSync) {
+      setLinkedErr("Letterboxd username is required.");
+      return;
+    }
+    setLinkedSyncing(true);
+    setLinkedErr("");
+    setLinkedMessage("");
+    try {
+      const result = await syncLetterboxdWatchlist(usernameToSync);
+      const normalizedUsername = (result.username || usernameToSync).trim();
+      setLinkedStatus(result.status);
+      setLinkedMessage(result.message || "");
+      setLinkedLastSyncAt(new Date().toISOString());
+      setLinkedSavedUsername(normalizedUsername || null);
+      setLinkedUsernameInput(normalizedUsername);
+      if (result.ok) onSaved();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 405) {
+        setLinkedErr("Linked account sync is unavailable on the current backend process. Restart backend and try again.");
+      } else {
+        setLinkedErr(err instanceof ApiError ? err.message : "Could not sync Letterboxd watchlist.");
+      }
+    } finally {
+      setLinkedSyncing(false);
+    }
+  };
+
+  const handleLetterboxdUnlink = async () => {
+    if (linkedUnlinking || linkedSyncing || !linkedIsConnected) return;
+    setLinkedUnlinking(true);
+    setLinkedErr("");
+    setLinkedMessage("");
+    try {
+      await unlinkLetterboxdWatchlist();
+      setLinkedSavedUsername(null);
+      setLinkedUsernameInput("");
+      setLinkedStatus(null);
+      setLinkedMessage("Letterboxd account unlinked. Enter a new username to link another account.");
+      setLinkedLastSyncAt(null);
+      onSaved();
+    } catch (err) {
+      setLinkedErr(err instanceof ApiError ? err.message : "Could not unlink Letterboxd account.");
+    } finally {
+      setLinkedUnlinking(false);
     }
   };
 
@@ -364,6 +591,72 @@ export default function SettingsCenterModal({
       setServicesSaving(false);
     }
   };
+
+  const applyHomeOrder = useCallback(
+    (nextOrder: string[]) => {
+      const normalized = Array.from(new Set(nextOrder.map((value) => String(value).trim()).filter(Boolean)));
+      setHomeOrderDraft(normalized);
+      setHomeOrderPositionDrafts({});
+      onHomeSectionOrderChange(normalized);
+    },
+    [onHomeSectionOrderChange]
+  );
+
+  const moveHomeOrderItem = useCallback(
+    (fromIndex: number, toIndex: number) => {
+      if (fromIndex === toIndex) return;
+      if (!homeOrderEntries.length) return;
+      const clampedTo = Math.max(0, Math.min(homeOrderEntries.length - 1, toIndex));
+      if (fromIndex === clampedTo) return;
+      const next = [...homeOrderDraft];
+      const [moved] = next.splice(fromIndex, 1);
+      if (!moved) return;
+      next.splice(clampedTo, 0, moved);
+      applyHomeOrder(next);
+    },
+    [homeOrderDraft, homeOrderEntries.length, applyHomeOrder]
+  );
+
+  const handleHomeOrderPositionCommit = useCallback(
+    (itemId: string, rawValue: string) => {
+      const currentIndex = homeOrderDraft.indexOf(itemId);
+      if (currentIndex < 0) return;
+      const parsed = Number.parseInt(rawValue, 10);
+      if (!Number.isFinite(parsed)) {
+        setHomeOrderPositionDrafts((prev) => {
+          const next = { ...prev };
+          delete next[itemId];
+          return next;
+        });
+        return;
+      }
+      const targetIndex = Math.max(0, Math.min(homeOrderDraft.length - 1, parsed - 1));
+      setHomeOrderPositionDrafts((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      moveHomeOrderItem(currentIndex, targetIndex);
+    },
+    [homeOrderDraft, moveHomeOrderItem]
+  );
+
+  const handleRemoveHomeSection = useCallback(
+    (sectionId: string) => {
+      setHomeOrderPositionDrafts((prev) => {
+        const next = { ...prev };
+        delete next[sectionId];
+        return next;
+      });
+      setHomeOrderDraft((prev) => prev.filter((entry) => entry !== sectionId));
+      setHomeOrderDragIndex(null);
+      setHomeOrderDragOverIndex(null);
+      homeOrderDragArmedIndexRef.current = null;
+      homeOrderDragPointerYRef.current = null;
+      onHomeRemoveSection(sectionId);
+    },
+    [onHomeRemoveSection]
+  );
 
   const renderSection = () => {
     if (activeSection === "account") {
@@ -836,15 +1129,245 @@ export default function SettingsCenterModal({
               </span>
             </button>
           </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <h5 className="text-xs font-semibold text-muted uppercase tracking-wider">Home screen lists order</h5>
+              <button
+                type="button"
+                onClick={onOpenLists}
+                className="h-8 px-3 rounded-md border border-accent/55 bg-accent/10 text-[0.72rem] font-semibold text-text hover:bg-accent/16 hover:border-accent transition-colors"
+              >
+                Add lists
+              </button>
+            </div>
+            <p className="text-xs text-muted">
+              {mobileOrderMode
+                ? "Set the order number on the left for each row."
+                : "Drag rows by the handle on the right to reorder."}
+            </p>
+            <div
+              ref={homeOrderZoneRef}
+              className="rounded-xl border border-border/80 bg-panel-2/45 overflow-hidden divide-y divide-white/5"
+              onDragOver={(event) => {
+                if (mobileOrderMode || homeOrderDragIndex == null) return;
+                event.preventDefault();
+                homeOrderDragPointerYRef.current = event.clientY;
+              }}
+            >
+              {homeOrderEntries.map((entry, index) => {
+                const isDragTarget = homeOrderDragOverIndex === index && homeOrderDragIndex !== null;
+                const isDragging = homeOrderDragIndex === index;
+                return (
+                  <div
+                    key={entry.id}
+                    draggable={!mobileOrderMode}
+                    onDragStart={(event) => {
+                      if (mobileOrderMode) {
+                        event.preventDefault();
+                        return;
+                      }
+                      if (homeOrderDragArmedIndexRef.current !== index) {
+                        event.preventDefault();
+                        return;
+                      }
+                      event.dataTransfer.effectAllowed = "move";
+                      setHomeOrderDragIndex(index);
+                      setHomeOrderDragOverIndex(index);
+                      homeOrderDragPointerYRef.current = event.clientY || null;
+                      homeOrderDragArmedIndexRef.current = null;
+                    }}
+                    onDragOver={(event) => {
+                      if (mobileOrderMode || homeOrderDragIndex == null) return;
+                      event.preventDefault();
+                      homeOrderDragPointerYRef.current = event.clientY;
+                      if (homeOrderDragOverIndex !== index) setHomeOrderDragOverIndex(index);
+                    }}
+                    onDrop={(event) => {
+                      if (mobileOrderMode || homeOrderDragIndex == null) return;
+                      event.preventDefault();
+                      const from = homeOrderDragIndex;
+                      setHomeOrderDragIndex(null);
+                      setHomeOrderDragOverIndex(null);
+                      homeOrderDragArmedIndexRef.current = null;
+                      homeOrderDragPointerYRef.current = null;
+                      moveHomeOrderItem(from, index);
+                    }}
+                    onDragEnd={() => {
+                      setHomeOrderDragIndex(null);
+                      setHomeOrderDragOverIndex(null);
+                      homeOrderDragArmedIndexRef.current = null;
+                      homeOrderDragPointerYRef.current = null;
+                    }}
+                    className={`flex items-center gap-2 px-3 py-2.5 transition-all ${
+                      isDragging
+                        ? "bg-accent/18 ring-2 ring-accent/70 shadow-[0_8px_20px_rgba(229,9,20,0.28)]"
+                        : isDragTarget
+                          ? "bg-accent/10"
+                          : "bg-transparent"
+                    }`}
+                  >
+                    <div className="sm:hidden">
+                      <input
+                        type="number"
+                        min={1}
+                        max={homeOrderEntries.length}
+                        inputMode="numeric"
+                        value={homeOrderPositionDrafts[entry.id] ?? String(index + 1)}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setHomeOrderPositionDrafts((prev) => ({ ...prev, [entry.id]: value }));
+                        }}
+                        onBlur={(event) => {
+                          handleHomeOrderPositionCommit(entry.id, event.target.value);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                            return;
+                          }
+                          if (event.key === "Escape") {
+                            setHomeOrderPositionDrafts((prev) => {
+                              const next = { ...prev };
+                              delete next[entry.id];
+                              return next;
+                            });
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        className="list-order-input h-8 rounded-md border border-border bg-bg-2 text-center text-sm font-semibold text-text outline-none focus:border-accent-2 transition-colors"
+                        style={{ width: `${homeOrderInputWidthRem}rem` }}
+                      />
+                    </div>
+
+                    <div className="min-w-0 flex-1 text-sm text-text truncate">{entry.label}</div>
+
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        handleRemoveHomeSection(entry.id);
+                      }}
+                      className="h-8 px-2.5 rounded-md border border-border/70 bg-panel text-[0.7rem] font-semibold text-muted hover:text-text hover:border-accent-2 transition-colors"
+                    >
+                      Remove
+                    </button>
+
+                    <div
+                      data-home-order-handle="1"
+                      role="presentation"
+                      onMouseDown={() => {
+                        homeOrderDragArmedIndexRef.current = index;
+                      }}
+                      className="hidden sm:flex items-center justify-center w-9 h-8 cursor-grab active:cursor-grabbing text-muted/85 hover:text-text transition-colors select-none"
+                    >
+                      <span className="flex flex-col gap-1 pointer-events-none">
+                        <span className="block h-[2px] w-4 rounded-full bg-muted/80" />
+                        <span className="block h-[2px] w-4 rounded-full bg-muted/80" />
+                        <span className="block h-[2px] w-4 rounded-full bg-muted/80" />
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
       );
     }
 
     if (activeSection === "linked") {
       return (
-        <div className="space-y-2">
-          <h4 className="text-sm font-semibold text-text">Linked accounts</h4>
-          <p className="text-sm text-muted">Coming soon.</p>
+        <div className="space-y-4">
+          <div>
+            <h4 className="text-sm font-semibold text-text">Linked accounts</h4>
+            <p className="text-sm text-muted mt-1">
+              Connect your Letterboxd account to import and merge your Letterboxd watchlist.
+            </p>
+          </div>
+
+          <form onSubmit={handleLetterboxdSync} className="space-y-3">
+            {linkedIsConnected ? (
+              <div className="rounded-lg border border-border/80 bg-bg/40 px-3 py-2.5">
+                <div className="text-sm font-semibold text-text">Linked to {linkedSavedUsername}</div>
+                <div className="text-xs text-muted mt-1">
+                  Unlink this account to connect a different Letterboxd username.
+                </div>
+              </div>
+            ) : (
+              <>
+                <label htmlFor="letterboxd-username" className="text-xs font-semibold uppercase tracking-wider text-muted">
+                  Letterboxd username
+                </label>
+                <input
+                  id="letterboxd-username"
+                  type="text"
+                  value={linkedUsernameInput}
+                  onChange={(event) => setLinkedUsernameInput(event.target.value)}
+                  placeholder="username or https://letterboxd.com/username/"
+                  className={inputClass}
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={linkedSyncing || linkedLoading || linkedUnlinking}
+                />
+              </>
+            )}
+            <div className="text-xs text-muted">
+              Syncs, adds, and merges titles from Letterboxd, and anything already in your FullStreamer watchlist stays there.
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="submit"
+                disabled={linkedSyncing || linkedLoading || linkedUnlinking}
+                className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 text-sm"
+              >
+                {linkedSyncing ? "Syncing..." : linkedIsConnected ? "Sync watchlist now" : "Sync watchlist"}
+              </button>
+              {linkedIsConnected && (
+                <button
+                  type="button"
+                  onClick={handleLetterboxdUnlink}
+                  disabled={linkedSyncing || linkedLoading || linkedUnlinking}
+                  className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-panel text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
+                >
+                  {linkedUnlinking ? "Unlinking..." : "Unlink"}
+                </button>
+              )}
+            </div>
+          </form>
+
+          {linkedLoading && (
+            <div className="text-sm text-muted">Loading linked account status...</div>
+          )}
+
+          {linkedErr && (
+            <div className="text-sm text-red-300 bg-red-500/10 rounded-md px-3 py-2">{linkedErr}</div>
+          )}
+
+          {linkedMessage && (
+            <div
+              className={`text-sm rounded-md px-3 py-2 ${
+                linkedStatus === "private" ||
+                linkedStatus === "not_found" ||
+                linkedStatus === "blocked" ||
+                linkedStatus === "unreachable" ||
+                linkedStatus === "empty" ||
+                linkedStatus === "no_matches"
+                  ? "text-red-300 bg-red-500/10"
+                  : "text-green-300 bg-green-500/10"
+              }`}
+            >
+              {linkedMessage}
+            </div>
+          )}
+
+          {(linkedStatus || linkedLastSyncAt) && (
+            <div className="text-xs text-muted border border-border/70 rounded-lg px-3 py-2 space-y-1">
+              <div>Status: {linkedStatus || "unknown"}</div>
+              <div>Last sync: {linkedLastSyncAt ? new Date(linkedLastSyncAt).toLocaleString() : "Never"}</div>
+            </div>
+          )}
         </div>
       );
     }
@@ -908,8 +1431,14 @@ export default function SettingsCenterModal({
                   </nav>
                 </aside>
                 <main
+                  ref={contentScrollRef}
                   className="min-h-0 overflow-y-scroll overscroll-contain p-4 sm:p-6 pb-8"
                   style={{ WebkitOverflowScrolling: "touch" }}
+                  onDragOver={(event) => {
+                    if (activeSection !== "home" || mobileOrderMode || homeOrderDragIndex == null) return;
+                    event.preventDefault();
+                    homeOrderDragPointerYRef.current = event.clientY;
+                  }}
                 >
                   {renderSection()}
                 </main>

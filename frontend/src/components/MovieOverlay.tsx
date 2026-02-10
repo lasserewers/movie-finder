@@ -5,6 +5,7 @@ import { useConfig } from "../hooks/useConfig";
 import { useAuth } from "../hooks/useAuth";
 import { useWatchlist } from "../hooks/useWatchlist";
 import { useWatched } from "../hooks/useWatched";
+import { useLists } from "../hooks/useLists";
 import { useNotifications } from "../hooks/useNotifications";
 import { ApiError } from "../api/client";
 import {
@@ -308,6 +309,15 @@ export default function MovieOverlay({
   const { refresh: refreshNotifications } = useNotifications();
   const { isInWatchlist, toggle } = useWatchlist();
   const { isWatched, toggle: toggleWatched } = useWatched();
+  const {
+    lists,
+    loading: listsLoading,
+    refresh: refreshLists,
+    create: createList,
+    loadMemberships,
+    membershipsFor,
+    toggleMembership,
+  } = useLists();
   const { countries } = useConfig();
   const [movie, setMovie] = useState<Movie | null>(null);
   const [providers, setProviders] = useState<Record<string, CountryProviders>>({});
@@ -325,6 +335,12 @@ export default function MovieOverlay({
   const [alertPanelOpen, setAlertPanelOpen] = useState(false);
   const [alertBusyCondition, setAlertBusyCondition] = useState<NotificationConditionType | null>(null);
   const [alertErr, setAlertErr] = useState("");
+  const [listPanelOpen, setListPanelOpen] = useState(false);
+  const [listPanelLoading, setListPanelLoading] = useState(false);
+  const [listBusyId, setListBusyId] = useState("");
+  const [listErr, setListErr] = useState("");
+  const [newListName, setNewListName] = useState("");
+  const [newListBusy, setNewListBusy] = useState(false);
 
   useEffect(() => {
     if (!movieId) {
@@ -423,7 +439,20 @@ export default function MovieOverlay({
     if (!movieId) {
       setCreditsOpen(false);
       setSelectedPersonId(null);
+      setListPanelOpen(false);
+      setListPanelLoading(false);
+      setListBusyId("");
+      setListErr("");
+      setNewListName("");
+      setNewListBusy(false);
+      return;
     }
+    setListPanelOpen(false);
+    setListPanelLoading(false);
+    setListBusyId("");
+    setListErr("");
+    setNewListName("");
+    setNewListBusy(false);
   }, [movieId]);
 
   const credits = movie?.credits;
@@ -436,6 +465,9 @@ export default function MovieOverlay({
   const mediaTypeSafe: "movie" | "tv" = itemMediaType || (movie?.number_of_seasons != null ? "tv" : "movie");
   const watchlisted = !!(movie && user && isInWatchlist(mediaTypeSafe, movie.id));
   const watched = !!(movie && user && isWatched(mediaTypeSafe, movie.id));
+  const listMemberships = movie && user ? membershipsFor(mediaTypeSafe, movie.id) : new Set<string>();
+  const listMembershipCount = listMemberships.size;
+  const listButtonActive = listPanelOpen || listMembershipCount > 0;
 
   const posterUrl = movie?.poster_path ? `${TMDB_IMG}/w300${movie.poster_path}` : "";
   const handleToggleWatchlist = async () => {
@@ -489,6 +521,68 @@ export default function MovieOverlay({
       );
     } finally {
       setWatchedBusy(false);
+    }
+  };
+
+  const handleToggleListPanel = async () => {
+    if (!movie || !user || newListBusy || !!listBusyId) return;
+    if (listPanelOpen) {
+      setListPanelOpen(false);
+      return;
+    }
+    setListPanelOpen(true);
+    setListErr("");
+    setListPanelLoading(true);
+    try {
+      await refreshLists();
+      await loadMemberships(mediaTypeSafe, movie.id);
+    } catch (err) {
+      const e = err as ApiError;
+      setListErr(err instanceof ApiError ? e.message : "Could not load your lists.");
+    } finally {
+      setListPanelLoading(false);
+    }
+  };
+
+  const handleToggleListMembership = async (listId: string) => {
+    if (!movie || !user || !!listBusyId || newListBusy) return;
+    setListBusyId(listId);
+    setListErr("");
+    try {
+      await toggleMembership(listId, {
+        tmdb_id: movie.id,
+        media_type: mediaTypeSafe,
+        title: movie.title,
+        poster_path: movie.poster_path || undefined,
+        release_date: movie.release_date || undefined,
+      });
+    } catch (err) {
+      const e = err as ApiError;
+      setListErr(err instanceof ApiError ? e.message : "Could not update list.");
+    } finally {
+      setListBusyId("");
+    }
+  };
+
+  const handleCreateListAndAdd = async () => {
+    if (!movie || !user || !newListName.trim() || newListBusy || !!listBusyId) return;
+    setNewListBusy(true);
+    setListErr("");
+    try {
+      const created = await createList(newListName.trim());
+      await toggleMembership(created.id, {
+        tmdb_id: movie.id,
+        media_type: mediaTypeSafe,
+        title: movie.title,
+        poster_path: movie.poster_path || undefined,
+        release_date: movie.release_date || undefined,
+      });
+      setNewListName("");
+    } catch (err) {
+      const e = err as ApiError;
+      setListErr(err instanceof ApiError ? e.message : "Could not create list.");
+    } finally {
+      setNewListBusy(false);
     }
   };
 
@@ -665,15 +759,55 @@ export default function MovieOverlay({
                               </svg>
                               <span>{watchedBusy ? "Updating..." : watched ? "Watched" : "Mark as watched"}</span>
                             </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleToggleListPanel()}
+                              disabled={listPanelLoading || !!listBusyId || newListBusy}
+                              className={`h-[34px] px-3 border rounded-full text-xs sm:text-sm transition-colors inline-flex items-center gap-1.5 ${
+                                listButtonActive
+                                  ? "border-accent/70 bg-accent/15 text-text"
+                                  : "border-border bg-panel-2 text-muted hover:text-text hover:border-accent-2"
+                              } disabled:opacity-55 disabled:cursor-not-allowed`}
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                className="w-3 h-3 shrink-0"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <line x1="8" y1="6" x2="21" y2="6" />
+                                <line x1="8" y1="12" x2="21" y2="12" />
+                                <line x1="8" y1="18" x2="21" y2="18" />
+                                <circle cx="4" cy="6" r="1.5" />
+                                <circle cx="4" cy="12" r="1.5" />
+                                <circle cx="4" cy="18" r="1.5" />
+                              </svg>
+                              <span>
+                                {listPanelLoading
+                                  ? "Loading lists..."
+                                  : listMembershipCount > 0
+                                    ? `In ${listMembershipCount} list${listMembershipCount === 1 ? "" : "s"}`
+                                    : "Add to lists"}
+                              </span>
+                            </button>
                           </div>
-                          {watchlistErr && (
-                            <div className="mb-2 text-xs text-red-300 bg-red-400/10 rounded-md px-2 py-1 inline-block">
-                              {watchlistErr}
-                            </div>
-                          )}
-                          {watchedErr && (
-                            <div className="mb-2 text-xs text-red-300 bg-red-400/10 rounded-md px-2 py-1 inline-block">
-                              {watchedErr}
+                          {(watchlistErr || watchedErr) && (
+                            <div className="mb-2 flex flex-wrap gap-2">
+                              {watchlistErr && (
+                                <div className="text-xs text-red-300 bg-red-400/10 rounded-md px-2 py-1 inline-block">
+                                  {watchlistErr}
+                                </div>
+                              )}
+                              {watchedErr && (
+                                <div className="text-xs text-red-300 bg-red-400/10 rounded-md px-2 py-1 inline-block">
+                                  {watchedErr}
+                                </div>
+                              )}
                             </div>
                           )}
                         </>
@@ -823,6 +957,119 @@ export default function MovieOverlay({
               ) : null}
               </div>
             </motion.div>
+
+            <AnimatePresence>
+              {listPanelOpen && user && movie && (
+                <motion.div
+                  className="fixed inset-0 z-[330] grid place-items-center p-3 sm:p-5"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={(event) => event.target === event.currentTarget && setListPanelOpen(false)}
+                >
+                  <div
+                    className="absolute inset-0 bg-[rgba(6,7,10,0.58)] backdrop-blur-[1px]"
+                    onClick={() => setListPanelOpen(false)}
+                  />
+                  <motion.div
+                    className="relative w-[min(560px,94vw)] max-h-[80dvh] flex flex-col rounded-2xl border border-border bg-panel shadow-[0_34px_70px_rgba(0,0,0,0.45)]"
+                    initial={{ y: 24, scale: 0.97 }}
+                    animate={{ y: 0, scale: 1 }}
+                    exit={{ y: 24, scale: 0.97 }}
+                    transition={{ type: "spring", damping: 26, stiffness: 320 }}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <div className="flex items-start justify-between gap-3 p-4 sm:p-5 pb-0">
+                      <div className="min-w-0">
+                        <h3 className="font-display text-lg sm:text-xl truncate">Add To Lists</h3>
+                        <p className="text-xs sm:text-sm text-muted mt-1 truncate">{movie.title}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setListPanelOpen(false)}
+                        className="w-8 h-8 rounded-full border border-border text-text text-xl flex items-center justify-center hover:border-accent-2 transition-colors flex-shrink-0"
+                      >
+                        &times;
+                      </button>
+                    </div>
+
+                    <div className="p-4 sm:p-5">
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void handleCreateListAndAdd();
+                        }}
+                        className="flex gap-2"
+                      >
+                        <input
+                          type="text"
+                          value={newListName}
+                          onChange={(event) => setNewListName(event.target.value)}
+                          placeholder="Create list and add title..."
+                          className="h-9 flex-1 min-w-0 px-3 border border-border rounded-lg bg-bg-2 text-sm text-text outline-none focus:border-accent-2 transition-colors"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!newListName.trim() || newListBusy || !!listBusyId}
+                          className="h-9 px-3 rounded-full border border-accent/70 bg-accent/15 text-xs text-text hover:bg-accent/25 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
+                        >
+                          {newListBusy ? "Creating..." : "Create"}
+                        </button>
+                      </form>
+                    </div>
+
+                    <div className="px-4 sm:px-5 pb-4 sm:pb-5 flex-1 min-h-0 overflow-y-auto">
+                      {listPanelLoading || (listsLoading && lists.length === 0) ? (
+                        <div className="text-sm text-muted">Loading your lists...</div>
+                      ) : lists.length === 0 ? (
+                        <div className="text-sm text-muted">No lists yet. Create one above.</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {lists.map((entry) => {
+                            const inList = listMemberships.has(entry.id);
+                            return (
+                              <div
+                                key={entry.id}
+                                className={`rounded-lg border p-3 flex items-center justify-between gap-2 ${
+                                  inList
+                                    ? "border-2 border-accent/80 bg-panel/70"
+                                    : "border-border/80 bg-panel/70"
+                                }`}
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-sm text-text truncate">{entry.name}</div>
+                                  <div className="text-[0.72rem] text-muted mt-0.5">
+                                    {entry.item_count} {entry.item_count === 1 ? "title" : "titles"}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  disabled={!!listBusyId || newListBusy}
+                                  onClick={() => void handleToggleListMembership(entry.id)}
+                                  className={`h-8 px-3 rounded-full border text-xs transition-colors disabled:opacity-55 disabled:cursor-not-allowed ${
+                                    inList
+                                      ? "border-accent/70 bg-accent/15 text-text"
+                                      : "border-border bg-panel-2 text-muted hover:text-text hover:border-accent-2"
+                                  }`}
+                                >
+                                  {listBusyId === entry.id ? "Updating..." : inList ? "Added" : "Add"}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {listErr && (
+                        <div className="mt-3 text-xs text-red-300 bg-red-400/10 rounded-md px-2 py-1">
+                          {listErr}
+                        </div>
+                      )}
+                    </div>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>

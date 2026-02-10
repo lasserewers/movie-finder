@@ -42,6 +42,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    lists: Mapped[list["UserList"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     notification_subscriptions: Mapped[list["NotificationSubscription"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -61,6 +65,10 @@ class UserPreferences(Base):
     theme: Mapped[str] = mapped_column(String, default="dark")
     notification_deliver_in_app: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notification_deliver_email: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    letterboxd_username: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    letterboxd_watchlist_sync_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    letterboxd_watchlist_sync_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    letterboxd_watchlist_last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="preferences")
 
@@ -158,6 +166,59 @@ class WatchedItem(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="watched_items")
+
+
+class UserList(Base):
+    __tablename__ = "user_lists"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_user_lists_user_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+    user: Mapped["User"] = relationship(back_populates="lists")
+    items: Mapped[list["UserListItem"]] = relationship(
+        back_populates="list",
+        cascade="all, delete-orphan",
+    )
+
+
+class UserListItem(Base):
+    __tablename__ = "user_list_items"
+    __table_args__ = (
+        UniqueConstraint("list_id", "media_type", "tmdb_id", name="uq_user_list_items_list_media_tmdb"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    list_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("user_lists.id", ondelete="CASCADE"), nullable=False, index=True)
+    media_type: Mapped[str] = mapped_column(String(8), nullable=False, index=True)
+    tmdb_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    poster_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    release_date: Mapped[str | None] = mapped_column(String, nullable=True)
+    sort_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
+
+    list: Mapped["UserList"] = relationship(back_populates="items")
 
 
 class NotificationSubscription(Base):
