@@ -58,6 +58,13 @@ class LetterboxdWatchlistEntry:
     tmdb_id: int | None = None
 
 
+@dataclass(frozen=True)
+class LetterboxdExportList:
+    name: str
+    entries: list[LetterboxdWatchlistEntry]
+    source_file: str | None = None
+
+
 class AddWatchlistRequest(BaseModel):
     tmdb_id: int = Field(ge=1)
     media_type: Literal["movie", "tv"]
@@ -169,6 +176,7 @@ class LetterboxdExportBundle:
     username: str | None
     watchlist_entries: list[LetterboxdWatchlistEntry]
     watched_entries: list[LetterboxdWatchlistEntry]
+    lists: list[LetterboxdExportList]
 
 
 def _decode_letterboxd_csv_bytes(raw: bytes) -> str:
@@ -200,6 +208,30 @@ def _read_zip_text(archive: zipfile.ZipFile, member_name: str) -> str | None:
     return _decode_letterboxd_csv_bytes(raw)
 
 
+def _zip_member_names_in_dir(names: list[str], dir_prefix: str) -> list[str]:
+    prefix = dir_prefix.strip("/").lower() + "/"
+    matches: list[str] = []
+    for name in names:
+        normalized = name.strip("/")
+        lowered = normalized.lower()
+        if not lowered.startswith(prefix):
+            continue
+        relative = normalized[len(prefix) :]
+        if not relative or "/" in relative:
+            continue
+        if not lowered.endswith(".csv"):
+            continue
+        matches.append(name)
+    matches.sort()
+    return matches
+
+
+def _fallback_list_name_from_member(member_name: str) -> str:
+    filename = member_name.strip("/").rsplit("/", 1)[-1]
+    stem = filename.rsplit(".", 1)[0]
+    return " ".join(stem.replace("-", " ").replace("_", " ").split()).strip()
+
+
 def _parse_letterboxd_export_entries_from_csv(csv_text: str) -> list[LetterboxdWatchlistEntry]:
     reader = csv.DictReader(io.StringIO(csv_text))
     entries: list[LetterboxdWatchlistEntry] = []
@@ -221,6 +253,64 @@ def _parse_letterboxd_export_entries_from_csv(csv_text: str) -> list[LetterboxdW
         seen.add(dedupe_key)
         entries.append(LetterboxdWatchlistEntry(title=title, year=year, url=uri))
     return entries
+
+
+def _parse_letterboxd_export_list_csv(
+    csv_text: str,
+    fallback_name: str,
+    source_file: str | None = None,
+) -> LetterboxdExportList:
+    rows = list(csv.reader(io.StringIO(csv_text)))
+    list_name = " ".join(str(fallback_name or "").split()).strip() or "Imported Letterboxd list"
+    entries: list[LetterboxdWatchlistEntry] = []
+    seen: set[tuple[str, int | None]] = set()
+    items_start_index: int | None = None
+
+    for idx, row in enumerate(rows):
+        normalized = [str(cell or "").strip() for cell in row]
+        if not normalized:
+            continue
+        first = (normalized[0] or "").lower()
+        second = (normalized[1] if len(normalized) > 1 else "").lower()
+
+        if first == "date" and second == "name" and idx + 1 < len(rows):
+            metadata_row = [str(cell or "").strip() for cell in rows[idx + 1]]
+            candidate_name = metadata_row[1] if len(metadata_row) > 1 else ""
+            if candidate_name:
+                list_name = " ".join(candidate_name.split()).strip()
+
+        if first == "position" and second in {"name", "film name", "title"}:
+            items_start_index = idx + 1
+            break
+
+    if items_start_index is None:
+        return LetterboxdExportList(name=list_name, entries=[], source_file=source_file)
+
+    for row in rows[items_start_index:]:
+        normalized = [str(cell or "").strip() for cell in row]
+        if not normalized or not any(normalized):
+            continue
+        raw_title = normalized[1] if len(normalized) > 1 else ""
+        if not raw_title:
+            continue
+        title, year_from_title = _split_title_year(raw_title)
+        if not title:
+            continue
+        year = _coerce_year(normalized[2] if len(normalized) > 2 else None) or year_from_title
+        uri = normalized[3] if len(normalized) > 3 else ""
+        dedupe_key = (title.lower(), year)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        entries.append(
+            LetterboxdWatchlistEntry(
+                title=title,
+                year=year,
+                url=uri or None,
+            )
+        )
+
+    return LetterboxdExportList(name=list_name, entries=entries, source_file=source_file)
 
 
 def _parse_letterboxd_export_profile_username(csv_text: str) -> str | None:
@@ -247,13 +337,26 @@ def _parse_letterboxd_export_zip_bytes(zip_bytes: bytes) -> LetterboxdExportBund
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid ZIP file. Please upload the Letterboxd export ZIP.")
 
+    list_exports: list[LetterboxdExportList] = []
     with archive:
+        names = archive.namelist()
         profile_csv = _read_zip_text(archive, "profile.csv")
         watchlist_csv = _read_zip_text(archive, "watchlist.csv")
         watched_csv = _read_zip_text(archive, "watched.csv")
         diary_csv = _read_zip_text(archive, "diary.csv")
+        list_member_names = _zip_member_names_in_dir(names, "lists")
+        for member_name in list_member_names:
+            csv_text = _read_zip_text(archive, member_name)
+            if not csv_text:
+                continue
+            list_export = _parse_letterboxd_export_list_csv(
+                csv_text,
+                fallback_name=_fallback_list_name_from_member(member_name),
+                source_file=member_name.strip("/"),
+            )
+            list_exports.append(list_export)
 
-    if not profile_csv and not watchlist_csv and not watched_csv and not diary_csv:
+    if not profile_csv and not watchlist_csv and not watched_csv and not diary_csv and not list_exports:
         raise HTTPException(
             status_code=400,
             detail="Could not find Letterboxd export files in ZIP. Use the ZIP from Settings > Data > Export your data.",
@@ -269,6 +372,7 @@ def _parse_letterboxd_export_zip_bytes(zip_bytes: bytes) -> LetterboxdExportBund
         username=username,
         watchlist_entries=watchlist_entries,
         watched_entries=watched_entries,
+        lists=list_exports,
     )
 
 
@@ -405,10 +509,12 @@ async def _resolve_tmdb_movie(entry: LetterboxdWatchlistEntry) -> dict | None:
         return None
 
     candidates: dict[int, dict] = {}
+    with_year_results: list[dict] = []
     try:
         if entry.year is not None:
             with_year = await tmdb.search_movie(query, page=1, year=entry.year)
-            for row in with_year.get("results", []):
+            with_year_results = list(with_year.get("results", []))
+            for row in with_year_results:
                 movie_id = row.get("id")
                 if isinstance(movie_id, int) and movie_id > 0:
                     candidates[movie_id] = row
@@ -432,9 +538,28 @@ async def _resolve_tmdb_movie(entry: LetterboxdWatchlistEntry) -> dict | None:
     if not best_row:
         return None
     minimum_score = 52.0 if entry.year is not None else 63.0
-    if best_score < minimum_score:
-        return None
-    return best_row
+    if best_score >= minimum_score:
+        return best_row
+
+    # Fallback for translated titles where TMDB search returns only one exact-year result.
+    if entry.year is not None:
+        exact_year_rows: list[dict] = []
+        for row in with_year_results:
+            release_year = _coerce_year(str(row.get("release_date") or ""))
+            if release_year == entry.year:
+                exact_year_rows.append(row)
+        if len(exact_year_rows) == 1:
+            return exact_year_rows[0]
+
+    if len(candidates) == 1:
+        only_row = next(iter(candidates.values()))
+        if entry.year is None:
+            return only_row
+        release_year = _coerce_year(str(only_row.get("release_date") or ""))
+        if release_year == entry.year:
+            return only_row
+
+    return None
 
 
 def _entry_resolution_key(entry: LetterboxdWatchlistEntry) -> tuple[str, int | None]:

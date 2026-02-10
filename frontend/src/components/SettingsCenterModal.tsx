@@ -9,12 +9,18 @@ import {
 } from "../api/notifications";
 import {
   getLetterboxdSyncState,
+  previewLetterboxdLists,
+  syncLetterboxdLists,
   syncLetterboxdWatchlist,
   syncLetterboxdWatchedTitles,
+  type LetterboxdExportListSummary,
+  type LetterboxdListConflictMode,
+  type LetterboxdListSyncScope,
   type LetterboxdSyncStatus,
 } from "../api/linkedAccounts";
 import { useAuth } from "../hooks/useAuth";
 import { useConfig } from "../hooks/useConfig";
+import { useLists } from "../hooks/useLists";
 import { useWatched } from "../hooks/useWatched";
 import type { ProviderInfo, Region } from "../api/movies";
 
@@ -123,6 +129,7 @@ export default function SettingsCenterModal({
   const { user, logout } = useAuth();
   const { providerIds, countries, allProviders, saveConfig, loadProviders, expandIds, theme, setTheme } = useConfig();
   const { refresh: refreshWatched } = useWatched();
+  const { refresh: refreshLists } = useLists();
 
   const [activeSection, setActiveSection] = useState<SettingsCenterSection>(initialSection);
 
@@ -152,7 +159,13 @@ export default function SettingsCenterModal({
   const [linkedSyncing, setLinkedSyncing] = useState(false);
   const [linkedWatchlistSyncing, setLinkedWatchlistSyncing] = useState(false);
   const [linkedWatchedSyncing, setLinkedWatchedSyncing] = useState(false);
+  const [linkedListSyncing, setLinkedListSyncing] = useState(false);
+  const [linkedListsPreviewLoading, setLinkedListsPreviewLoading] = useState(false);
   const [linkedExportFile, setLinkedExportFile] = useState<File | null>(null);
+  const [linkedAvailableLists, setLinkedAvailableLists] = useState<LetterboxdExportListSummary[]>([]);
+  const [linkedListSyncScope, setLinkedListSyncScope] = useState<LetterboxdListSyncScope>("all");
+  const [linkedSelectedListNames, setLinkedSelectedListNames] = useState<string[]>([]);
+  const [linkedListConflictNames, setLinkedListConflictNames] = useState<string[]>([]);
   const [linkedDropActive, setLinkedDropActive] = useState(false);
   const [linkedStatus, setLinkedStatus] = useState<LetterboxdSyncStatus>(null);
   const [linkedMessage, setLinkedMessage] = useState("");
@@ -216,6 +229,12 @@ export default function SettingsCenterModal({
     setLinkedStatus(null);
     setLinkedLastSyncAt(null);
     setLinkedLastUsername(null);
+    setLinkedListSyncing(false);
+    setLinkedListsPreviewLoading(false);
+    setLinkedAvailableLists([]);
+    setLinkedListSyncScope("all");
+    setLinkedSelectedListNames([]);
+    setLinkedListConflictNames([]);
     setLinkedExportFile(null);
     setLinkedDropActive(false);
   }, [open, initialSection, countries, providerIds]);
@@ -351,6 +370,53 @@ export default function SettingsCenterModal({
     };
   }, [open, activeSection]);
 
+  useEffect(() => {
+    if (!open || activeSection !== "linked") return;
+    if (!linkedExportFile) {
+      setLinkedListsPreviewLoading(false);
+      setLinkedAvailableLists([]);
+      setLinkedSelectedListNames([]);
+      setLinkedListConflictNames([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLinkedListsPreviewLoading(true);
+    setLinkedErr("");
+    setLinkedListConflictNames([]);
+
+    previewLetterboxdLists(linkedExportFile)
+      .then((result) => {
+        if (cancelled) return;
+        const nextLists = [...(result.lists || [])].sort((a, b) => a.name.localeCompare(b.name));
+        setLinkedAvailableLists(nextLists);
+        setLinkedSelectedListNames((prev) => {
+          if (!prev.length) return nextLists.map((entry) => entry.name);
+          const validNames = new Set(nextLists.map((entry) => entry.name));
+          return prev.filter((name) => validNames.has(name));
+        });
+        const normalizedUsername = (result.username || "").trim();
+        if (normalizedUsername) {
+          setLinkedLastUsername(normalizedUsername);
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLinkedAvailableLists([]);
+        setLinkedSelectedListNames([]);
+        setLinkedErr(err instanceof ApiError ? err.message : "Could not read lists from this Letterboxd ZIP.");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLinkedListsPreviewLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, activeSection, linkedExportFile]);
+
   const loadServiceProviderList = useCallback(
     async (active: Set<string>, includeAllCountries: boolean) => {
       const selected = Array.from(active);
@@ -421,11 +487,21 @@ export default function SettingsCenterModal({
   const inputClass =
     "w-full px-3 py-2.5 text-sm border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors";
   const linkedCanSync = Boolean(linkedExportFile);
-  const linkedUploadDisabled = linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedLoading;
+  const linkedUploadDisabled =
+    linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedListSyncing || linkedLoading;
+  const linkedAnySyncing =
+    linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedListSyncing;
+  const linkedSelectedListSet = useMemo(() => new Set(linkedSelectedListNames), [linkedSelectedListNames]);
+  const linkedCanSyncSelectedLists = linkedListSyncScope !== "selected" || linkedSelectedListNames.length > 0;
 
   const setLinkedFile = useCallback((nextFile: File | null) => {
     setLinkedExportFile(nextFile);
     setLinkedErr("");
+    setLinkedListsPreviewLoading(false);
+    setLinkedAvailableLists([]);
+    setLinkedListSyncScope("all");
+    setLinkedSelectedListNames([]);
+    setLinkedListConflictNames([]);
     if (!nextFile) {
       setLinkedMessage("");
     }
@@ -534,7 +610,7 @@ export default function SettingsCenterModal({
 
   const handleLetterboxdSync = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing) return;
+    if (linkedAnySyncing) return;
     if (!linkedExportFile) {
       setLinkedErr("Upload your Letterboxd export ZIP before syncing.");
       return;
@@ -568,7 +644,7 @@ export default function SettingsCenterModal({
   };
 
   const handleLetterboxdWatchlistSync = async () => {
-    if (linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing) return;
+    if (linkedAnySyncing) return;
     if (!linkedExportFile) {
       setLinkedErr("Upload your Letterboxd export ZIP before syncing.");
       return;
@@ -596,7 +672,7 @@ export default function SettingsCenterModal({
   };
 
   const handleLetterboxdWatchedSync = async () => {
-    if (linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing) return;
+    if (linkedAnySyncing) return;
     if (!linkedExportFile) {
       setLinkedErr("Upload your Letterboxd export ZIP before syncing.");
       return;
@@ -623,6 +699,75 @@ export default function SettingsCenterModal({
       setLinkedWatchedSyncing(false);
     }
   };
+
+  const handleToggleLinkedSelectedList = useCallback((listName: string) => {
+    const normalized = String(listName || "").trim();
+    if (!normalized) return;
+    setLinkedSelectedListNames((prev) => {
+      if (prev.includes(normalized)) {
+        return prev.filter((entry) => entry !== normalized);
+      }
+      return [...prev, normalized];
+    });
+    setLinkedListConflictNames([]);
+  }, []);
+
+  const runLetterboxdListSync = useCallback(
+    async (conflictMode?: LetterboxdListConflictMode) => {
+      if (linkedAnySyncing) return;
+      if (!linkedExportFile) {
+        setLinkedErr("Upload your Letterboxd export ZIP before syncing.");
+        return;
+      }
+      if (linkedListSyncScope === "selected" && linkedSelectedListNames.length === 0) {
+        setLinkedErr("Select at least one Letterboxd list to sync.");
+        return;
+      }
+      setLinkedListSyncing(true);
+      setLinkedErr("");
+      setLinkedMessage("");
+      try {
+        const result = await syncLetterboxdLists(linkedExportFile, {
+          scope: linkedListSyncScope,
+          selectedListNames: linkedListSyncScope === "selected" ? linkedSelectedListNames : [],
+          conflictMode: conflictMode || null,
+        });
+        const normalizedUsername = (result.username || "").trim();
+        if (normalizedUsername) {
+          setLinkedLastUsername(normalizedUsername);
+        }
+
+        if (result.status === "conflict" || !result.ok) {
+          setLinkedListConflictNames(result.conflict_names || []);
+          setLinkedMessage(result.message || "List name conflicts found.");
+          return;
+        }
+
+        setLinkedListConflictNames([]);
+        setLinkedStatus(result.status);
+        setLinkedMessage(result.message || "");
+        setLinkedLastSyncAt(new Date().toISOString());
+        await refreshLists();
+        onSaved();
+      } catch (err) {
+        setLinkedErr(err instanceof ApiError ? err.message : "Could not sync lists from Letterboxd export.");
+      } finally {
+        setLinkedListSyncing(false);
+      }
+    },
+    [
+      linkedAnySyncing,
+      linkedExportFile,
+      linkedListSyncScope,
+      linkedSelectedListNames,
+      onSaved,
+      refreshLists,
+    ]
+  );
+
+  const handleLetterboxdListsSync = useCallback(async () => {
+    await runLetterboxdListSync(undefined);
+  }, [runLetterboxdListSync]);
 
   const handleToggleCountry = (code: string) => {
     setSelectedCountries((prev) => {
@@ -1523,38 +1668,154 @@ export default function SettingsCenterModal({
             )}
 
             <div className="text-xs text-muted">
-              Syncing from ZIP adds and merges titles. Anything already in your FullStreamer watchlist stays there.
+              Watchlist and watched sync add and merge titles. List sync follows your Skip, Merge, or Overwrite choice for name conflicts.
             </div>
-            {(linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing) && (
+            {(linkedAnySyncing || linkedListsPreviewLoading) && (
               <div className="text-xs rounded-md border border-accent/35 bg-accent/10 px-3 py-2 text-accent-2">
-                Please wait. Syncing can take some time for large Letterboxd libraries.
+                {linkedListsPreviewLoading
+                  ? "Reading lists from ZIP..."
+                  : "Please wait. Syncing can take some time for large Letterboxd libraries."}
               </div>
             )}
             {linkedCanSync ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="submit"
-                  disabled={linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedLoading}
-                  className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 text-sm"
-                >
-                  {linkedSyncing ? "Syncing all..." : "Sync all"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleLetterboxdWatchlistSync}
-                  disabled={linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedLoading}
-                  className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
-                >
-                  {linkedWatchlistSyncing ? "Syncing watchlist..." : "Sync watchlist"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleLetterboxdWatchedSync}
-                  disabled={linkedSyncing || linkedWatchlistSyncing || linkedWatchedSyncing || linkedLoading}
-                  className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
-                >
-                  {linkedWatchedSyncing ? "Syncing watched..." : "Sync watched titles"}
-                </button>
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={linkedAnySyncing || linkedListsPreviewLoading || linkedLoading}
+                    className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 text-sm"
+                  >
+                    {linkedSyncing ? "Syncing all..." : "Sync all"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLetterboxdWatchlistSync}
+                    disabled={linkedAnySyncing || linkedListsPreviewLoading || linkedLoading}
+                    className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
+                  >
+                    {linkedWatchlistSyncing ? "Syncing watchlist..." : "Sync watchlist"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLetterboxdWatchedSync}
+                    disabled={linkedAnySyncing || linkedListsPreviewLoading || linkedLoading}
+                    className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
+                  >
+                    {linkedWatchedSyncing ? "Syncing watched..." : "Sync watched titles"}
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-border/70 bg-bg/25 px-3 py-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <h5 className="text-sm font-semibold text-text">Sync lists</h5>
+                    <select
+                      value={linkedListSyncScope}
+                      onChange={(event) => {
+                        const next = (event.target.value || "all") as LetterboxdListSyncScope;
+                        setLinkedListSyncScope(next);
+                        setLinkedListConflictNames([]);
+                      }}
+                      disabled={linkedAnySyncing || linkedListsPreviewLoading || linkedAvailableLists.length === 0}
+                      className="min-w-[11rem] px-3 py-2 text-xs border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors disabled:opacity-60"
+                    >
+                      <option value="all">All lists</option>
+                      <option value="selected">Only selected lists</option>
+                    </select>
+                  </div>
+
+                  {linkedAvailableLists.length > 0 ? (
+                    <>
+                      {linkedListSyncScope === "selected" && (
+                        <div className="rounded-lg border border-border/70 bg-panel/30 px-2.5 py-2 max-h-44 overflow-y-auto space-y-1.5">
+                          {linkedAvailableLists.map((entry) => {
+                            const checked = linkedSelectedListSet.has(entry.name);
+                            return (
+                              <label
+                                key={`linked-list-select:${entry.name}`}
+                                className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 hover:bg-white/5 cursor-pointer"
+                              >
+                                <span className="flex items-center gap-2 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={linkedAnySyncing || linkedListsPreviewLoading}
+                                    onChange={() => handleToggleLinkedSelectedList(entry.name)}
+                                    className="accent-accent w-4 h-4 shrink-0"
+                                  />
+                                  <span className="text-sm text-text truncate">{entry.name}</span>
+                                </span>
+                                <span className="text-xs text-muted shrink-0">{entry.item_count}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {linkedListSyncScope === "selected" && (
+                        <div className="text-xs text-muted">
+                          {linkedSelectedListNames.length} selected
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleLetterboxdListsSync}
+                          disabled={linkedAnySyncing || linkedListsPreviewLoading || !linkedCanSyncSelectedLists}
+                          className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
+                        >
+                          {linkedListSyncing ? "Syncing lists..." : "Sync lists"}
+                        </button>
+                      </div>
+
+                      {linkedListConflictNames.length > 0 && (
+                        <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2.5 space-y-2">
+                          <div className="text-sm text-red-300">
+                            Existing lists with the same name: {linkedListConflictNames.join(", ")}
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void runLetterboxdListSync("skip");
+                              }}
+                              disabled={linkedAnySyncing || linkedListsPreviewLoading}
+                              className="px-3.5 py-2 rounded-lg border border-border/80 bg-bg/60 text-sm font-semibold text-text hover:border-accent-2 transition-colors disabled:opacity-50"
+                            >
+                              Skip
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void runLetterboxdListSync("merge");
+                              }}
+                              disabled={linkedAnySyncing || linkedListsPreviewLoading}
+                              className="px-3.5 py-2 rounded-lg border border-border/80 bg-bg/60 text-sm font-semibold text-text hover:border-accent-2 transition-colors disabled:opacity-50"
+                            >
+                              Merge
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void runLetterboxdListSync("overwrite");
+                              }}
+                              disabled={linkedAnySyncing || linkedListsPreviewLoading}
+                              className="px-3.5 py-2 rounded-lg border border-border/80 bg-bg/60 text-sm font-semibold text-text hover:border-accent-2 transition-colors disabled:opacity-50"
+                            >
+                              Overwrite
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-xs text-muted">
+                      {linkedListsPreviewLoading
+                        ? "Loading list names from this export..."
+                        : "No custom lists found in this ZIP."}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="text-xs text-muted">Upload a ZIP file to show sync buttons.</div>
@@ -1577,6 +1838,7 @@ export default function SettingsCenterModal({
               {linkedMessage && (
                 <div
                   className={
+                    linkedListConflictNames.length > 0 ||
                     linkedStatus === "private" ||
                     linkedStatus === "not_found" ||
                     linkedStatus === "blocked" ||
