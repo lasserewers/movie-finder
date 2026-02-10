@@ -374,18 +374,14 @@ async def _fetch_letterboxd_watchlist(username: str) -> tuple[str, str, list[Let
                 [],
             )
 
+        blocked_detected = False
+        watchlist_blocked = False
         rss_entries: list[LetterboxdWatchlistEntry] = []
-        if rss_resp.status_code == 200 and "<rss" in (rss_resp.text or "").lower():
+        rss_is_feed = rss_resp.status_code == 200 and "<rss" in (rss_resp.text or "").lower()
+        if rss_is_feed:
             rss_entries = _parse_letterboxd_watchlist_rss(rss_resp.text)
             if rss_entries:
                 return ("ok", "Watchlist synced from Letterboxd.", rss_entries)
-
-        if _looks_like_cloudflare_challenge(rss_resp):
-            return (
-                "blocked",
-                "Letterboxd blocked automated access from this server. Please try again later.",
-                [],
-            )
 
         rss_text = rss_resp.text or ""
         if _text_contains_any(rss_text, LETTERBOXD_PRIVATE_MARKERS):
@@ -402,11 +398,7 @@ async def _fetch_letterboxd_watchlist(username: str) -> tuple[str, str, list[Let
 
         if profile_resp is not None:
             if _looks_like_cloudflare_challenge(profile_resp):
-                return (
-                    "blocked",
-                    "Letterboxd blocked automated access from this server. Please try again later.",
-                    [],
-                )
+                blocked_detected = True
             profile_text = profile_resp.text or ""
             if _text_contains_any(profile_text, LETTERBOXD_PRIVATE_MARKERS):
                 return (
@@ -424,85 +416,94 @@ async def _fetch_letterboxd_watchlist(username: str) -> tuple[str, str, list[Let
 
         if watchlist_resp is not None:
             if _looks_like_cloudflare_challenge(watchlist_resp):
-                return (
-                    "blocked",
-                    "Letterboxd blocked automated access from this server. Please try again later.",
-                    [],
-                )
-            watchlist_text = watchlist_resp.text or ""
-            if _text_contains_any(watchlist_text, LETTERBOXD_PRIVATE_MARKERS):
-                return (
-                    "private",
-                    "This Letterboxd account is private, so FullStreamer cannot sync its watchlist.",
-                    [],
-                )
-            if watchlist_resp.status_code == 200:
-                all_entries: list[LetterboxdWatchlistEntry] = []
-                seen_keys: set[tuple[str, int | None]] = set()
+                blocked_detected = True
+                watchlist_blocked = True
+            else:
+                watchlist_text = watchlist_resp.text or ""
+                if _text_contains_any(watchlist_text, LETTERBOXD_PRIVATE_MARKERS):
+                    return (
+                        "private",
+                        "This Letterboxd account is private, so FullStreamer cannot sync its watchlist.",
+                        [],
+                    )
+                if watchlist_resp.status_code == 200:
+                    all_entries: list[LetterboxdWatchlistEntry] = []
+                    seen_keys: set[tuple[str, int | None]] = set()
 
-                page_entries, max_pages = _parse_letterboxd_watchlist_html_page(watchlist_resp.text or "")
-                for entry in page_entries:
-                    key = (entry.title.lower(), entry.year)
-                    if key in seen_keys:
-                        continue
-                    seen_keys.add(key)
-                    all_entries.append(entry)
-
-                current_page = 2
-                while current_page <= max_pages and len(all_entries) < LETTERBOXD_IMPORT_LIMIT:
-                    page_url = f"{watchlist_url}page/{current_page}/"
-                    try:
-                        page_resp = await client.get(page_url)
-                    except Exception:
-                        break
-
-                    if _looks_like_cloudflare_challenge(page_resp):
-                        return (
-                            "blocked",
-                            "Letterboxd blocked automated access from this server. Please try again later.",
-                            [],
-                        )
-
-                    page_text = page_resp.text or ""
-                    if _text_contains_any(page_text, LETTERBOXD_PRIVATE_MARKERS):
-                        return (
-                            "private",
-                            "This Letterboxd account is private, so FullStreamer cannot sync its watchlist.",
-                            [],
-                        )
-
-                    if page_resp.status_code != 200:
-                        break
-
-                    parsed_entries, page_count_hint = _parse_letterboxd_watchlist_html_page(page_text)
-                    if page_count_hint > max_pages:
-                        max_pages = page_count_hint
-                    for entry in parsed_entries:
+                    page_entries, max_pages = _parse_letterboxd_watchlist_html_page(watchlist_resp.text or "")
+                    for entry in page_entries:
                         key = (entry.title.lower(), entry.year)
                         if key in seen_keys:
                             continue
                         seen_keys.add(key)
                         all_entries.append(entry)
-                        if len(all_entries) >= LETTERBOXD_IMPORT_LIMIT:
+
+                    current_page = 2
+                    while current_page <= max_pages and len(all_entries) < LETTERBOXD_IMPORT_LIMIT:
+                        page_url = f"{watchlist_url}page/{current_page}/"
+                        try:
+                            page_resp = await client.get(page_url)
+                        except Exception:
                             break
 
-                    current_page += 1
+                        if _looks_like_cloudflare_challenge(page_resp):
+                            blocked_detected = True
+                            watchlist_blocked = True
+                            break
 
-                if all_entries:
-                    return ("ok", "Watchlist synced from Letterboxd.", all_entries)
-                return ("empty", "No public films found in this Letterboxd watchlist.", [])
+                        page_text = page_resp.text or ""
+                        if _text_contains_any(page_text, LETTERBOXD_PRIVATE_MARKERS):
+                            return (
+                                "private",
+                                "This Letterboxd account is private, so FullStreamer cannot sync its watchlist.",
+                                [],
+                            )
 
-            if watchlist_resp.status_code == 404:
-                if profile_resp is not None and profile_resp.status_code == 200:
+                        if page_resp.status_code != 200:
+                            break
+
+                        parsed_entries, page_count_hint = _parse_letterboxd_watchlist_html_page(page_text)
+                        if page_count_hint > max_pages:
+                            max_pages = page_count_hint
+                        for entry in parsed_entries:
+                            key = (entry.title.lower(), entry.year)
+                            if key in seen_keys:
+                                continue
+                            seen_keys.add(key)
+                            all_entries.append(entry)
+                            if len(all_entries) >= LETTERBOXD_IMPORT_LIMIT:
+                                break
+
+                        current_page += 1
+
+                    if all_entries:
+                        return ("ok", "Watchlist synced from Letterboxd.", all_entries)
+                    if watchlist_blocked:
+                        return (
+                            "blocked",
+                            "Letterboxd blocked automated access from this server. Please try again later.",
+                            [],
+                        )
                     return ("empty", "No public films found in this Letterboxd watchlist.", [])
-                return ("not_found", "Letterboxd user was not found.", [])
+
+                if watchlist_resp.status_code == 404:
+                    if profile_resp is not None and profile_resp.status_code == 200:
+                        return ("empty", "No public films found in this Letterboxd watchlist.", [])
+                    return ("not_found", "Letterboxd user was not found.", [])
+
+        if watchlist_blocked or (blocked_detected and watchlist_resp is None):
+            return (
+                "blocked",
+                "Letterboxd blocked automated access from this server. Please try again later.",
+                [],
+            )
 
         if rss_resp.status_code == 404:
             if profile_resp is not None and profile_resp.status_code == 200:
                 return ("empty", "No public films found in this Letterboxd watchlist.", [])
             return ("not_found", "Letterboxd user was not found.", [])
 
-        if rss_resp.status_code == 200 and "<rss" in (rss_resp.text or "").lower():
+        if rss_is_feed:
             return ("empty", "No public films found in this Letterboxd watchlist.", [])
 
         return (
