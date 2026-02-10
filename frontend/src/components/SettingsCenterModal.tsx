@@ -861,7 +861,7 @@ export default function SettingsCenterModal({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-[340] flex items-center justify-center"
+          className="fixed inset-0 z-[340] flex items-center justify-center p-3 sm:p-5 overflow-y-auto"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -869,13 +869,13 @@ export default function SettingsCenterModal({
         >
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
           <motion.div
-            className="relative bg-panel border border-border rounded-2xl w-[min(96vw,1120px)] max-h-[90vh] flex flex-col"
+            className="relative bg-panel border border-border rounded-2xl w-full max-w-[1120px] h-[calc(100dvh-1.5rem)] sm:h-[92dvh] flex flex-col overflow-hidden"
             initial={{ scale: 0.97, y: 20 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.97, y: 20 }}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-start justify-between p-6 pb-0">
+            <div className="flex items-start justify-between p-6 pb-0 flex-shrink-0">
               <div>
                 <h3 className="font-display text-xl">Settings</h3>
                 <p className="text-sm text-muted mt-1">{user?.email}</p>
@@ -888,10 +888,10 @@ export default function SettingsCenterModal({
               </button>
             </div>
 
-            <div className="flex-1 min-h-0 p-6 pt-4">
-              <div className="h-full min-h-0 rounded-xl border border-border/80 bg-bg/40 overflow-hidden flex max-sm:flex-col">
-                <aside className="w-64 max-sm:w-full max-sm:border-r-0 border-r border-border/80 max-sm:border-b max-sm:border-border/80 bg-panel-2/60 max-sm:overflow-x-auto">
-                  <nav className="p-2 max-sm:p-2 flex flex-col gap-1 max-sm:flex-row max-sm:min-w-max">
+            <div className="flex-1 min-h-0 p-4 sm:p-6 pt-3 sm:pt-4 overflow-hidden">
+              <div className="h-full min-h-0 rounded-xl border border-border/80 bg-bg/40 overflow-hidden grid grid-cols-[16rem_minmax(0,1fr)] max-sm:grid-cols-1 max-sm:grid-rows-[auto_minmax(0,1fr)]">
+                <aside className="max-sm:w-full border-r border-border/80 max-sm:border-r-0 max-sm:border-b max-sm:border-border/80 bg-panel-2/60 overflow-hidden max-sm:overflow-x-auto max-sm:overflow-y-hidden">
+                  <nav className="p-2 flex flex-col gap-1 max-sm:flex-row max-sm:min-w-max">
                     {SECTION_OPTIONS.map((section) => (
                       <button
                         key={section.id}
@@ -907,7 +907,10 @@ export default function SettingsCenterModal({
                     ))}
                   </nav>
                 </aside>
-                <main className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6">
+                <main
+                  className="min-h-0 overflow-y-scroll overscroll-contain p-4 sm:p-6 pb-8"
+                  style={{ WebkitOverflowScrolling: "touch" }}
+                >
                   {renderSection()}
                 </main>
               </div>
