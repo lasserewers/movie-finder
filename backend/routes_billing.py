@@ -4,6 +4,8 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import ipaddress
 from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -44,6 +46,184 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if raw is None or raw == "":
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_country_code(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    code = value.strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return None
+    if code in {"XX", "T1", "A1", "A2"}:
+        return None
+    return code
+
+
+def _resolve_client_ip(request: Request) -> str | None:
+    raw_candidates = [
+        request.headers.get("CF-Connecting-IP"),
+        (request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or None),
+        request.headers.get("X-Real-IP"),
+        request.client.host if request.client else None,
+    ]
+    for raw in raw_candidates:
+        if not raw:
+            continue
+        candidate = str(raw).strip()
+        if not candidate:
+            continue
+        if candidate.startswith("[") and "]" in candidate:
+            candidate = candidate[1:candidate.find("]")]
+        try:
+            ipaddress.ip_address(candidate)
+            return candidate
+        except ValueError:
+            if candidate.count(":") == 1:
+                host, _, port = candidate.partition(":")
+                if port.isdigit():
+                    try:
+                        ipaddress.ip_address(host)
+                        return host
+                    except ValueError:
+                        continue
+    return None
+
+
+def _is_public_ip(candidate_ip: str | None) -> bool:
+    if not candidate_ip:
+        return False
+    try:
+        parsed = ipaddress.ip_address(candidate_ip)
+    except ValueError:
+        return False
+    return not (
+        parsed.is_private
+        or parsed.is_loopback
+        or parsed.is_link_local
+        or parsed.is_multicast
+        or parsed.is_reserved
+        or parsed.is_unspecified
+    )
+
+
+async def _resolve_checkout_country(request: Request) -> str:
+    direct_country = _normalize_country_code(request.headers.get("CF-IPCountry"))
+    if direct_country:
+        return direct_country
+
+    for header_name in ("X-Country-Code", "X-App-Country"):
+        from_header = _normalize_country_code(request.headers.get(header_name))
+        if from_header:
+            return from_header
+
+    client_ip = _resolve_client_ip(request)
+    if _is_public_ip(client_ip):
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                response = await client.get(f"http://ip-api.com/json/{client_ip}?fields=countryCode")
+            if response.status_code == 200:
+                payload = response.json()
+                detected = _normalize_country_code(payload.get("countryCode"))
+                if detected:
+                    return detected
+        except Exception:
+            pass
+
+    return _normalize_country_code(_env("LEMON_DEFAULT_BILLING_COUNTRY")) or "US"
+
+
+def _parse_price_minor_units(value: object) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float):
+        raw = f"{value:.12g}"
+    elif isinstance(value, str):
+        raw = value.strip()
+    elif isinstance(value, dict):
+        if "amount" in value:
+            return _parse_price_minor_units(value.get("amount"))
+        if "price" in value:
+            return _parse_price_minor_units(value.get("price"))
+        return None
+    else:
+        return None
+
+    if not raw:
+        return None
+    normalized = raw.replace(",", ".").strip()
+    if normalized.isdigit():
+        parsed_int = int(normalized)
+        return parsed_int if parsed_int > 0 else None
+
+    try:
+        decimal_value = Decimal(normalized)
+    except InvalidOperation:
+        return None
+    if decimal_value <= 0:
+        return None
+    parsed_minor = int((decimal_value * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return parsed_minor if parsed_minor > 0 else None
+
+
+def _plan_prices_env_name(plan: BillingPlan) -> str:
+    return (
+        "LEMON_COUNTRY_PRICES_YEARLY_JSON"
+        if plan == BILLING_PLAN_YEARLY
+        else "LEMON_COUNTRY_PRICES_MONTHLY_JSON"
+    )
+
+
+def _plan_default_price_env_name(plan: BillingPlan) -> str:
+    return "LEMON_DEFAULT_YEARLY_PRICE" if plan == BILLING_PLAN_YEARLY else "LEMON_DEFAULT_MONTHLY_PRICE"
+
+
+def _load_plan_price_config(plan: BillingPlan) -> tuple[dict[str, int], int | None]:
+    default_price = _parse_price_minor_units(_env(_plan_default_price_env_name(plan)))
+    # Sensible fallback defaults for current pricing: DKK 19.99 / DKK 199.99.
+    if default_price is None:
+        default_price = 19999 if plan == BILLING_PLAN_YEARLY else 1999
+
+    raw_map = _env(_plan_prices_env_name(plan))
+    if not raw_map:
+        return {}, default_price
+
+    try:
+        parsed = json.loads(raw_map)
+    except json.JSONDecodeError:
+        return {}, default_price
+    if not isinstance(parsed, dict):
+        return {}, default_price
+
+    prices: dict[str, int] = {}
+    for raw_country, raw_price in parsed.items():
+        key = str(raw_country).strip()
+        if key in {"DEFAULT", "default", "*"}:
+            mapped_default = _parse_price_minor_units(raw_price)
+            if mapped_default is not None:
+                default_price = mapped_default
+            continue
+        country_code = _normalize_country_code(key)
+        if not country_code:
+            continue
+        parsed_price = _parse_price_minor_units(raw_price)
+        if parsed_price is None:
+            continue
+        prices[country_code] = parsed_price
+    return prices, default_price
+
+
+def _resolve_custom_price(plan: BillingPlan, country: str) -> int | None:
+    plan_prices, default_price = _load_plan_price_config(plan)
+    return plan_prices.get(country, default_price)
+
+
+def _coerce_id(value: str) -> int | str:
+    try:
+        return int(value)
+    except ValueError:
+        return value
 
 
 def _plan_variant_id(plan: BillingPlan) -> str:
@@ -224,6 +404,7 @@ async def get_billing_status(user: User = Depends(get_current_user)):
 
 @router.post("/checkout")
 async def create_checkout_link(
+    request: Request,
     checkout_request: CreateCheckoutRequest | None = None,
     user: User = Depends(get_current_user),
 ):
@@ -255,7 +436,15 @@ async def create_checkout_link(
                 "LEMON_SQUEEZY_YEARLY_VARIANT_ID for yearly checkouts."
             ),
         )
+
+    checkout_country = await _resolve_checkout_country(request)
+    checkout_custom_price = _resolve_custom_price(selected_plan, checkout_country)
     redirect_url = _build_checkout_redirect_url(selected_plan)
+    product_options: dict[str, object] = {
+        "enabled_variants": [_coerce_id(variant_id)],
+    }
+    if redirect_url:
+        product_options["redirect_url"] = redirect_url
 
     attributes: dict[str, object] = {
         "checkout_options": {
@@ -263,16 +452,21 @@ async def create_checkout_link(
             "media": False,
             "logo": True,
         },
+        "product_options": product_options,
         "checkout_data": {
             "email": user.email,
+            "billing_address": {
+                "country": checkout_country,
+            },
             "custom": {
                 "user_id": str(user.id),
                 "plan": selected_plan,
+                "country": checkout_country,
             },
         },
     }
-    if redirect_url:
-        attributes["product_options"] = {"redirect_url": redirect_url}
+    if checkout_custom_price is not None:
+        attributes["custom_price"] = checkout_custom_price
     if _env_bool("LEMON_SQUEEZY_TEST_MODE", default=False):
         attributes["test_mode"] = True
 
@@ -310,7 +504,12 @@ async def create_checkout_link(
     checkout_url = str((((body.get("data") or {}).get("attributes") or {}).get("url") or "")).strip()
     if not checkout_url:
         raise HTTPException(status_code=502, detail="Could not create checkout URL.")
-    return {"checkout_url": checkout_url, "plan": selected_plan}
+    return {
+        "checkout_url": checkout_url,
+        "plan": selected_plan,
+        "country": checkout_country,
+        "custom_price": checkout_custom_price,
+    }
 
 
 @router.get("/portal")
