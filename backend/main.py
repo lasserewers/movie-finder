@@ -23,13 +23,20 @@ from slowapi.errors import RateLimitExceeded
 from . import tmdb, streaming_availability, ratings
 from .database import get_db, init_db, close_db
 from .models import User, UserPreferences, WatchedItem
-from .auth import get_current_user, get_optional_user, verify_csrf
+from .auth import (
+    get_current_user,
+    get_current_premium_user,
+    get_optional_user,
+    user_is_premium,
+    verify_csrf,
+)
 from .routes_auth import router as auth_router
 from .routes_admin import router as admin_router
 from .routes_watchlist import router as watchlist_router
 from .routes_watched import router as watched_router
 from .routes_lists import router as lists_router
 from .routes_notifications import router as notifications_router
+from .routes_billing import router as billing_router
 
 WATCH_PROVIDER_TTL = 6 * 60 * 60
 WATCH_PROVIDER_CACHE: dict[tuple[str, int], tuple[float, dict]] = {}
@@ -146,6 +153,7 @@ app.include_router(watchlist_router)
 app.include_router(watched_router)
 app.include_router(lists_router)
 app.include_router(notifications_router)
+app.include_router(billing_router)
 
 
 def _parse_csv_int_values(raw: str | None, max_items: int = 12) -> list[int]:
@@ -806,7 +814,10 @@ async def search(
     media_type: str = "movie",
     page: int = 1,
     limit: int = Query(10, ge=1, le=40),
+    user: User | None = Depends(get_optional_user),
 ):
+    if user and user_is_premium(user):
+        raise HTTPException(status_code=403, detail="Signed-in search only supports streamable results.")
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "movie"
     page = max(1, page)
@@ -857,7 +868,10 @@ async def search_page(
     media_type: str = "movie",
     page: int = 1,
     limit: int = Query(20, ge=1, le=40),
+    user: User | None = Depends(get_optional_user),
 ):
+    if user and user_is_premium(user):
+        raise HTTPException(status_code=403, detail="Signed-in search only supports streamable results.")
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "movie"
     page = max(1, page)
@@ -979,7 +993,7 @@ async def search_advanced(
     countries: str | None = None,
     vpn: bool = False,
     include_paid: bool = False,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_premium_user),
     db: AsyncSession = Depends(get_db),
 ):
     if media_type not in VALID_MEDIA_TYPES:
@@ -995,11 +1009,10 @@ async def search_advanced(
     actor_people = _parse_csv_int_values(actor_ids, max_items=12)
     director_people = _parse_csv_int_values(director_ids, max_items=12)
     sort_key = _normalize_advanced_sort(sort_by)
-    content_mode_key = (content_mode or "all").strip().lower()
-    if content_mode_key not in {"all", "available", "streamable"}:
-        content_mode_key = "all"
-    filtered_mode = content_mode_key != "all"
-    include_paid_mode = include_paid or content_mode_key == "available"
+    # Premium search is streamable-only.
+    content_mode_key = "streamable"
+    filtered_mode = True
+    include_paid_mode = False
 
     ids: set[int] = set()
     allowed_countries: set[str] | None = None
@@ -1018,7 +1031,7 @@ async def search_advanced(
                 "total_pages": 0,
                 "has_more": False,
             }
-        user_countries = list(prefs.countries) if prefs and prefs.countries else []
+        user_countries = _user_country_list_for_tier(user, prefs)
         requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
         allowed_countries, effective_vpn = _resolve_country_scope(
             user_countries=user_countries,
@@ -1262,18 +1275,21 @@ async def search_filtered(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if not user or not user_is_premium(user):
+        raise HTTPException(status_code=403, detail="Search is available for premium users only.")
+    include_paid = False
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "movie"
     target = limit
     max_pages = 4
-    prefs = await _get_user_prefs(db, user.id) if user else None
+    prefs = await _get_user_prefs(db, user.id)
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
     elif prefs:
         ids = set(prefs.provider_ids or [])
     else:
         ids = set()
-    user_countries = list(prefs.countries) if prefs and prefs.countries else []
+    user_countries = _user_country_list_for_tier(user, prefs)
     requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
     allowed_countries, _effective_vpn = _resolve_country_scope(
         user_countries=user_countries,
@@ -1391,18 +1407,21 @@ async def search_filtered_page(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if not user or not user_is_premium(user):
+        raise HTTPException(status_code=403, detail="Search is available for premium users only.")
+    include_paid = False
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "movie"
     page = max(1, page)
     limit = max(1, min(40, limit))
-    prefs = await _get_user_prefs(db, user.id) if user else None
+    prefs = await _get_user_prefs(db, user.id)
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
     elif prefs:
         ids = set(prefs.provider_ids or [])
     else:
         ids = set()
-    user_countries = list(prefs.countries) if prefs and prefs.countries else []
+    user_countries = _user_country_list_for_tier(user, prefs)
     requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
     allowed_countries, _effective_vpn = _resolve_country_scope(
         user_countries=user_countries,
@@ -1765,6 +1784,31 @@ def _normalize_country_codes(countries: list[str] | None) -> set[str] | None:
         if isinstance(c, str) and len(c.strip()) == 2 and c.strip().isalpha()
     }
     return normalized or None
+
+
+def _normalize_country_list(countries: list[str] | None) -> list[str]:
+    if not countries:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in countries:
+        if not isinstance(raw, str):
+            continue
+        code = raw.strip().upper()
+        if len(code) != 2 or not code.isalpha() or code in seen:
+            continue
+        seen.add(code)
+        normalized.append(code)
+    return normalized
+
+
+def _user_country_list_for_tier(user: User | None, prefs: UserPreferences | None) -> list[str]:
+    user_countries = _normalize_country_list(list(prefs.countries) if prefs and prefs.countries else [])
+    if user and not user_countries:
+        user_countries = ["US"]
+    if user and not user_is_premium(user):
+        return user_countries[:1]
+    return user_countries
 
 
 async def _item_has_provider(
@@ -2613,16 +2657,25 @@ async def home(
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "mix"
     prefs = await _get_user_prefs(db, user.id) if user else None
+    is_non_premium_user = bool(user and not user_is_premium(user))
+    if is_non_premium_user:
+        vpn = False
+        hide_watched = False
+        # Non-premium supports "all" (unfiltered) and "available" (filtered + paid).
+        if not unfiltered:
+            include_paid = True
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
     elif prefs:
         ids = set(prefs.provider_ids) if prefs.provider_ids else set()
     else:
         ids = set()
-    user_countries = list(prefs.countries) if prefs and prefs.countries else []
-    requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
+    user_countries = _user_country_list_for_tier(user, prefs)
+    requested_countries = (
+        _normalize_country_codes(countries.split(",")) if countries and not is_non_premium_user else None
+    )
     exclude_watched_keys: set[tuple[str, int]] = set()
-    if user and hide_watched:
+    if user and hide_watched and user_is_premium(user):
         exclude_watched_keys = await _get_user_watched_keys(db, user.id, media_type)
 
     guest_country = _normalize_country_code(country)
@@ -2635,7 +2688,7 @@ async def home(
         return await _guest_home(page, page_size, media_type, guest_country, exclude_keys=exclude_watched_keys)
 
     if not ids:
-        if guest_country:
+        if not user and guest_country:
             page = max(1, page)
             page_size = max(3, min(10, page_size))
             return await _guest_home(page, page_size, media_type, guest_country, exclude_keys=exclude_watched_keys)
@@ -2871,16 +2924,25 @@ async def section(
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "mix"
     prefs = await _get_user_prefs(db, user.id) if user else None
+    is_non_premium_user = bool(user and not user_is_premium(user))
+    if is_non_premium_user:
+        vpn = False
+        hide_watched = False
+        # Non-premium supports "all" (unfiltered) and "available" (filtered + paid).
+        if not unfiltered:
+            include_paid = True
     if provider_ids:
         ids = {int(pid) for pid in provider_ids.split(",") if pid.strip().isdigit()}
     elif prefs:
         ids = set(prefs.provider_ids) if prefs.provider_ids else set()
     else:
         ids = set()
-    user_countries = list(prefs.countries) if prefs and prefs.countries else []
-    requested_countries = _normalize_country_codes(countries.split(",")) if countries else None
+    user_countries = _user_country_list_for_tier(user, prefs)
+    requested_countries = (
+        _normalize_country_codes(countries.split(",")) if countries and not is_non_premium_user else None
+    )
     exclude_watched_keys: set[tuple[str, int]] = set()
-    if user and hide_watched:
+    if user and hide_watched and user_is_premium(user):
         exclude_watched_keys = await _get_user_watched_keys(db, user.id, media_type)
 
     guest_country = _normalize_country_code(country)
@@ -2892,7 +2954,7 @@ async def section(
         return await _guest_section(section_id, page, pages, media_type, guest_country, exclude_keys=exclude_watched_keys)
 
     if not ids:
-        if guest_country:
+        if not user and guest_country:
             page = max(1, page)
             return await _guest_section(section_id, page, pages, media_type, guest_country, exclude_keys=exclude_watched_keys)
         return {"id": section_id, "results": [], "filtered": True, "message": "Select streaming services first."}
@@ -3077,8 +3139,11 @@ async def geo(request: Request):
 async def get_config(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     prefs = await _get_user_prefs(db, user.id)
     if not prefs:
-        return {"provider_ids": [], "countries": []}
-    return {"provider_ids": prefs.provider_ids or [], "countries": prefs.countries or [], "theme": prefs.theme or "dark"}
+        return {"provider_ids": [], "countries": ["US"] if not user_is_premium(user) else []}
+    countries = _user_country_list_for_tier(user, prefs)
+    if not user_is_premium(user) and not countries:
+        countries = ["US"]
+    return {"provider_ids": prefs.provider_ids or [], "countries": countries, "theme": prefs.theme or "dark"}
 
 
 @app.post("/api/config")
@@ -3100,10 +3165,14 @@ async def set_config(data: dict, user: User = Depends(get_current_user), db: Asy
         prefs.provider_ids = provider_ids
 
     if "countries" in data:
-        prefs.countries = data.get("countries") or []
+        prefs.countries = _normalize_country_list(data.get("countries") or [])
 
     if "theme" in data:
         prefs.theme = data["theme"] if data["theme"] in ("dark", "light") else "dark"
+
+    if not user_is_premium(user):
+        existing = _normalize_country_list(prefs.countries or [])
+        prefs.countries = (existing or ["US"])[:1]
 
     await db.commit()
     return {"ok": True}

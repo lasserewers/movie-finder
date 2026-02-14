@@ -30,6 +30,8 @@ import Spinner from "./components/Spinner";
 import { useInfiniteScroll } from "./hooks/useInfiniteScroll";
 import { getHome, getRegions, getGeoCountry, type HomeSection, type Region, type MediaType } from "./api/movies";
 import type { UserListItem } from "./api/lists";
+import { checkAuth } from "./api/auth";
+import { getBillingStatus } from "./api/billing";
 import { IOS_BRAVE } from "./utils/platform";
 
 const MEDIA_OPTIONS: { value: MediaType; label: string }[] = [
@@ -49,6 +51,15 @@ const USER_CONTENT_LABEL: Record<UserContentMode, string> = {
 const SIGNUP_ONBOARDING_STORAGE_KEY = "signup_onboarding_pending";
 const USER_LIST_HOME_SECTION_PREFIX = "__userlist__:";
 const HOME_SECTION_WATCHLIST_ID = "__home_watchlist__";
+const BILLING_RETURN_QUERY_KEY = "billing";
+const BILLING_RETURN_QUERY_VALUE = "return";
+const BILLING_PLAN_QUERY_KEY = "billing_plan";
+type BillingReturnPlan = "monthly" | "yearly" | null;
+const PREMIUM_ONLY_SETTINGS_SECTIONS = new Set<SettingsCenterSection>([
+  "notifications",
+  "home",
+  "linked",
+]);
 
 function userViewPrefsKey(email: string) {
   return `${USER_VIEW_PREFS_STORAGE_PREFIX}${email.trim().toLowerCase()}`;
@@ -58,8 +69,17 @@ function countryFlag(code: string) {
   return String.fromCodePoint(...[...code.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
 }
 
+function normalizeBillingReturnPlan(value: string | null): BillingReturnPlan {
+  const normalized = (value || "").trim().toLowerCase();
+  if (normalized === "monthly") return "monthly";
+  if (normalized === "yearly") return "yearly";
+  return null;
+}
+
 function AppContent() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, updateUser } = useAuth();
+  const isPremiumUser = !!user && (user.subscription_tier === "premium" || user.subscription_tier === "free_premium");
+  const isNonPremiumUser = !!user && !isPremiumUser;
   const { providerIds, countries, loadConfig, saveConfig } = useConfig();
   const { items: watchlistItems, loading: watchlistLoading, refresh: refreshWatchlist } = useWatchlist();
   const { items: watchedItems, loading: watchedLoading } = useWatched();
@@ -80,6 +100,8 @@ function AppContent() {
   const [authInitialMode, setAuthInitialMode] = useState<"login" | "signup">("login");
   const [settingsCenterOpen, setSettingsCenterOpen] = useState(false);
   const [settingsCenterSection, setSettingsCenterSection] = useState<SettingsCenterSection>("account");
+  const [billingReturnSyncing, setBillingReturnSyncing] = useState(false);
+  const [billingReturnPlan, setBillingReturnPlan] = useState<BillingReturnPlan>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [vpnPromptOpen, setVpnPromptOpen] = useState(false);
   const [vpnPromptCountryCount, setVpnPromptCountryCount] = useState(1);
@@ -101,7 +123,7 @@ function AppContent() {
   const [advancedSearchInitialQuery, setAdvancedSearchInitialQuery] = useState("");
   const [mediaType, setMediaType] = useState<MediaType>("mix");
   const [rowResetToken, setRowResetToken] = useState(0);
-  const [userContentMode, setUserContentMode] = useState<UserContentMode>("streamable");
+  const [userContentMode, setUserContentMode] = useState<UserContentMode>("all");
   const [usingVpn, setUsingVpn] = useState(false);
   const [hideWatchedOnHome, setHideWatchedOnHome] = useState(false);
   const [showWatchlistOnHome, setShowWatchlistOnHome] = useState(true);
@@ -145,6 +167,7 @@ function AppContent() {
   const previousUserKeyRef = useRef<string | null>(null);
   const hasStoredContentModePrefRef = useRef(false);
   const handledTitleDeepLinkRef = useRef(false);
+  const handledBillingReturnRef = useRef(false);
   const pendingNotificationReadRef = useRef<string | null>(null);
   const pendingTitleReadRef = useRef<{ tmdbId: number; mediaType: "movie" | "tv" } | null>(null);
 
@@ -251,11 +274,24 @@ function AppContent() {
       hasStoredContentModePrefRef.current = false;
       setViewPrefsReady(false);
       setUsingVpn(false);
-      setUserContentMode("streamable");
+      setUserContentMode("all");
       setHideWatchedOnHome(false);
       setShowWatchlistOnHome(true);
       setHomeListIds([]);
       setHomeSectionOrder([HOME_SECTION_WATCHLIST_ID]);
+      setHomeListItemsById({});
+      return;
+    }
+
+    if (!isPremiumUser) {
+      hasStoredContentModePrefRef.current = false;
+      setViewPrefsReady(true);
+      setUsingVpn(false);
+      setUserContentMode("available");
+      setHideWatchedOnHome(false);
+      setShowWatchlistOnHome(false);
+      setHomeListIds([]);
+      setHomeSectionOrder([]);
       setHomeListItemsById({});
       return;
     }
@@ -328,7 +364,7 @@ function AppContent() {
     setUsingVpn(nextUsingVpn);
     if (nextMode !== null) setUserContentMode(nextMode);
     setViewPrefsReady(true);
-  }, [user?.email]);
+  }, [user?.email, isPremiumUser]);
 
   // Fallback if detected country isn't in available regions
   useEffect(() => {
@@ -348,7 +384,21 @@ function AppContent() {
 
   useEffect(() => {
     if (!user) {
-      setUserContentMode("streamable");
+      setUserContentMode("all");
+      setUsingVpn(false);
+      return;
+    }
+    if (!isPremiumUser) {
+      setUsingVpn(false);
+      setUserContentMode((prev) => {
+        if (prev === "streamable") {
+          return providerIds.size === 0 ? "all" : "available";
+        }
+        if (providerIds.size === 0 && prev !== "all") {
+          return "all";
+        }
+        return prev;
+      });
       return;
     }
     if (!viewPrefsReady) return;
@@ -360,11 +410,11 @@ function AppContent() {
       // With services, default to stream-only.
       setUserContentMode("streamable");
     }
-  }, [user, providerIds.size, viewPrefsReady]);
+  }, [user, isPremiumUser, providerIds.size, viewPrefsReady]);
 
   // Persist VPN + content mode across logout/login.
   useEffect(() => {
-    if (!user?.email || !viewPrefsReady) return;
+    if (!user?.email || !viewPrefsReady || !isPremiumUser) return;
     try {
       localStorage.setItem(
         userViewPrefsKey(user.email),
@@ -380,20 +430,27 @@ function AppContent() {
     } catch {
       // Ignore localStorage write failures.
     }
-  }, [user?.email, viewPrefsReady, usingVpn, userContentMode, hideWatchedOnHome, showWatchlistOnHome, homeListIds, homeSectionOrder]);
+  }, [user?.email, viewPrefsReady, isPremiumUser, usingVpn, userContentMode, hideWatchedOnHome, showWatchlistOnHome, homeListIds, homeSectionOrder]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isPremiumUser) {
+      setHomeListIds([]);
+      return;
+    }
     const validListIds = new Set(lists.map((entry) => entry.id));
     setHomeListIds((prev) => {
       const filtered = prev.filter((listId) => validListIds.has(listId));
       return filtered.length === prev.length ? prev : filtered;
     });
-  }, [user, lists]);
+  }, [user, isPremiumUser, lists]);
 
   useEffect(() => {
     if (!user) {
       setHomeSectionOrder([HOME_SECTION_WATCHLIST_ID]);
+      return;
+    }
+    if (!isPremiumUser) {
+      setHomeSectionOrder([]);
       return;
     }
     const defaultOrder = [
@@ -416,10 +473,10 @@ function AppContent() {
       }
       return next.length === prev.length && next.every((value, index) => value === prev[index]) ? prev : next;
     });
-  }, [user, homeListIds, showWatchlistOnHome]);
+  }, [user, isPremiumUser, homeListIds, showWatchlistOnHome]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !isPremiumUser) {
       setHomeListItemsById({});
       return;
     }
@@ -451,7 +508,7 @@ function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [user, lists, homeListIds, getItems]);
+  }, [user, isPremiumUser, lists, homeListIds, getItems]);
 
   // Prefetch next page in background
   const prefetchNextPage = useCallback(
@@ -461,7 +518,7 @@ function AppContent() {
       const unfiltered = isGuest || userContentMode === "all";
       const includePaid = !!user && userContentMode === "available";
       const country = unfiltered ? guestCountry : undefined;
-      const scopedCountries = user && !usingVpn ? countries : undefined;
+      const scopedCountries = user && (!isPremiumUser || !usingVpn) ? countries : undefined;
       const ids = unfiltered ? [] : Array.from(providerIds);
       try {
         const data = await getHome(nextPage, 6, ids, currentMediaType, country, unfiltered, usingVpn, includePaid, scopedCountries, hideWatchedOnHome);
@@ -474,7 +531,7 @@ function AppContent() {
         // Prefetch failed, ignore
       }
     },
-    [user, userContentMode, countries, guestCountry, providerIds, usingVpn, hideWatchedOnHome]
+    [user, isPremiumUser, userContentMode, countries, guestCountry, providerIds, usingVpn, hideWatchedOnHome]
   );
 
   const loadHomeRows = useCallback(
@@ -514,7 +571,7 @@ function AppContent() {
         const unfiltered = isGuest || userContentMode === "all";
         const includePaid = !!user && userContentMode === "available";
         const country = unfiltered ? guestCountry : undefined;
-        const scopedCountries = user && !usingVpn ? countries : undefined;
+        const scopedCountries = user && (!isPremiumUser || !usingVpn) ? countries : undefined;
         const ids = unfiltered ? [] : Array.from(providerIds);
         const data = await getHome(page, homePageSize, ids, mediaType, country, unfiltered, usingVpn, includePaid, scopedCountries, hideWatchedOnHome);
         const newHasMore = data.has_more ?? false;
@@ -553,7 +610,7 @@ function AppContent() {
         setHomeLoading(false);
       }
     },
-    [homeLoading, homePage, homeHasMore, providerIds, mediaType, user, guestCountry, userContentMode, countries, usingVpn, hideWatchedOnHome, prefetchNextPage]
+    [homeLoading, homePage, homeHasMore, providerIds, mediaType, user, isPremiumUser, guestCountry, userContentMode, countries, usingVpn, hideWatchedOnHome, prefetchNextPage]
   );
 
   const sentinelRef = useInfiniteScroll(
@@ -703,19 +760,116 @@ function AppContent() {
     setOnboardingOpen(true);
   };
 
-  const openSettingsCenter = useCallback((section: SettingsCenterSection = "account") => {
-    setSettingsCenterSection(section);
-    setSettingsCenterOpen(true);
+  const openSettingsCenter = useCallback(
+    (section: SettingsCenterSection = "account") => {
+      const nextSection =
+        !isPremiumUser && PREMIUM_ONLY_SETTINGS_SECTIONS.has(section)
+          ? "subscription"
+          : section;
+      setSettingsCenterSection(nextSection);
+      setSettingsCenterOpen(true);
+    },
+    [isPremiumUser]
+  );
+
+  const clearBillingReturnParams = useCallback(() => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete(BILLING_RETURN_QUERY_KEY);
+      url.searchParams.delete(BILLING_PLAN_QUERY_KEY);
+      const nextSearch = url.searchParams.toString();
+      window.history.replaceState(
+        {},
+        "",
+        `${url.pathname}${nextSearch ? `?${nextSearch}` : ""}${url.hash}`
+      );
+    } catch {
+      // Ignore URL rewrite failures.
+    }
   }, []);
 
+  const finishBillingReturnSync = useCallback(() => {
+    setBillingReturnSyncing(false);
+    setBillingReturnPlan(null);
+    clearBillingReturnParams();
+  }, [clearBillingReturnParams]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (handledBillingReturnRef.current) return;
+    let isBillingReturn = false;
+    let detectedPlan: BillingReturnPlan = null;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      isBillingReturn =
+        (params.get(BILLING_RETURN_QUERY_KEY) || "").trim().toLowerCase() === BILLING_RETURN_QUERY_VALUE;
+      detectedPlan = normalizeBillingReturnPlan(params.get(BILLING_PLAN_QUERY_KEY));
+    } catch {
+      isBillingReturn = false;
+      detectedPlan = null;
+    }
+    if (!isBillingReturn) return;
+    handledBillingReturnRef.current = true;
+    setBillingReturnPlan(detectedPlan);
+    setBillingReturnSyncing(true);
+
+    if (!user) {
+      finishBillingReturnSync();
+      return;
+    }
+
+    openSettingsCenter("subscription");
+
+    let cancelled = false;
+    const MAX_ATTEMPTS = 12;
+    const RETRY_DELAY_MS = 2500;
+
+    const pollForUpgrade = async () => {
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+        if (cancelled) return;
+        try {
+          const [billingStatus, refreshedUser] = await Promise.all([getBillingStatus(), checkAuth()]);
+          if (cancelled) return;
+          if (refreshedUser) {
+            updateUser(refreshedUser);
+            if (refreshedUser.subscription_tier === "premium") {
+              finishBillingReturnSync();
+              return;
+            }
+          }
+          if (billingStatus.has_paid_subscription) {
+            finishBillingReturnSync();
+            return;
+          }
+        } catch {
+          // Retry until webhook syncs subscription status or we time out.
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, RETRY_DELAY_MS));
+      }
+      if (!cancelled) {
+        finishBillingReturnSync();
+      }
+    };
+
+    void pollForUpgrade();
+    return () => {
+      cancelled = true;
+    };
+  }, [authLoading, user, finishBillingReturnSync, openSettingsCenter, updateUser]);
+
   const handleOnboardingDone = async (selectedCountries: string[]) => {
-    const chosenCountries = selectedCountries.length ? selectedCountries : [DEFAULT_ONBOARDING_COUNTRY];
-    const shouldOpenServices = selectedCountries.length > 0;
+    const normalizedSelectedCountries = isPremiumUser
+      ? selectedCountries
+      : selectedCountries.slice(0, 1);
+    const chosenCountries = normalizedSelectedCountries.length
+      ? normalizedSelectedCountries
+      : [DEFAULT_ONBOARDING_COUNTRY];
+    const shouldOpenServices = normalizedSelectedCountries.length > 0;
     setOnboardingOpen(false);
     await saveConfig(Array.from(providerIds), chosenCountries);
     if (isOnboarding) {
       setIsOnboarding(false);
-      setPendingVpnPrompt(shouldOpenServices);
+      setPendingVpnPrompt(isPremiumUser && shouldOpenServices);
       setVpnPromptCountryCount(Math.max(1, chosenCountries.length));
       if (shouldOpenServices) openSettingsCenter("services");
     }
@@ -726,9 +880,11 @@ function AppContent() {
   };
 
   const handleSettingsCenterSaved = () => {
-    void refreshWatchlist();
-    loadHomeRows(true);
-    if (pendingVpnPrompt) {
+    if (isPremiumUser) {
+      void refreshWatchlist();
+    }
+    void loadHomeRows(true);
+    if (isPremiumUser && pendingVpnPrompt) {
       setPendingVpnPrompt(false);
       setVpnPromptOpen(true);
     }
@@ -744,51 +900,66 @@ function AppContent() {
     setSelectedMovieType(mt || "movie");
   }, []);
 
-  const handleSearchSubmit = useCallback((q: string, filtered: boolean) => {
-    setSearchQuery(q);
-    setSearchFiltered(filtered);
-    setSearchOpen(true);
-  }, []);
+  const handleSearchSubmit = useCallback(
+    (q: string, filtered: boolean) => {
+      setSearchQuery(q);
+      setSearchFiltered(isPremiumUser ? true : filtered);
+      setSearchOpen(true);
+    },
+    [isPremiumUser]
+  );
 
   const handleOpenAdvancedSearch = useCallback((initialQuery: string) => {
     if (!user) {
       openAuthModal("login");
       return;
     }
+    if (!isPremiumUser) {
+      openSettingsCenter("subscription");
+      return;
+    }
     setAdvancedSearchInitialQuery(initialQuery);
     setAdvancedSearchOpen(true);
-  }, [openAuthModal, user]);
+  }, [isPremiumUser, openAuthModal, openSettingsCenter, user]);
 
   useEffect(() => {
-    if (!user && advancedSearchOpen) {
+    if ((!user || !isPremiumUser) && advancedSearchOpen) {
       setAdvancedSearchOpen(false);
     }
-  }, [user, advancedSearchOpen]);
+  }, [user, isPremiumUser, advancedSearchOpen]);
 
   useEffect(() => {
-    if (!user && watchlistOverlayOpen) {
+    if (!isPremiumUser && watchlistOverlayOpen) {
       setWatchlistOverlayOpen(false);
     }
-  }, [user, watchlistOverlayOpen]);
+  }, [isPremiumUser, watchlistOverlayOpen]);
 
   useEffect(() => {
-    if (!user && watchedOverlayOpen) {
+    if (!isPremiumUser && watchedOverlayOpen) {
       setWatchedOverlayOpen(false);
     }
-  }, [user, watchedOverlayOpen]);
+  }, [isPremiumUser, watchedOverlayOpen]);
 
   useEffect(() => {
-    if (!user && listsOverlayOpen) {
+    if (!isPremiumUser && listsOverlayOpen) {
       setListsOverlayOpen(false);
+      setListsOverlayInitialListId(null);
     }
-  }, [user, listsOverlayOpen]);
+  }, [isPremiumUser, listsOverlayOpen]);
 
   useEffect(() => {
-    if (user) return;
-    if (notificationsOverlayOpen) setNotificationsOverlayOpen(false);
-    if (notificationAlertsOverlayOpen) setNotificationAlertsOverlayOpen(false);
-    if (settingsCenterOpen) setSettingsCenterOpen(false);
-  }, [user, notificationsOverlayOpen, notificationAlertsOverlayOpen, settingsCenterOpen]);
+    if (!user || !isPremiumUser) {
+      if (notificationsOverlayOpen) setNotificationsOverlayOpen(false);
+      if (notificationAlertsOverlayOpen) setNotificationAlertsOverlayOpen(false);
+      if (!user && settingsCenterOpen) setSettingsCenterOpen(false);
+    }
+  }, [user, isPremiumUser, notificationsOverlayOpen, notificationAlertsOverlayOpen, settingsCenterOpen]);
+
+  useEffect(() => {
+    if (isPremiumUser) return;
+    if (!PREMIUM_ONLY_SETTINGS_SECTIONS.has(settingsCenterSection)) return;
+    setSettingsCenterSection("subscription");
+  }, [isPremiumUser, settingsCenterSection]);
 
   const handleMediaTypeChange = (next: MediaType) => {
     setMediaType(next);
@@ -796,13 +967,22 @@ function AppContent() {
   };
   const handleUserContentModeChange = useCallback(
     (nextMode: UserContentMode) => {
+      if (!isPremiumUser) {
+        const normalizedMode: UserContentMode = nextMode === "streamable" ? "available" : nextMode;
+        if (providerIds.size === 0 && normalizedMode !== "all") {
+          openSettingsCenter("services");
+          return;
+        }
+        setUserContentMode(normalizedMode);
+        return;
+      }
       if (providerIds.size === 0 && nextMode !== "all") {
         openSettingsCenter("services");
         return;
       }
       setUserContentMode(nextMode);
     },
-    [openSettingsCenter, providerIds.size]
+    [isPremiumUser, openSettingsCenter, providerIds.size]
   );
 
   const sectionMap = useMemo(() => new Map(sections.map((s) => [s.id, s])), [sections]);
@@ -811,7 +991,7 @@ function AppContent() {
     [watchedItems]
   );
   const homeListSections = useMemo<HomeSection[]>(() => {
-    if (!user || !homeListIds.length) return [];
+    if (!user || !isPremiumUser || !homeListIds.length) return [];
     const summariesById = new Map(lists.map((entry) => [entry.id, entry]));
     return homeListIds.flatMap((listId) => {
       const listSummary = summariesById.get(listId);
@@ -838,7 +1018,7 @@ function AppContent() {
         },
       ];
     });
-  }, [user, homeListIds, lists, homeListItemsById, mediaType, hideWatchedOnHome, watchedItemKeys]);
+  }, [user, isPremiumUser, homeListIds, lists, homeListItemsById, mediaType, hideWatchedOnHome, watchedItemKeys]);
   const homeListSectionByListId = useMemo(() => {
     const map = new Map<string, HomeSection>();
     for (const section of homeListSections) {
@@ -850,7 +1030,7 @@ function AppContent() {
     return map;
   }, [homeListSections]);
   const homeSectionOrderItems = useMemo(() => {
-    if (!user) return [];
+    if (!user || !isPremiumUser) return [];
     const listNameById = new Map(lists.map((entry) => [entry.id, entry.name]));
     return [
       ...(showWatchlistOnHome ? [{ id: HOME_SECTION_WATCHLIST_ID, label: "Watchlist" }] : []),
@@ -859,14 +1039,15 @@ function AppContent() {
         return label ? [{ id: listId, label }] : [];
       }),
     ];
-  }, [user, lists, homeListIds, showWatchlistOnHome]);
+  }, [user, isPremiumUser, lists, homeListIds, showWatchlistOnHome]);
   const watchlistItemsForHome = useMemo(() => {
+    if (!isPremiumUser) return [];
     if (!hideWatchedOnHome) return watchlistItems;
     return watchlistItems.filter((entry) => !watchedItemKeys.has(`${entry.media_type}:${entry.tmdb_id}`));
-  }, [hideWatchedOnHome, watchlistItems, watchedItemKeys]);
+  }, [isPremiumUser, hideWatchedOnHome, watchlistItems, watchedItemKeys]);
   const watchlistFullyWatchedHidden = hideWatchedOnHome && watchlistItems.length > 0 && watchlistItemsForHome.length === 0;
   const watchlistSection = useMemo<HomeSection | null>(() => {
-    if (!user || !watchlistItemsForHome.length) return null;
+    if (!user || !isPremiumUser || !watchlistItemsForHome.length) return null;
     return {
       id: "__watchlist__",
       title: "Your Watchlist",
@@ -878,14 +1059,22 @@ function AppContent() {
         media_type: entry.media_type,
       })),
     };
-  }, [user, watchlistItemsForHome]);
+  }, [user, isPremiumUser, watchlistItemsForHome]);
   const handleSeeMore = useCallback(
     (id: string) => {
       if (id === "__watchlist__") {
+        if (!isPremiumUser) {
+          openSettingsCenter("subscription");
+          return;
+        }
         setWatchlistOverlayOpen(true);
         return;
       }
       if (id.startsWith(USER_LIST_HOME_SECTION_PREFIX)) {
+        if (!isPremiumUser) {
+          openSettingsCenter("subscription");
+          return;
+        }
         const listId = id.slice(USER_LIST_HOME_SECTION_PREFIX.length);
         if (listId) {
           setListsOverlayInitialListId(listId);
@@ -895,9 +1084,9 @@ function AppContent() {
       }
       setSelectedSection(sectionMap.get(id) || null);
     },
-    [sectionMap]
+    [sectionMap, isPremiumUser, openSettingsCenter]
   );
-  const watchlistHomeBlock = user ? (
+  const watchlistHomeBlock = user && isPremiumUser ? (
     watchlistLoading ? (
       <SkeletonRow />
     ) : watchlistSection ? (
@@ -922,7 +1111,7 @@ function AppContent() {
     )
   ) : null;
   const personalHomeBlocks = useMemo(() => {
-    if (!user) return [];
+    if (!user || !isPremiumUser) return [];
     const orderedKeys = [...homeSectionOrder];
     for (const item of homeSectionOrderItems) {
       if (orderedKeys.includes(item.id)) continue;
@@ -956,6 +1145,7 @@ function AppContent() {
     return blocks;
   }, [
     user,
+    isPremiumUser,
     homeSectionOrder,
     homeSectionOrderItems,
     showWatchlistOnHome,
@@ -978,23 +1168,35 @@ function AppContent() {
       openAuthModal("login");
       return;
     }
+    if (!isPremiumUser) {
+      openSettingsCenter("subscription");
+      return;
+    }
     setWatchlistOverlayOpen(true);
-  }, [openAuthModal, user]);
+  }, [isPremiumUser, openAuthModal, openSettingsCenter, user]);
   const handleOpenWatched = useCallback(() => {
     if (!user) {
       openAuthModal("login");
       return;
     }
+    if (!isPremiumUser) {
+      openSettingsCenter("subscription");
+      return;
+    }
     setWatchedOverlayOpen(true);
-  }, [openAuthModal, user]);
+  }, [isPremiumUser, openAuthModal, openSettingsCenter, user]);
   const handleOpenLists = useCallback(() => {
     if (!user) {
       openAuthModal("login");
       return;
     }
+    if (!isPremiumUser) {
+      openSettingsCenter("subscription");
+      return;
+    }
     setListsOverlayInitialListId(null);
     setListsOverlayOpen(true);
-  }, [openAuthModal, user]);
+  }, [isPremiumUser, openAuthModal, openSettingsCenter, user]);
   const handleOpenListsFromSettings = useCallback(() => {
     setSettingsCenterOpen(false);
     handleOpenLists();
@@ -1029,10 +1231,14 @@ function AppContent() {
       openAuthModal("login");
       return;
     }
+    if (!isPremiumUser) {
+      openSettingsCenter("subscription");
+      return;
+    }
     clearUnreadIndicator();
     void refreshNotifications(true);
     setNotificationsOverlayOpen(true);
-  }, [clearUnreadIndicator, openAuthModal, refreshNotifications, user]);
+  }, [clearUnreadIndicator, isPremiumUser, openAuthModal, openSettingsCenter, refreshNotifications, user]);
   const handleCloseNotifications = useCallback(() => {
     setNotificationsOverlayOpen(false);
     void markAllRead();
@@ -1092,11 +1298,34 @@ function AppContent() {
           onOpenWatched={handleOpenWatched}
           onOpenSettings={() => openSettingsCenter("services")}
           vpnEnabled={usingVpn}
+          isPremiumUser={isPremiumUser}
+          onOpenSubscription={() => openSettingsCenter("subscription")}
           onSearchSubmit={handleSearchSubmit}
           onOpenAdvancedSearch={handleOpenAdvancedSearch}
           scrollContainer={useScopedMainScroll ? mainScrollEl : null}
         />
       </div>
+      {billingReturnSyncing && (
+        <div className="page-container pt-3">
+          <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-text">
+              <span
+                className="inline-block h-3 w-3 rounded-full border-2 border-emerald-300 border-t-transparent animate-spin"
+                aria-hidden="true"
+              />
+              Finalizing your premium subscription...
+            </div>
+            <p className="text-xs text-muted mt-1">
+              {billingReturnPlan === "monthly"
+                ? "Monthly plan detected. "
+                : billingReturnPlan === "yearly"
+                  ? "Yearly plan detected. "
+                  : ""}
+              This usually completes within a few seconds after checkout.
+            </p>
+          </div>
+        </div>
+      )}
 
       <main
         ref={useScopedMainScroll ? setMainScrollEl : undefined}
@@ -1130,7 +1359,7 @@ function AppContent() {
                 ))}
               </select>
             )}
-            {user && (
+            {isPremiumUser && (
               <div className="flex items-center gap-2 max-sm:w-full">
                 {userContentMode === "streamable" && (
                   <button
@@ -1201,7 +1430,7 @@ function AppContent() {
                 </button>
               </div>
             )}
-            {user && (
+            {isPremiumUser && (
               <>
                 {/* Desktop: watched toggle + media toggle in same row */}
                 <div className="flex items-center gap-2 max-sm:hidden">
@@ -1292,22 +1521,41 @@ function AppContent() {
                 </div>
               </>
             )}
-            {!user && (
-              <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[270px] max-sm:w-full">
-                {MEDIA_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    onClick={() => handleMediaTypeChange(opt.value)}
-                    className={`flex-1 h-full text-sm font-medium transition-colors ${
-                      mediaType === opt.value
-                        ? "bg-accent/15 text-text"
-                        : "text-muted hover:text-text"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
+            {!isPremiumUser && (
+              <>
+                {user && (
+                  <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[270px] max-sm:w-full">
+                    {(["all", "available"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => handleUserContentModeChange(mode)}
+                        className={`flex-1 h-full text-sm font-medium transition-colors ${
+                          userContentMode === mode
+                            ? "bg-accent/15 text-text"
+                            : "text-muted hover:text-text"
+                        }`}
+                      >
+                        {USER_CONTENT_LABEL[mode]}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center rounded-full border border-border bg-panel overflow-hidden h-[42px] w-[270px] max-sm:w-full">
+                  {MEDIA_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => handleMediaTypeChange(opt.value)}
+                      className={`flex-1 h-full text-sm font-medium transition-colors ${
+                        mediaType === opt.value
+                          ? "bg-accent/15 text-text"
+                          : "text-muted hover:text-text"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
           </div>
           </div>
@@ -1374,6 +1622,7 @@ function AppContent() {
         countryNameMap={countryNameMap}
         itemMediaType={selectedMovieType}
         guestCountry={!user ? guestCountry : undefined}
+        allowPersonClicks={isPremiumUser}
       />
 
       <SectionOverlay
@@ -1389,75 +1638,89 @@ function AppContent() {
         hideWatched={!!user && hideWatchedOnHome}
       />
 
-      <WatchlistOverlay
-        open={watchlistOverlayOpen}
-        onClose={() => setWatchlistOverlayOpen(false)}
-        items={watchlistItems}
-        onSelectMovie={handleSelectMovie}
-      />
+      {isPremiumUser && (
+        <WatchlistOverlay
+          open={watchlistOverlayOpen}
+          onClose={() => setWatchlistOverlayOpen(false)}
+          items={watchlistItems}
+          onSelectMovie={handleSelectMovie}
+        />
+      )}
 
-      <WatchedOverlay
-        open={watchedOverlayOpen}
-        onClose={() => setWatchedOverlayOpen(false)}
-        items={watchedItems}
-        loading={watchedLoading}
-        onSelectMovie={handleSelectMovie}
-      />
+      {isPremiumUser && (
+        <WatchedOverlay
+          open={watchedOverlayOpen}
+          onClose={() => setWatchedOverlayOpen(false)}
+          items={watchedItems}
+          loading={watchedLoading}
+          onSelectMovie={handleSelectMovie}
+        />
+      )}
 
-      <ListsOverlay
-        open={listsOverlayOpen}
-        onClose={() => {
-          setListsOverlayOpen(false);
-          setListsOverlayInitialListId(null);
-        }}
-        onSelectMovie={handleSelectMovie}
-        initialListId={listsOverlayInitialListId}
-        homeListIds={homeListIds}
-        onToggleHomeList={handleToggleListOnHome}
-      />
+      {isPremiumUser && (
+        <ListsOverlay
+          open={listsOverlayOpen}
+          onClose={() => {
+            setListsOverlayOpen(false);
+            setListsOverlayInitialListId(null);
+          }}
+          onSelectMovie={handleSelectMovie}
+          initialListId={listsOverlayInitialListId}
+          homeListIds={homeListIds}
+          onToggleHomeList={handleToggleListOnHome}
+        />
+      )}
 
-      <NotificationsOverlay
-        open={notificationsOverlayOpen}
-        onClose={handleCloseNotifications}
-        notifications={notifications}
-        loading={notificationsLoading}
-        activeAlerts={activeAlerts}
-        onMarkRead={markRead}
-        onRemoveNotification={removeNotification}
-        onSelectMovie={handleSelectMovie}
-        onOpenAlerts={() => {
-          setNotificationAlertsOverlayOpen(true);
-        }}
-        onOpenSettings={() => {
-          openSettingsCenter("notifications");
-        }}
-      />
+      {isPremiumUser && (
+        <NotificationsOverlay
+          open={notificationsOverlayOpen}
+          onClose={handleCloseNotifications}
+          notifications={notifications}
+          loading={notificationsLoading}
+          activeAlerts={activeAlerts}
+          onMarkRead={markRead}
+          onRemoveNotification={removeNotification}
+          onSelectMovie={handleSelectMovie}
+          onOpenAlerts={() => {
+            setNotificationAlertsOverlayOpen(true);
+          }}
+          onOpenSettings={() => {
+            openSettingsCenter("notifications");
+          }}
+        />
+      )}
 
-      <NotificationAlertsOverlay
-        open={notificationAlertsOverlayOpen}
-        onClose={() => setNotificationAlertsOverlayOpen(false)}
-        onSelectMovie={handleSelectMovie}
-      />
+      {isPremiumUser && (
+        <NotificationAlertsOverlay
+          open={notificationAlertsOverlayOpen}
+          onClose={() => setNotificationAlertsOverlayOpen(false)}
+          onSelectMovie={handleSelectMovie}
+        />
+      )}
 
       <SearchOverlay
         open={searchOpen}
         query={searchQuery}
-        filtered={searchFiltered}
-        vpnEnabled={usingVpn}
-        isLoggedIn={!!user}
-        initialContentMode={searchFiltered ? "streamable" : "all"}
+        filtered={isPremiumUser ? true : searchFiltered}
+        vpnEnabled={isPremiumUser ? usingVpn : false}
+        isLoggedIn={isPremiumUser}
+        initialContentMode={isPremiumUser ? "streamable" : searchFiltered ? "streamable" : "all"}
+        lockStreamable={isPremiumUser}
         onClose={() => setSearchOpen(false)}
         onSelectMovie={handleSelectMovie}
       />
 
-      <AdvancedSearchModal
-        open={advancedSearchOpen}
-        initialQuery={advancedSearchInitialQuery}
-        onClose={() => setAdvancedSearchOpen(false)}
-        onSelectMovie={handleSelectMovie}
-        regions={regions}
-        isLoggedIn={!!user}
-      />
+      {isPremiumUser && (
+        <AdvancedSearchModal
+          open={advancedSearchOpen}
+          initialQuery={advancedSearchInitialQuery}
+          onClose={() => setAdvancedSearchOpen(false)}
+          onSelectMovie={handleSelectMovie}
+          regions={regions}
+          isLoggedIn={true}
+          lockStreamable
+        />
+      )}
 
       <SettingsCenterModal
         open={settingsCenterOpen}
@@ -1466,6 +1729,8 @@ function AppContent() {
         regions={regions}
         countryNameMap={countryNameMap}
         initialSection={settingsCenterSection}
+        isPremiumUser={isPremiumUser}
+        subscriptionTier={user?.subscription_tier}
         homeContentMode={userContentMode}
         homeUsingVpn={usingVpn}
         homeShowWatchlist={showWatchlistOnHome}
@@ -1484,6 +1749,7 @@ function AppContent() {
         open={onboardingOpen}
         regions={regions}
         countryNameMap={countryNameMap}
+        singleSelect={isNonPremiumUser}
         onDone={handleOnboardingDone}
         onClose={handleOnboardingClose}
       />

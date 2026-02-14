@@ -14,6 +14,8 @@ interface Props {
   onOpenWatched: () => void;
   onOpenSettings: () => void;
   vpnEnabled?: boolean;
+  isPremiumUser?: boolean;
+  onOpenSubscription?: () => void;
   onSearchSubmit?: (query: string, filtered: boolean) => void;
   onOpenAdvancedSearch?: (initialQuery: string) => void;
   scrollContainer?: HTMLElement | null;
@@ -29,6 +31,8 @@ export default function Topbar({
   onOpenWatched,
   onOpenSettings,
   vpnEnabled = false,
+  isPremiumUser = false,
+  onOpenSubscription,
   onSearchSubmit,
   onOpenAdvancedSearch,
   scrollContainer,
@@ -100,7 +104,10 @@ export default function Topbar({
       <div className="flex flex-1 justify-end max-sm:order-3 max-sm:basis-full">
         <SearchBar
           onSelectMovie={onSelectMovie}
-          showFilterToggle={!!user}
+          showFilterToggle={false}
+          forceStreamable={!!user && isPremiumUser}
+          searchDisabled={false}
+          onDisabledClick={onOpenSubscription}
           onOpenSettings={onOpenSettings}
           vpnEnabled={vpnEnabled}
           onSubmitSearch={onSearchSubmit}
@@ -108,7 +115,7 @@ export default function Topbar({
         />
       </div>
       <div className="relative z-[2] flex-shrink-0 flex items-center gap-2 max-sm:gap-1.5 max-sm:order-2 max-sm:ml-auto">
-        {user && onOpenAdvancedSearch && (
+        {user && isPremiumUser && onOpenAdvancedSearch && (
           <button
             onClick={() => onOpenAdvancedSearch(searchDraft.trim())}
             className="h-[44px] sm:h-[52px] px-2.5 sm:px-3.5 border border-border rounded-full flex items-center justify-center gap-1.5 sm:gap-2 hover:border-accent-2 transition-colors text-muted hover:text-text"
@@ -137,6 +144,8 @@ export default function Topbar({
             onOpenLists={onOpenLists}
             onOpenWatchlist={onOpenWatchlist}
             onOpenWatched={onOpenWatched}
+            isPremiumUser={isPremiumUser}
+            onOpenSubscription={onOpenSubscription}
           />
         ) : (
           <button

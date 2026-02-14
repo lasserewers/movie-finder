@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import tmdb
 from .audit import add_audit_log
-from .auth import get_current_user
+from .auth import get_current_user, get_current_premium_user
 from .database import get_db
 from .models import User, UserPreferences, WatchedItem
 from .routes_watchlist import (
@@ -35,7 +35,11 @@ from .routes_watchlist import (
     _xml_local_name,
 )
 
-router = APIRouter(prefix="/api/watched", tags=["watched"])
+router = APIRouter(
+    prefix="/api/watched",
+    tags=["watched"],
+    dependencies=[Depends(get_current_premium_user)],
+)
 LETTERBOXD_FILMS_PAGE_RE = re.compile(r"/films/page/(?P<page>\d+)/", flags=re.IGNORECASE)
 LETTERBOXD_WATCHED_IMPORT_LIMIT = max(0, int(os.environ.get("LETTERBOXD_WATCHED_IMPORT_LIMIT", "0") or "0"))
 

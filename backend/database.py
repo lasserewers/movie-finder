@@ -21,8 +21,43 @@ async def init_db():
         # Existing deployments keep working when new user-management columns are added.
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE"))
+        await conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS subscription_tier VARCHAR(24) NOT NULL DEFAULT 'non_premium'"
+            )
+        )
+        await conn.execute(
+            text(
+                "UPDATE users "
+                "SET subscription_tier = 'non_premium' "
+                "WHERE subscription_tier IS NULL "
+                "OR btrim(subscription_tier) = '' "
+                "OR subscription_tier NOT IN ('non_premium', 'free_premium', 'premium')"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ALTER COLUMN subscription_tier SET DEFAULT 'non_premium'"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ALTER COLUMN subscription_tier SET NOT NULL"
+            )
+        )
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_customer_id VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_subscription_id VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_subscription_status VARCHAR(40)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_variant_id VARCHAR(32)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_last_event_name VARCHAR(80)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_last_event_at TIMESTAMPTZ NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_subscription_renews_at TIMESTAMPTZ NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_subscription_ends_at TIMESTAMPTZ NULL"))
         await conn.execute(
             text(
                 "ALTER TABLE user_preferences "

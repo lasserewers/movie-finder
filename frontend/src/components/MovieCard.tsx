@@ -37,7 +37,10 @@ function MovieCard({
   const [watchlistBusy, setWatchlistBusy] = useState(false);
   const [watchlistErr, setWatchlistErr] = useState("");
   const mediaTypeSafe = mediaType === "tv" ? "tv" : "movie";
-  const watchlisted = user ? isInWatchlist(mediaTypeSafe, id) : false;
+  const isPremiumUser =
+    !!user &&
+    (user.subscription_tier === "premium" || user.subscription_tier === "free_premium");
+  const watchlisted = isPremiumUser ? isInWatchlist(mediaTypeSafe, id) : false;
   const src = posterUrl || (posterPath ? `${TMDB_IMG}/w185${posterPath}` : "");
   const year = releaseDate?.slice(0, 4) || "";
   const className = `flex flex-col gap-1.5 cursor-pointer snap-start ${fill ? "w-full" : "w-[112px] min-[430px]:w-[126px] sm:w-[180px] flex-shrink-0"}`;
@@ -50,7 +53,7 @@ function MovieCard({
 
   const toggleWatchlist = async (event: React.MouseEvent) => {
     event.stopPropagation();
-    if (!user || watchlistBusy) return;
+    if (!isPremiumUser || watchlistBusy) return;
     setWatchlistBusy(true);
     setWatchlistErr("");
     try {
@@ -94,7 +97,7 @@ function MovieCard({
             TV
           </span>
         )}
-        {user && showWatchlistButton && (
+        {isPremiumUser && showWatchlistButton && (
           <button
             type="button"
             onClick={toggleWatchlist}

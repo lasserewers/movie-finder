@@ -8,6 +8,9 @@ const TMDB_IMG = "https://image.tmdb.org/t/p";
 interface Props {
   onSelectMovie: (movieId: number, mediaType?: "movie" | "tv") => void;
   showFilterToggle?: boolean;
+  forceStreamable?: boolean;
+  searchDisabled?: boolean;
+  onDisabledClick?: () => void;
   onOpenSettings?: () => void;
   vpnEnabled?: boolean;
   onSubmitSearch?: (query: string, filtered: boolean) => void;
@@ -17,6 +20,9 @@ interface Props {
 export default function SearchBar({
   onSelectMovie,
   showFilterToggle = true,
+  forceStreamable = false,
+  searchDisabled = false,
+  onDisabledClick,
   onOpenSettings,
   vpnEnabled = false,
   onSubmitSearch,
@@ -44,6 +50,12 @@ export default function SearchBar({
   }, []);
 
   function doSearch(q: string, filtered: boolean) {
+    if (searchDisabled) {
+      setResults([]);
+      setOpen(false);
+      setLoading(false);
+      return;
+    }
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -58,14 +70,14 @@ export default function SearchBar({
     setLoading(true);
     const timeout = window.setTimeout(() => controller.abort(), 12000);
 
-    const canFilter = showFilterToggle;
-    const ids = filtered && canFilter ? Array.from(providerIds) : [];
-    const scopedCountries = filtered && canFilter && !vpnEnabled && countries.length
+    const streamableOnly = forceStreamable || (showFilterToggle && filtered);
+    const ids = streamableOnly ? Array.from(providerIds) : [];
+    const scopedCountries = streamableOnly && !vpnEnabled && countries.length
       ? `&countries=${encodeURIComponent(countries.join(","))}`
       : "";
-    const vpnParam = filtered && canFilter && vpnEnabled ? "&vpn=1" : "";
+    const vpnParam = streamableOnly && vpnEnabled ? "&vpn=1" : "";
     const limitParam = "&limit=10";
-    const url = filtered && canFilter && ids.length
+    const url = streamableOnly
       ? `/api/search_filtered?q=${encodeURIComponent(q)}&provider_ids=${ids.join(",")}&media_type=mix${limitParam}${vpnParam}${scopedCountries}`
       : `/api/search?q=${encodeURIComponent(q)}&media_type=mix${limitParam}`;
 
@@ -90,25 +102,27 @@ export default function SearchBar({
   }
 
   const handleInput = (value: string) => {
+    if (searchDisabled) return;
     setQuery(value);
     onQueryChange?.(value);
     clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       autoOpenRef.current = true;
-      doSearch(value.trim(), showFilterToggle && filterOn);
+      doSearch(value.trim(), forceStreamable || (showFilterToggle && filterOn));
     }, 300);
   };
 
   // Re-search when config changes - don't auto-open dropdown
   useEffect(() => {
     const q = query.trim();
-    if (q.length >= 2) {
+    if (!searchDisabled && q.length >= 2) {
       autoOpenRef.current = false;
-      doSearch(q, showFilterToggle && filterOn);
+      doSearch(q, forceStreamable || (showFilterToggle && filterOn));
     }
-  }, [showFilterToggle, filterOn, vpnEnabled, countries, providerIds]);
+  }, [showFilterToggle, filterOn, vpnEnabled, countries, providerIds, forceStreamable, searchDisabled]);
 
   const handleFilterToggle = () => {
+    if (forceStreamable || searchDisabled) return;
     // If user has no services and tries to enable filter, open settings instead
     if (!filterOn && providerIds.size === 0 && onOpenSettings) {
       onOpenSettings();
@@ -132,25 +146,45 @@ export default function SearchBar({
           type="text"
           value={query}
           onChange={(e) => handleInput(e.target.value)}
+          onClick={() => {
+            if (searchDisabled) onDisabledClick?.();
+          }}
           onKeyDown={(e) => {
             if (e.key !== "Enter") return;
+            if (searchDisabled) {
+              e.preventDefault();
+              onDisabledClick?.();
+              return;
+            }
             const q = query.trim();
             if (q.length < 2) return;
             e.preventDefault();
             setOpen(false);
-            onSubmitSearch?.(q, showFilterToggle && filterOn);
+            onSubmitSearch?.(q, forceStreamable || (showFilterToggle && filterOn));
           }}
-          onFocus={() => results.length && setOpen(true)}
-          placeholder="Search movies & TV..."
+          onFocus={() => {
+            if (searchDisabled) {
+              onDisabledClick?.();
+              return;
+            }
+            if (results.length) setOpen(true);
+          }}
+          placeholder={searchDisabled ? "Search is premium-only" : "Search movies & TV..."}
+          readOnly={searchDisabled}
+          aria-readonly={searchDisabled}
           className="flex-1 bg-transparent text-text text-sm sm:text-base outline-none placeholder:text-muted"
         />
         {onSubmitSearch && (
           <button
             onClick={() => {
+              if (searchDisabled) {
+                onDisabledClick?.();
+                return;
+              }
               const q = query.trim();
               if (q.length < 2) return;
               setOpen(false);
-              onSubmitSearch(q, showFilterToggle && filterOn);
+              onSubmitSearch(q, forceStreamable || (showFilterToggle && filterOn));
             }}
             className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-full text-muted hover:text-text transition-colors"
             aria-label="Search"
@@ -161,7 +195,7 @@ export default function SearchBar({
             </svg>
           </button>
         )}
-        {showFilterToggle && (
+        {showFilterToggle && !forceStreamable && !searchDisabled && (
           <button
             onClick={handleFilterToggle}
             className={`text-[0.65rem] sm:text-xs font-medium px-2 sm:px-3 py-1 sm:py-1.5 rounded-full border-2 transition-colors whitespace-nowrap ${
@@ -217,7 +251,9 @@ export default function SearchBar({
 
       {open && !loading && results.length === 0 && query.trim().length >= 2 && (
         <div className="absolute top-[calc(100%+0.5rem)] left-0 w-full sm:w-[min(480px,90vw)] bg-panel border border-border rounded-xl p-6 text-center text-sm text-muted z-[140]">
-          {showFilterToggle && filterOn ? "No streamable matches on your services" : "No results found"}
+          {forceStreamable || (showFilterToggle && filterOn)
+            ? "No streamable matches on your services"
+            : "No results found"}
         </div>
       )}
     </div>

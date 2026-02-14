@@ -1,13 +1,21 @@
 import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .auth import get_current_admin, verify_password, hash_password
+from .auth import (
+    SUBSCRIPTION_TIER_FREE_PREMIUM,
+    SUBSCRIPTION_TIER_PREMIUM,
+    get_current_admin,
+    verify_password,
+    hash_password,
+    get_user_subscription_tier,
+)
 from .audit import add_audit_log
 from .database import get_db
 from .models import User, UserPreferences, AuditLog
@@ -24,6 +32,7 @@ def _serialize_user(user: User, prefs: UserPreferences | None) -> dict:
         "email": user.email,
         "is_admin": bool(user.is_admin),
         "is_active": bool(user.is_active),
+        "subscription_tier": get_user_subscription_tier(user),
         "email_verified": bool(user.email_verified),
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
@@ -47,6 +56,7 @@ def _serialize_log(log: AuditLog) -> dict:
 class AdminUserUpdateRequest(BaseModel):
     is_admin: bool | None = None
     is_active: bool | None = None
+    subscription_tier: Literal["non_premium", "free_premium", "premium"] | None = None
     action_reason: str | None = Field(default=None, max_length=500)
 
 
@@ -198,7 +208,7 @@ async def admin_update_user(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    if body.is_admin is None and body.is_active is None:
+    if body.is_admin is None and body.is_active is None and body.subscription_tier is None:
         raise HTTPException(status_code=400, detail="No changes provided")
 
     user = await db.get(User, user_id)
@@ -264,6 +274,26 @@ async def admin_update_user(
                 target_user=user,
             )
             changed_any = True
+
+    target_tier = body.subscription_tier
+    if target_tier == SUBSCRIPTION_TIER_PREMIUM:
+        # Admin-granted premium is tracked separately from paid premium.
+        target_tier = SUBSCRIPTION_TIER_FREE_PREMIUM
+
+    if target_tier is not None and target_tier != get_user_subscription_tier(user):
+        previous_tier = get_user_subscription_tier(user)
+        user.subscription_tier = target_tier
+        add_audit_log(
+            db,
+            action="admin.user_subscription_updated",
+            message=(
+                f"Admin changed subscription tier for {user.email} "
+                f"from {previous_tier} to {target_tier}."
+            ),
+            actor_user=admin,
+            target_user=user,
+        )
+        changed_any = True
 
     if not changed_any:
         raise HTTPException(status_code=400, detail="No effective changes provided")

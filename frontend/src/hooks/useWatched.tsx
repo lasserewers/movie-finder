@@ -36,11 +36,12 @@ function watchedKey(mediaType: WatchedMediaType, tmdbId: number): string {
 
 export function WatchedProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const isPremiumUser = !!user && (user.subscription_tier === "premium" || user.subscription_tier === "free_premium");
   const [items, setItems] = useState<WatchedItem[]>([]);
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (!user) {
+    if (!user || !isPremiumUser) {
       setItems([]);
       setLoading(false);
       return;
@@ -51,22 +52,22 @@ export function WatchedProvider({ children }: { children: ReactNode }) {
       setItems(next);
     } catch (err) {
       const apiError = err as ApiError;
-      if (apiError.status === 401) {
+      if (apiError.status === 401 || apiError.status === 403) {
         setItems([]);
       }
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [isPremiumUser, user]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !isPremiumUser) {
       setItems([]);
       setLoading(false);
       return;
     }
     void refresh();
-  }, [user?.id, refresh, user]);
+  }, [user?.id, isPremiumUser, refresh, user]);
 
   const itemMap = useMemo(() => {
     const next = new Map<string, WatchedItem>();

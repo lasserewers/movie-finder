@@ -11,11 +11,20 @@ interface Props {
   regions: Region[];
   countryNameMap: Record<string, string>;
   initialCountries?: string[];
+  singleSelect?: boolean;
   onDone: (countries: string[]) => void;
   onClose?: () => void;
 }
 
-export default function OnboardingModal({ open, regions, countryNameMap, initialCountries, onDone, onClose }: Props) {
+export default function OnboardingModal({
+  open,
+  regions,
+  countryNameMap,
+  initialCountries,
+  singleSelect = false,
+  onDone,
+  onClose,
+}: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const isEdit = !!(initialCountries && initialCountries.length > 0);
@@ -23,13 +32,17 @@ export default function OnboardingModal({ open, regions, countryNameMap, initial
 
   useEffect(() => {
     if (open) {
-      setSelected(new Set(initialCountries || []));
+      setSelected(new Set((singleSelect ? (initialCountries || []).slice(0, 1) : (initialCountries || []))));
       setQuery("");
     }
-  }, [open]);
+  }, [open, initialCountries, singleSelect]);
 
   const toggle = (code: string) => {
     setSelected((prev) => {
+      if (singleSelect) {
+        if (prev.has(code) && prev.size === 1) return prev;
+        return new Set([code]);
+      }
       const next = new Set(prev);
       if (next.has(code)) next.delete(code);
       else next.add(code);
@@ -77,7 +90,9 @@ export default function OnboardingModal({ open, regions, countryNameMap, initial
               {isEdit ? "Manage Countries" : "Welcome to FullStreamer"}
             </h3>
             <p className="text-sm text-muted mb-4 text-center">
-              Select the countries where you primarily watch content
+              {singleSelect
+                ? "Select your primary country"
+                : "Select the countries where you primarily watch content"}
             </p>
 
             {/* Selected countries */}
@@ -89,12 +104,14 @@ export default function OnboardingModal({ open, regions, countryNameMap, initial
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-accent/10 border border-accent/40 text-sm"
                   >
                     {countryFlag(code)} {countryNameMap[code] || code}
-                    <button
-                      onClick={() => toggle(code)}
-                      className="text-muted hover:text-accent-2 text-base leading-none"
-                    >
-                      &times;
-                    </button>
+                    {!singleSelect && (
+                      <button
+                        onClick={() => toggle(code)}
+                        className="text-muted hover:text-accent-2 text-base leading-none"
+                      >
+                        &times;
+                      </button>
+                    )}
                   </span>
                 ))}
               </div>

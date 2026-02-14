@@ -1,35 +1,77 @@
 import { apiFetch } from "./client";
 
+export type SubscriptionTier = "non_premium" | "free_premium" | "premium";
+
 export interface User {
   id: string;
   email: string;
   is_admin?: boolean;
   is_active?: boolean;
+  subscription_tier?: SubscriptionTier;
   email_verified?: boolean;
   created_at?: string | null;
   last_login_at?: string | null;
 }
 
+function normalizeSubscriptionTier(value: unknown): SubscriptionTier {
+  if (value === "premium") return "premium";
+  if (value === "free_premium") return "free_premium";
+  return "non_premium";
+}
+
+function normalizeUser(data: {
+  id?: string;
+  email: string;
+  is_admin?: boolean;
+  is_active?: boolean;
+  subscription_tier?: unknown;
+  email_verified?: boolean;
+  created_at?: string | null;
+  last_login_at?: string | null;
+}): User {
+  return {
+    id: data.id || "",
+    email: data.email,
+    is_admin: !!data.is_admin,
+    is_active: data.is_active !== false,
+    subscription_tier: normalizeSubscriptionTier(data.subscription_tier),
+    email_verified: data.email_verified !== false,
+    created_at: data.created_at ?? null,
+    last_login_at: data.last_login_at ?? null,
+  };
+}
+
 export async function checkAuth(): Promise<User | null> {
   try {
-    return await apiFetch<User>("/api/auth/me");
+    const data = await apiFetch<{
+      id?: string;
+      email: string;
+      is_admin?: boolean;
+      is_active?: boolean;
+      subscription_tier?: unknown;
+      email_verified?: boolean;
+      created_at?: string | null;
+      last_login_at?: string | null;
+    }>("/api/auth/me");
+    return normalizeUser(data);
   } catch {
     return null;
   }
 }
 
 export async function login(email: string, password: string): Promise<User> {
-  const data = await apiFetch<{ id?: string; email: string; is_admin?: boolean; is_active?: boolean; email_verified?: boolean }>("/api/auth/login", {
+  const data = await apiFetch<{
+    id?: string;
+    email: string;
+    is_admin?: boolean;
+    is_active?: boolean;
+    subscription_tier?: unknown;
+    email_verified?: boolean;
+  }>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  return {
-    id: data.id || "",
-    email: data.email,
-    is_admin: !!data.is_admin,
-    is_active: data.is_active !== false,
-    email_verified: data.email_verified !== false,
-  };
+  return normalizeUser(data);
 }
 
 export interface SignupResult {
@@ -44,6 +86,7 @@ export async function signup(email: string, password: string): Promise<SignupRes
     email: string;
     is_admin?: boolean;
     is_active?: boolean;
+    subscription_tier?: unknown;
     email_verified?: boolean;
     requires_email_verification?: boolean;
   }>("/api/auth/signup", {
@@ -60,13 +103,7 @@ export async function signup(email: string, password: string): Promise<SignupRes
   return {
     email: data.email,
     requiresEmailVerification: false,
-    user: {
-      id: data.id || "",
-      email: data.email,
-      is_admin: !!data.is_admin,
-      is_active: data.is_active !== false,
-      email_verified: data.email_verified !== false,
-    },
+    user: normalizeUser(data),
   };
 }
 
@@ -92,19 +129,14 @@ export async function confirmSignupEmail(token: string): Promise<User> {
     email: string;
     is_admin?: boolean;
     is_active?: boolean;
+    subscription_tier?: unknown;
     email_verified?: boolean;
     auto_login?: boolean;
   }>("/api/auth/confirm-signup-email", {
     method: "POST",
     body: JSON.stringify({ token }),
   });
-  return {
-    id: data.id || "",
-    email: data.email,
-    is_admin: !!data.is_admin,
-    is_active: data.is_active !== false,
-    email_verified: data.email_verified !== false,
-  };
+  return normalizeUser(data);
 }
 
 export async function logout(): Promise<void> {

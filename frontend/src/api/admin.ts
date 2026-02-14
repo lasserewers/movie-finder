@@ -13,6 +13,7 @@ export interface AdminUser {
   email: string;
   is_admin: boolean;
   is_active: boolean;
+  subscription_tier: "non_premium" | "free_premium" | "premium";
   email_verified: boolean;
   created_at?: string | null;
   last_login_at?: string | null;
@@ -74,7 +75,12 @@ export async function getAdminLogs(query = "", page = 1, pageSize = 50): Promise
 
 export async function updateAdminUser(
   userId: string,
-  body: { is_admin?: boolean; is_active?: boolean; action_reason?: string }
+  body: {
+    is_admin?: boolean;
+    is_active?: boolean;
+    subscription_tier?: "non_premium" | "free_premium" | "premium";
+    action_reason?: string;
+  }
 ): Promise<{ ok: boolean; user: AdminUser }> {
   return apiFetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
     method: "PATCH",

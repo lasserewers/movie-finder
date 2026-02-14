@@ -23,6 +23,35 @@ REFRESH_TOKEN_TTL = timedelta(days=7)
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "true").lower() == "true"
 COOKIE_DOMAIN = os.environ.get("COOKIE_DOMAIN", None)
 
+SUBSCRIPTION_TIER_NON_PREMIUM = "non_premium"
+SUBSCRIPTION_TIER_FREE_PREMIUM = "free_premium"
+SUBSCRIPTION_TIER_PREMIUM = "premium"
+SUBSCRIPTION_TIERS = {
+    SUBSCRIPTION_TIER_NON_PREMIUM,
+    SUBSCRIPTION_TIER_FREE_PREMIUM,
+    SUBSCRIPTION_TIER_PREMIUM,
+}
+
+
+def _normalize_subscription_tier(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in SUBSCRIPTION_TIERS:
+        return normalized
+    return SUBSCRIPTION_TIER_NON_PREMIUM
+
+
+def get_user_subscription_tier(user: User | None) -> str:
+    if not user:
+        return SUBSCRIPTION_TIER_NON_PREMIUM
+    return _normalize_subscription_tier(getattr(user, "subscription_tier", None))
+
+
+def user_is_premium(user: User | None) -> bool:
+    return get_user_subscription_tier(user) in {
+        SUBSCRIPTION_TIER_FREE_PREMIUM,
+        SUBSCRIPTION_TIER_PREMIUM,
+    }
+
 
 def hash_password(password: str) -> str:
     return ph.hash(password)
@@ -131,6 +160,12 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(get_db)
 async def get_current_admin(user: User = Depends(get_current_user)) -> User:
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+async def get_current_premium_user(user: User = Depends(get_current_user)) -> User:
+    if not user_is_premium(user):
+        raise HTTPException(status_code=403, detail="Premium subscription required")
     return user
 
 

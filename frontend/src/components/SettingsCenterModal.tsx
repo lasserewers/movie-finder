@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ApiError } from "../api/client";
-import { changeEmail, changePassword, deleteAccount } from "../api/auth";
+import { changeEmail, changePassword, deleteAccount, checkAuth } from "../api/auth";
 import {
   getNotificationSettings,
   updateNotificationSettings,
   type NotificationDelivery,
 } from "../api/notifications";
+import {
+  createBillingCheckout,
+  getBillingPortal,
+  getBillingStatus,
+  type BillingPlan,
+  type BillingStatusResponse,
+} from "../api/billing";
 import {
   getLetterboxdSyncState,
   previewLetterboxdLists,
@@ -78,6 +85,8 @@ interface Props {
   regions: Region[];
   countryNameMap: Record<string, string>;
   initialSection?: SettingsCenterSection;
+  isPremiumUser: boolean;
+  subscriptionTier?: "non_premium" | "free_premium" | "premium";
   homeContentMode: HomeContentMode;
   homeUsingVpn: boolean;
   homeShowWatchlist: boolean;
@@ -100,6 +109,11 @@ const SECTION_OPTIONS: Array<{ id: SettingsCenterSection; label: string }> = [
   { id: "linked", label: "Sync accounts" },
   { id: "subscription", label: "Subscription" },
 ];
+const PREMIUM_ONLY_SECTION_IDS = new Set<SettingsCenterSection>([
+  "notifications",
+  "home",
+  "linked",
+]);
 
 const DELIVERY_OPTIONS: Array<{ value: NotificationDelivery; label: string; description: string }> = [
   { value: "in_app", label: "In-app", description: "Only inside FullStreamer." },
@@ -114,6 +128,8 @@ export default function SettingsCenterModal({
   regions,
   countryNameMap,
   initialSection = "account",
+  isPremiumUser,
+  subscriptionTier = "non_premium",
   homeContentMode,
   homeUsingVpn,
   homeShowWatchlist,
@@ -126,7 +142,7 @@ export default function SettingsCenterModal({
   onHomeSectionOrderChange,
   onOpenLists,
 }: Props) {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const { providerIds, countries, allProviders, saveConfig, loadProviders, expandIds, theme, setTheme } = useConfig();
   const { refresh: refreshWatched } = useWatched();
   const { refresh: refreshLists } = useLists();
@@ -172,6 +188,11 @@ export default function SettingsCenterModal({
   const [linkedErr, setLinkedErr] = useState("");
   const [linkedLastSyncAt, setLinkedLastSyncAt] = useState<string | null>(null);
   const [linkedLastUsername, setLinkedLastUsername] = useState<string | null>(null);
+  const [billingLoading, setBillingLoading] = useState(false);
+  const [billingCheckoutPlanLoading, setBillingCheckoutPlanLoading] = useState<BillingPlan | null>(null);
+  const [billingPortalLoading, setBillingPortalLoading] = useState(false);
+  const [billingStatus, setBillingStatus] = useState<BillingStatusResponse | null>(null);
+  const [billingErr, setBillingErr] = useState("");
 
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
   const [countryQuery, setCountryQuery] = useState("");
@@ -198,10 +219,21 @@ export default function SettingsCenterModal({
   const homeOrderDragArmedIndexRef = useRef<number | null>(null);
   const homeOrderDragPointerYRef = useRef<number | null>(null);
   const linkedFileInputRef = useRef<HTMLInputElement | null>(null);
+  const visibleSectionOptions = useMemo(
+    () =>
+      isPremiumUser
+        ? SECTION_OPTIONS
+        : SECTION_OPTIONS.filter((section) => !PREMIUM_ONLY_SECTION_IDS.has(section.id)),
+    [isPremiumUser]
+  );
 
   useEffect(() => {
     if (!open) return;
-    setActiveSection(initialSection);
+    const nextInitialSection =
+      !isPremiumUser && PREMIUM_ONLY_SECTION_IDS.has(initialSection)
+        ? "subscription"
+        : initialSection;
+    setActiveSection(nextInitialSection);
     setEmailPassword("");
     setNewEmail("");
     setEmailMsg("");
@@ -216,13 +248,18 @@ export default function SettingsCenterModal({
     setDeleteErr("");
 
     const nextCountries = new Set(countries);
-    setSelectedCountries(nextCountries);
+    const initialCountryValues = isPremiumUser
+      ? Array.from(nextCountries)
+      : Array.from(nextCountries).slice(0, 1);
+    if (!initialCountryValues.length) initialCountryValues.push("US");
+    const normalizedCountries = new Set(initialCountryValues);
     setCountryQuery("");
     setCountriesErr("");
     setSelectedProviders(new Set(providerIds));
     setServiceSearch("");
     setShowAllServiceCountries(false);
-    setActiveServiceCountries(nextCountries.size ? nextCountries : new Set(countries));
+    setSelectedCountries(normalizedCountries);
+    setActiveServiceCountries(normalizedCountries);
     setServicesErr("");
     setLinkedErr("");
     setLinkedMessage("");
@@ -237,7 +274,15 @@ export default function SettingsCenterModal({
     setLinkedListConflictNames([]);
     setLinkedExportFile(null);
     setLinkedDropActive(false);
-  }, [open, initialSection, countries, providerIds]);
+    setBillingErr("");
+    setBillingStatus(null);
+  }, [open, initialSection, isPremiumUser, countries, providerIds]);
+
+  useEffect(() => {
+    if (isPremiumUser) return;
+    if (!PREMIUM_ONLY_SECTION_IDS.has(activeSection)) return;
+    setActiveSection("subscription");
+  }, [activeSection, isPremiumUser]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -416,6 +461,29 @@ export default function SettingsCenterModal({
       cancelled = true;
     };
   }, [open, activeSection, linkedExportFile]);
+
+  useEffect(() => {
+    if (!open || activeSection !== "subscription") return;
+    let cancelled = false;
+    setBillingLoading(true);
+    setBillingErr("");
+    getBillingStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setBillingStatus(status);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const e = err as ApiError;
+        setBillingErr(err instanceof ApiError ? e.message : "Could not load billing status.");
+      })
+      .finally(() => {
+        if (!cancelled) setBillingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, activeSection]);
 
   const loadServiceProviderList = useCallback(
     async (active: Set<string>, includeAllCountries: boolean) => {
@@ -771,6 +839,9 @@ export default function SettingsCenterModal({
 
   const handleToggleCountry = (code: string) => {
     setSelectedCountries((prev) => {
+      if (!isPremiumUser) {
+        return new Set([code]);
+      }
       const next = new Set(prev);
       if (next.has(code)) {
         if (next.size <= 1) return prev;
@@ -787,8 +858,11 @@ export default function SettingsCenterModal({
     setCountriesSaving(true);
     setCountriesErr("");
     try {
-      const countryValues = Array.from(selectedCountries);
+      const countryValues = isPremiumUser
+        ? Array.from(selectedCountries)
+        : [Array.from(selectedCountries)[0] || "US"];
       await saveConfig(Array.from(selectedProviders), countryValues);
+      setSelectedCountries(new Set(countryValues));
       setActiveServiceCountries(new Set(countryValues));
       onSaved();
     } catch (err) {
@@ -799,7 +873,65 @@ export default function SettingsCenterModal({
     }
   };
 
+  const handleStartPaidCheckout = useCallback(async (plan: BillingPlan) => {
+    if (billingCheckoutPlanLoading) return;
+    setBillingErr("");
+    setBillingCheckoutPlanLoading(plan);
+    try {
+      const result = await createBillingCheckout(plan);
+      const checkoutUrl = (result.checkout_url || "").trim();
+      if (!checkoutUrl) {
+        throw new Error("No checkout URL returned.");
+      }
+      window.location.assign(checkoutUrl);
+    } catch (err) {
+      const e = err as ApiError;
+      setBillingErr(err instanceof ApiError ? e.message : "Could not start checkout.");
+    } finally {
+      setBillingCheckoutPlanLoading(null);
+    }
+  }, [billingCheckoutPlanLoading]);
+
+  const handleOpenBillingPortal = useCallback(async () => {
+    if (billingPortalLoading) return;
+    setBillingErr("");
+    setBillingPortalLoading(true);
+    try {
+      const result = await getBillingPortal();
+      const portalUrl = (result.portal_url || "").trim();
+      if (!portalUrl) {
+        throw new Error("No portal URL returned.");
+      }
+      window.location.assign(portalUrl);
+    } catch (err) {
+      const e = err as ApiError;
+      setBillingErr(err instanceof ApiError ? e.message : "Could not open billing portal.");
+    } finally {
+      setBillingPortalLoading(false);
+    }
+  }, [billingPortalLoading]);
+
+  const handleRefreshSubscriptionStatus = useCallback(async () => {
+    if (billingLoading) return;
+    setBillingErr("");
+    setBillingLoading(true);
+    try {
+      const [status, refreshedUser] = await Promise.all([getBillingStatus(), checkAuth()]);
+      setBillingStatus(status);
+      if (refreshedUser) {
+        updateUser(refreshedUser);
+      }
+      onSaved();
+    } catch (err) {
+      const e = err as ApiError;
+      setBillingErr(err instanceof ApiError ? e.message : "Could not refresh subscription status.");
+    } finally {
+      setBillingLoading(false);
+    }
+  }, [billingLoading, onSaved, updateUser]);
+
   const handleToggleServiceCountry = (code: string) => {
+    if (!isPremiumUser) return;
     setActiveServiceCountries((prev) => {
       const next = new Set(prev);
       if (next.has(code)) {
@@ -830,7 +962,12 @@ export default function SettingsCenterModal({
     setServicesSaving(true);
     setServicesErr("");
     try {
-      await saveConfig(Array.from(selectedProviders), Array.from(selectedCountries));
+      const countryValues = isPremiumUser
+        ? Array.from(selectedCountries)
+        : [Array.from(selectedCountries)[0] || "US"];
+      await saveConfig(Array.from(selectedProviders), countryValues);
+      setSelectedCountries(new Set(countryValues));
+      setActiveServiceCountries(new Set(countryValues));
       onSaved();
     } catch (err) {
       const e = err as ApiError;
@@ -1092,7 +1229,11 @@ export default function SettingsCenterModal({
       return (
         <div className="space-y-3">
           <h4 className="text-sm font-semibold text-text">Primary countries</h4>
-          <p className="text-sm text-muted">Select the countries where you primarily watch content.</p>
+          <p className="text-sm text-muted">
+            {isPremiumUser
+              ? "Select the countries where you primarily watch content."
+              : "Non-premium accounts can use one country at a time."}
+          </p>
 
           {selectedCountries.size > 0 && (
             <div className="flex flex-wrap gap-1.5">
@@ -1102,12 +1243,14 @@ export default function SettingsCenterModal({
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-accent/10 border border-accent/40 text-sm"
                 >
                   {countryFlag(code)} {countryNameMap[code] || code}
-                  <button
-                    onClick={() => handleToggleCountry(code)}
-                    className="text-muted hover:text-accent-2 text-base leading-none"
-                  >
-                    &times;
-                  </button>
+                  {isPremiumUser && (
+                    <button
+                      onClick={() => handleToggleCountry(code)}
+                      className="text-muted hover:text-accent-2 text-base leading-none"
+                    >
+                      &times;
+                    </button>
+                  )}
                 </span>
               ))}
             </div>
@@ -1151,7 +1294,7 @@ export default function SettingsCenterModal({
               disabled={countriesSaving || selectedCountries.size === 0}
               className="px-4 py-2.5 rounded-lg border border-accent/60 bg-accent/15 text-sm font-semibold text-text hover:bg-accent/25 transition-colors disabled:opacity-50"
             >
-              {countriesSaving ? "Saving..." : "Save countries"}
+              {countriesSaving ? "Saving..." : isPremiumUser ? "Save countries" : "Save country"}
             </button>
           </div>
         </div>
@@ -1196,7 +1339,7 @@ export default function SettingsCenterModal({
             </div>
           </div>
 
-          {Array.from(selectedCountries).length > 1 && (
+          {isPremiumUser && Array.from(selectedCountries).length > 1 && (
             <div className="flex flex-wrap gap-1.5">
               {Array.from(selectedCountries).map((code) => (
                 <button
@@ -1214,7 +1357,7 @@ export default function SettingsCenterModal({
             </div>
           )}
 
-          {selectedCountries.size > 0 && (
+          {isPremiumUser && selectedCountries.size > 0 && (
             <button
               onClick={() => setShowAllServiceCountries((prev) => !prev)}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm border transition-colors ${
@@ -1225,6 +1368,12 @@ export default function SettingsCenterModal({
             >
               Show additional services from other countries
             </button>
+          )}
+
+          {!isPremiumUser && selectedCountries.size > 0 && (
+            <div className="text-xs text-muted">
+              Services are shown for your selected country only.
+            </div>
           )}
 
           <input
@@ -1859,9 +2008,94 @@ export default function SettingsCenterModal({
     }
 
     return (
-      <div className="space-y-2">
+      <div className="space-y-3">
         <h4 className="text-sm font-semibold text-text">Subscription</h4>
-        <p className="text-sm text-muted">Coming soon.</p>
+        <p className="text-sm text-muted">
+          {subscriptionTier === "premium"
+            ? "You are on the premium plan."
+            : subscriptionTier === "free_premium"
+              ? "You are on the free premium plan."
+              : "You are on the non-premium plan."}
+        </p>
+        <div
+          className={`rounded-xl border px-3 py-3 ${
+            isPremiumUser
+              ? "border-emerald-500/35 bg-emerald-500/10"
+              : "border-border/80 bg-panel-2/50"
+          }`}
+        >
+          <div className="text-sm text-text font-semibold">
+            Current plan: {subscriptionTier === "premium" ? "Premium" : subscriptionTier === "free_premium" ? "Free Premium" : "Non-premium"}
+          </div>
+          {isPremiumUser ? (
+            <p className="text-xs text-muted mt-1">
+              Advanced search, multi-country, VPN toggle, watchlist, lists, notifications, and linked account sync are enabled.
+            </p>
+          ) : (
+            <p className="text-xs text-muted mt-1">
+              Upgrade to premium for advanced search, multi-country support, VPN toggle, watchlist, lists, notifications, and linked account sync.
+            </p>
+          )}
+        </div>
+        {billingStatus?.subscription_status && (
+          <div className="text-xs text-muted">
+            Billing status: <span className="text-text">{billingStatus.subscription_status}</span>
+          </div>
+        )}
+        {billingErr && (
+          <div className="text-sm text-red-300 bg-red-500/10 rounded-md px-3 py-2">
+            {billingErr}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {subscriptionTier === "non_premium" && (
+            <>
+              <button
+                type="button"
+                onClick={() => void handleStartPaidCheckout("monthly")}
+                disabled={Boolean(
+                  billingCheckoutPlanLoading || billingLoading || !billingStatus?.monthly_checkout_enabled
+                )}
+                className="h-10 px-4 rounded-lg border border-accent/70 bg-accent/15 text-sm text-text hover:bg-accent/25 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
+              >
+                {billingCheckoutPlanLoading === "monthly" ? "Redirecting..." : "Monthly with Lemon Squeezy"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleStartPaidCheckout("yearly")}
+                disabled={Boolean(
+                  billingCheckoutPlanLoading || billingLoading || !billingStatus?.yearly_checkout_enabled
+                )}
+                className="h-10 px-4 rounded-lg border border-accent/70 bg-accent/15 text-sm text-text hover:bg-accent/25 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
+              >
+                {billingCheckoutPlanLoading === "yearly" ? "Redirecting..." : "Yearly with Lemon Squeezy"}
+              </button>
+            </>
+          )}
+          {isPremiumUser && billingStatus?.portal_enabled && (
+            <button
+              type="button"
+              onClick={() => void handleOpenBillingPortal()}
+              disabled={billingPortalLoading || billingLoading}
+              className="h-10 px-4 rounded-lg border border-border text-sm text-muted hover:text-text hover:border-accent-2 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
+            >
+              {billingPortalLoading ? "Opening..." : "Manage billing"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleRefreshSubscriptionStatus()}
+            disabled={billingLoading || Boolean(billingCheckoutPlanLoading) || billingPortalLoading}
+            className="h-10 px-4 rounded-lg border border-border text-sm text-muted hover:text-text hover:border-accent-2 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
+          >
+            {billingLoading ? "Refreshing..." : "Refresh status"}
+          </button>
+        </div>
+        {billingStatus && !billingStatus.configured_checkout && (
+          <p className="text-xs text-muted">
+            Checkout is not configured yet. Set the Lemon Squeezy environment variables on the backend first.
+          </p>
+        )}
       </div>
     );
   };
@@ -1901,7 +2135,7 @@ export default function SettingsCenterModal({
               <div className="h-full min-h-0 rounded-xl border border-border/80 bg-bg/40 overflow-hidden grid grid-cols-[16rem_minmax(0,1fr)] max-sm:grid-cols-1 max-sm:grid-rows-[auto_minmax(0,1fr)]">
                 <aside className="max-sm:w-full border-r border-border/80 max-sm:border-r-0 max-sm:border-b max-sm:border-border/80 bg-panel-2/60 overflow-hidden max-sm:overflow-x-auto max-sm:overflow-y-hidden">
                   <nav className="p-2 flex flex-col gap-1 max-sm:flex-row max-sm:min-w-max">
-                    {SECTION_OPTIONS.map((section) => (
+                    {visibleSectionOptions.map((section) => (
                       <button
                         key={section.id}
                         onClick={() => setActiveSection(section.id)}

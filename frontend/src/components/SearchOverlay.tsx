@@ -32,6 +32,7 @@ interface Props {
   vpnEnabled?: boolean;
   isLoggedIn?: boolean;
   initialContentMode?: ContentMode;
+  lockStreamable?: boolean;
   onClose: () => void;
   onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
 }
@@ -43,6 +44,7 @@ export default function SearchOverlay({
   vpnEnabled = false,
   isLoggedIn = false,
   initialContentMode,
+  lockStreamable = false,
   onClose,
   onSelectMovie,
 }: Props) {
@@ -64,16 +66,19 @@ export default function SearchOverlay({
   const panelRef = useRef<HTMLDivElement>(null);
   const [panelEl, setPanelEl] = useState<HTMLDivElement | null>(null);
 
+  const resolveInitialContentMode = useCallback(
+    () => (lockStreamable ? "streamable" : (initialContentMode ?? (filtered ? "streamable" : "all"))),
+    [filtered, initialContentMode, lockStreamable]
+  );
+
   // Local controls
   const [sortKey, setSortKey] = useState<SortKey>("relevance");
   const [localVpn, setLocalVpn] = useState(vpnEnabled);
-  const [contentMode, setContentMode] = useState<ContentMode>(
-    initialContentMode ?? (filtered ? "streamable" : "all")
-  );
+  const [contentMode, setContentMode] = useState<ContentMode>(resolveInitialContentMode);
   const [localMediaType, setLocalMediaType] = useState<MediaType>("mix");
 
-  const effectiveFiltered = contentMode !== "all";
-  const effectiveIncludePaid = contentMode === "available";
+  const effectiveFiltered = lockStreamable || contentMode !== "all";
+  const effectiveIncludePaid = !lockStreamable && contentMode === "available";
 
   const setPanelNode = useCallback((node: HTMLDivElement | null) => {
     panelRef.current = node;
@@ -101,8 +106,8 @@ export default function SearchOverlay({
   useEffect(() => {
     if (!open) return;
     justOpenedRef.current = true;
-    setLocalVpn(filtered ? vpnEnabled : false);
-    setContentMode(initialContentMode ?? (filtered ? "streamable" : "all"));
+    setLocalVpn((lockStreamable || filtered) ? vpnEnabled : false);
+    setContentMode(resolveInitialContentMode());
     setSortKey("relevance");
     setLocalMediaType("mix");
     resetState();
@@ -111,13 +116,13 @@ export default function SearchOverlay({
       setHasMore(false);
       return;
     }
-    const mode = initialContentMode ?? (filtered ? "streamable" : "all");
+    const mode = resolveInitialContentMode();
     if (mode !== "all" && providerIds.size === 0) {
       setHasMore(false);
       return;
     }
     loadMore();
-  }, [open, query, resetState]);
+  }, [open, query, resetState, lockStreamable, filtered, vpnEnabled, resolveInitialContentMode, providerIds.size]);
 
   // Re-fetch when user changes local controls while overlay is already open
   useEffect(() => {
@@ -140,7 +145,7 @@ export default function SearchOverlay({
       return;
     }
     loadMore();
-  }, [contentMode, localVpn, localMediaType, countries, providerIds]);
+  }, [contentMode, localVpn, localMediaType, countries, providerIds, lockStreamable, effectiveFiltered]);
 
   useEffect(() => {
     resultsRef.current = results.length;
@@ -522,47 +527,49 @@ export default function SearchOverlay({
                     </span>
                   </button>
 
-                  <button
-                    onClick={() => {
-                      const next: ContentMode =
-                        contentMode === "all"
-                          ? "available"
+                  {!lockStreamable && (
+                    <button
+                      onClick={() => {
+                        const next: ContentMode =
+                          contentMode === "all"
+                            ? "available"
+                            : contentMode === "available"
+                              ? "streamable"
+                              : "all";
+                        if (providerIds.size === 0 && next !== "all") return;
+                        setContentMode(next);
+                      }}
+                      className={`h-[36px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 max-sm:flex-1 ${
+                        contentMode === "streamable"
+                          ? "border-accent/60 bg-accent/10 text-text"
                           : contentMode === "available"
-                            ? "streamable"
-                            : "all";
-                      if (providerIds.size === 0 && next !== "all") return;
-                      setContentMode(next);
-                    }}
-                    className={`h-[36px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 max-sm:flex-1 ${
-                      contentMode === "streamable"
-                        ? "border-accent/60 bg-accent/10 text-text"
-                        : contentMode === "available"
-                          ? "border-accent/40 bg-accent/5 text-text"
-                          : "border-border bg-panel text-text"
-                    }`}
-                  >
-                    <span className="truncate">{CONTENT_MODE_LABEL[contentMode]}</span>
-                    <span
-                      className={`relative h-4 w-10 flex-shrink-0 rounded-full border overflow-hidden transition-colors ${
-                        contentMode === "all"
-                          ? "bg-panel-2 border-border"
-                          : "bg-accent border-accent"
+                            ? "border-accent/40 bg-accent/5 text-text"
+                            : "border-border bg-panel text-text"
                       }`}
                     >
-                      <span className={`absolute left-[7px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
-                      <span className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
-                      <span className={`absolute right-[7px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                      <span className="truncate">{CONTENT_MODE_LABEL[contentMode]}</span>
                       <span
-                        className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-white transition-transform ${
-                          contentMode === "available"
-                            ? "translate-x-[12px]"
-                            : contentMode === "streamable"
-                              ? "translate-x-[24px]"
-                              : ""
+                        className={`relative h-4 w-10 flex-shrink-0 rounded-full border overflow-hidden transition-colors ${
+                          contentMode === "all"
+                            ? "bg-panel-2 border-border"
+                            : "bg-accent border-accent"
                         }`}
-                      />
-                    </span>
-                  </button>
+                      >
+                        <span className={`absolute left-[7px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                        <span className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                        <span className={`absolute right-[7px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                        <span
+                          className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-white transition-transform ${
+                            contentMode === "available"
+                              ? "translate-x-[12px]"
+                              : contentMode === "streamable"
+                                ? "translate-x-[24px]"
+                                : ""
+                          }`}
+                        />
+                      </span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>

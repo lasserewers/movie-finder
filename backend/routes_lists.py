@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import tmdb
 from .audit import add_audit_log
-from .auth import get_current_user
+from .auth import get_current_user, get_current_premium_user
 from .database import get_db
 from .models import User, UserList, UserListItem, UserPreferences
 from .routes_watchlist import (
@@ -27,7 +27,11 @@ from .routes_watchlist import (
     _resolve_tmdb_movies_bounded,
 )
 
-router = APIRouter(prefix="/api/lists", tags=["lists"])
+router = APIRouter(
+    prefix="/api/lists",
+    tags=["lists"],
+    dependencies=[Depends(get_current_premium_user)],
+)
 LETTERBOXD_LIST_SYNC_LIMIT = max(LETTERBOXD_IMPORT_LIMIT * 8, 2000)
 
 

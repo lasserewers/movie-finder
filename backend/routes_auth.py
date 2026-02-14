@@ -20,8 +20,9 @@ from .models import (
 )
 from . import mailer
 from .auth import (
+    SUBSCRIPTION_TIER_NON_PREMIUM,
     hash_password, verify_password, set_auth_cookies, clear_auth_cookies,
-    get_current_user, decode_token,
+    get_current_user, decode_token, get_user_subscription_tier,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -125,6 +126,7 @@ async def signup(body: SignupRequest, request: Request, db: AsyncSession = Depen
         password_hash=hash_password(body.password),
         is_admin=is_first_admin,
         is_active=True,
+        subscription_tier=SUBSCRIPTION_TIER_NON_PREMIUM,
         email_verified=False,
         last_login_at=None,
     )
@@ -289,6 +291,7 @@ async def confirm_signup_email(
         "email": user.email,
         "is_admin": bool(user.is_admin),
         "is_active": bool(user.is_active),
+        "subscription_tier": get_user_subscription_tier(user),
         "email_verified": bool(user.email_verified),
         "auto_login": auto_login,
     }
@@ -328,6 +331,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
         "email": user.email,
         "is_admin": bool(user.is_admin),
         "is_active": bool(user.is_active),
+        "subscription_tier": get_user_subscription_tier(user),
         "email_verified": bool(user.email_verified),
     }
 
@@ -345,6 +349,7 @@ async def me(user: User = Depends(get_current_user)):
         "id": str(user.id),
         "is_admin": bool(user.is_admin),
         "is_active": bool(user.is_active),
+        "subscription_tier": get_user_subscription_tier(user),
         "email_verified": bool(user.email_verified),
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,

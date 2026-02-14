@@ -19,11 +19,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import tmdb
 from .audit import add_audit_log
-from .auth import get_current_user
+from .auth import get_current_user, get_current_premium_user
 from .database import get_db
 from .models import User, UserPreferences, WatchlistItem
 
-router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
+router = APIRouter(
+    prefix="/api/watchlist",
+    tags=["watchlist"],
+    dependencies=[Depends(get_current_premium_user)],
+)
 
 LETTERBOXD_BASE_URL = "https://letterboxd.com"
 LETTERBOXD_IMPORT_LIMIT = 800

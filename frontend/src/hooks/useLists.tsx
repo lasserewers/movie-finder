@@ -50,6 +50,7 @@ function listItemKey(mediaType: ListMediaType, tmdbId: number): string {
 
 export function ListsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const isPremiumUser = !!user && (user.subscription_tier === "premium" || user.subscription_tier === "free_premium");
   const [lists, setLists] = useState<UserListSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [itemsByList, setItemsByList] = useState<Record<string, UserListItem[]>>({});
@@ -76,7 +77,7 @@ export function ListsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!user) {
+    if (!user || !isPremiumUser) {
       setLists([]);
       setItemsByList({});
       setMembershipsByKey({});
@@ -107,7 +108,7 @@ export function ListsProvider({ children }: { children: ReactNode }) {
       });
     } catch (err) {
       const apiError = err as ApiError;
-      if (apiError.status === 401) {
+      if (apiError.status === 401 || apiError.status === 403) {
         setLists([]);
         setItemsByList({});
         setMembershipsByKey({});
@@ -115,10 +116,10 @@ export function ListsProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [isPremiumUser, user]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !isPremiumUser) {
       setLists([]);
       setItemsByList({});
       setMembershipsByKey({});
@@ -126,7 +127,7 @@ export function ListsProvider({ children }: { children: ReactNode }) {
       return;
     }
     void refresh();
-  }, [user?.id, refresh, user]);
+  }, [user?.id, isPremiumUser, refresh, user]);
 
   const create = useCallback(
     async (name: string) => {

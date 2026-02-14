@@ -15,6 +15,7 @@ import {
   markNotificationRead,
   type UserNotification,
 } from "../api/notifications";
+import { ApiError } from "../api/client";
 import { useAuth } from "./useAuth";
 
 interface NotificationsContextValue {
@@ -67,6 +68,7 @@ function hasNewerUnreadMarker(currentMarker: string, seenMarker: string): boolea
 
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const isPremiumUser = !!user && (user.subscription_tier === "premium" || user.subscription_tier === "free_premium");
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [activeAlerts, setActiveAlerts] = useState(0);
@@ -131,7 +133,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(
     async (forceRefresh = true) => {
-      if (!user) {
+      if (!user || !isPremiumUser) {
         clearState();
         return;
       }
@@ -155,14 +157,17 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         setUnreadCount(unread);
         setActiveAlerts(active);
         setHasUnreadIndicator(hasNewerUnreadMarker(marker, seenMarkerRef.current));
-      } catch {
-        // Keep prior state when refresh fails.
+      } catch (err) {
+        const apiError = err as ApiError;
+        if (apiError.status === 401 || apiError.status === 403) {
+          clearState();
+        }
       } finally {
         inFlightRef.current = false;
         setLoading(false);
       }
     },
-    [clearState, loadSeenMarkerForUser, persistSeenMarkerForUser, user]
+    [clearState, isPremiumUser, loadSeenMarkerForUser, persistSeenMarkerForUser, user]
   );
 
   const markRead = useCallback(
@@ -276,21 +281,21 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, [persistSeenMarkerForUser, refresh, unreadCount, user?.email]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !isPremiumUser) {
       clearState();
       return;
     }
     loadSeenMarkerForUser(user.email);
     void refresh(true);
-  }, [clearState, loadSeenMarkerForUser, refresh, user]);
+  }, [clearState, isPremiumUser, loadSeenMarkerForUser, refresh, user]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isPremiumUser) return;
     const id = window.setInterval(() => {
       void refresh(true);
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(id);
-  }, [refresh, user]);
+  }, [isPremiumUser, refresh, user]);
 
   const value = useMemo(
     () => ({

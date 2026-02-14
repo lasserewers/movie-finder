@@ -47,6 +47,7 @@ interface Props {
   regions: Region[];
   initialQuery?: string;
   isLoggedIn?: boolean;
+  lockStreamable?: boolean;
 }
 
 const LANGUAGE_OPTIONS: { code: string; label: string }[] = [
@@ -287,6 +288,7 @@ export default function AdvancedSearchModal({
   regions,
   initialQuery,
   isLoggedIn = false,
+  lockStreamable = false,
 }: Props) {
   const { providerIds, countries } = useConfig();
   const [filters, setFilters] = useState<AdvancedFilters>(() => buildDefaultFilters(initialQuery));
@@ -306,7 +308,7 @@ export default function AdvancedSearchModal({
   const [actorLookupLoading, setActorLookupLoading] = useState(false);
   const [directorLookupLoading, setDirectorLookupLoading] = useState(false);
   const [localVpn, setLocalVpn] = useState(false);
-  const [contentMode, setContentMode] = useState<ContentMode>("all");
+  const [contentMode, setContentMode] = useState<ContentMode>(lockStreamable ? "streamable" : "all");
   const [yearSpanStartDraft, setYearSpanStartDraft] = useState(String(YEAR_MIN));
   const [yearSpanEndDraft, setYearSpanEndDraft] = useState(String(YEAR_MAX));
   const didInitializeRef = useRef(false);
@@ -322,7 +324,7 @@ export default function AdvancedSearchModal({
   const exactYearChosen = filters.releaseYear.trim().length > 0;
   const releaseYearDisabled = filters.useYearSpan;
   const timelineDisabled = !filters.useYearSpan || exactYearChosen;
-  const filteredMode = isLoggedIn && contentMode !== "all";
+  const filteredMode = isLoggedIn && (lockStreamable || contentMode !== "all");
   const missingProvidersForFilteredMode = filteredMode && providerIds.size === 0;
 
   const commitYearSpanStart = useCallback((rawValue: string) => {
@@ -370,8 +372,8 @@ export default function AdvancedSearchModal({
     ) => {
       const effectiveContentMode = overrides?.contentMode ?? contentMode;
       const effectiveVpn = overrides?.vpn ?? localVpn;
-      const effectiveFilteredMode = isLoggedIn && effectiveContentMode !== "all";
-      const effectiveIncludePaidMode = effectiveContentMode === "available";
+      const effectiveFilteredMode = isLoggedIn && (lockStreamable || effectiveContentMode !== "all");
+      const effectiveIncludePaidMode = !lockStreamable && effectiveContentMode === "available";
       const effectiveMissingProviders = effectiveFilteredMode && providerIds.size === 0;
 
       if (effectiveMissingProviders) {
@@ -452,13 +454,14 @@ export default function AdvancedSearchModal({
       providerIds,
       localVpn,
       countries,
+      lockStreamable,
     ]
   );
 
   const resetFilters = useCallback(() => {
     setFilters(buildDefaultFilters(initialQuery));
     setLocalVpn(false);
-    setContentMode("all");
+    setContentMode(lockStreamable ? "streamable" : "all");
     setActorInput("");
     setDirectorInput("");
     setActorSuggestions([]);
@@ -468,7 +471,7 @@ export default function AdvancedSearchModal({
     setHasMore(false);
     setNextPage(null);
     setError("");
-  }, [initialQuery]);
+  }, [initialQuery, lockStreamable]);
 
   useEffect(() => {
     if (!open) return;
@@ -483,8 +486,8 @@ export default function AdvancedSearchModal({
   useEffect(() => {
     if (!open) return;
     setLocalVpn(false);
-    setContentMode("all");
-  }, [open]);
+    setContentMode(lockStreamable ? "streamable" : "all");
+  }, [open, lockStreamable]);
 
   useEffect(() => {
     setYearSpanStartDraft(String(yearSpanStart));
@@ -1000,47 +1003,49 @@ export default function AdvancedSearchModal({
                         </span>
                       </button>
 
-                      <button
-                        onClick={() => {
-                          const next: ContentMode =
-                            contentMode === "all"
-                              ? "available"
+                      {!lockStreamable && (
+                        <button
+                          onClick={() => {
+                            const next: ContentMode =
+                              contentMode === "all"
+                                ? "available"
+                                : contentMode === "available"
+                                  ? "streamable"
+                                  : "all";
+                            setContentMode(next);
+                            if (searched) void executeSearch(1, false, { contentMode: next });
+                          }}
+                          className={`h-[40px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 ${
+                            contentMode === "streamable"
+                              ? "border-accent/60 bg-accent/10 text-text"
                               : contentMode === "available"
-                                ? "streamable"
-                                : "all";
-                          setContentMode(next);
-                          if (searched) void executeSearch(1, false, { contentMode: next });
-                        }}
-                        className={`h-[40px] px-3 border rounded-full text-sm transition-colors flex items-center justify-between gap-3 ${
-                          contentMode === "streamable"
-                            ? "border-accent/60 bg-accent/10 text-text"
-                            : contentMode === "available"
-                              ? "border-accent/40 bg-accent/5 text-text"
-                              : "border-border bg-panel text-text"
-                        }`}
-                      >
-                        <span className="truncate">{CONTENT_MODE_LABEL[contentMode]}</span>
-                        <span
-                          className={`relative h-4 w-10 flex-shrink-0 rounded-full border overflow-hidden transition-colors ${
-                            contentMode === "all"
-                              ? "bg-panel-2 border-border"
-                              : "bg-accent border-accent"
+                                ? "border-accent/40 bg-accent/5 text-text"
+                                : "border-border bg-panel text-text"
                           }`}
                         >
-                          <span className={`absolute left-[7px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
-                          <span className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
-                          <span className={`absolute right-[7px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                          <span className="truncate">{CONTENT_MODE_LABEL[contentMode]}</span>
                           <span
-                            className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-white transition-transform ${
-                              contentMode === "available"
-                                ? "translate-x-[12px]"
-                                : contentMode === "streamable"
-                                  ? "translate-x-[24px]"
-                                  : ""
+                            className={`relative h-4 w-10 flex-shrink-0 rounded-full border overflow-hidden transition-colors ${
+                              contentMode === "all"
+                                ? "bg-panel-2 border-border"
+                                : "bg-accent border-accent"
                             }`}
-                          />
-                        </span>
-                      </button>
+                          >
+                            <span className={`absolute left-[7px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                            <span className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                            <span className={`absolute right-[7px] top-1/2 -translate-y-1/2 h-1 w-1 rounded-full pointer-events-none ${contentMode === "all" ? "bg-white/35" : "bg-black/35"}`} />
+                            <span
+                              className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-white transition-transform ${
+                                contentMode === "available"
+                                  ? "translate-x-[12px]"
+                                  : contentMode === "streamable"
+                                    ? "translate-x-[24px]"
+                                    : ""
+                              }`}
+                            />
+                          </span>
+                        </button>
+                      )}
                     </>
                   )}
                 </div>

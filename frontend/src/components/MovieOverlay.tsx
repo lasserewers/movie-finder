@@ -271,12 +271,13 @@ function PersonCircle({
   role?: string;
   onClick?: (personId: number) => void;
 }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onClick?.(person.id)}
-      className="flex flex-col items-center w-[70px] text-center flex-shrink-0 cursor-pointer"
-    >
+  const clickable = typeof onClick === "function";
+  const className = `flex flex-col items-center w-[70px] text-center flex-shrink-0 ${
+    clickable ? "cursor-pointer" : "cursor-default"
+  }`;
+
+  const content = (
+    <>
       {person.profile_path ? (
         <img src={`${TMDB_IMG}/w185${person.profile_path}`} alt="" className="w-14 h-14 rounded-full object-cover border-2 border-border" />
       ) : (
@@ -284,6 +285,20 @@ function PersonCircle({
       )}
       <span className="text-[0.7rem] text-text mt-1 leading-tight line-clamp-2">{person.name}</span>
       {role && <span className="text-[0.6rem] text-muted leading-tight">{role}</span>}
+    </>
+  );
+
+  if (!clickable) {
+    return <div className={className}>{content}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onClick?.(person.id)}
+      className={className}
+    >
+      {content}
     </button>
   );
 }
@@ -295,6 +310,7 @@ interface Props {
   countryNameMap: Record<string, string>;
   itemMediaType?: "movie" | "tv";
   guestCountry?: string;
+  allowPersonClicks?: boolean;
 }
 
 export default function MovieOverlay({
@@ -304,8 +320,10 @@ export default function MovieOverlay({
   countryNameMap,
   itemMediaType,
   guestCountry,
+  allowPersonClicks = true,
 }: Props) {
   const { user } = useAuth();
+  const isPremiumUser = !!user && (user.subscription_tier === "premium" || user.subscription_tier === "free_premium");
   const { refresh: refreshNotifications } = useNotifications();
   const { isInWatchlist, toggle } = useWatchlist();
   const { isWatched, toggle: toggleWatched } = useWatched();
@@ -405,7 +423,7 @@ export default function MovieOverlay({
   }, [movieId, itemMediaType, guestCountry, countries]);
 
   useEffect(() => {
-    if (!movieId || !user) {
+    if (!movieId || !user || !isPremiumUser) {
       setAlertOptions(null);
       setAlertOptionsLoading(false);
       setAlertPanelOpen(false);
@@ -433,7 +451,7 @@ export default function MovieOverlay({
     return () => {
       cancelled = true;
     };
-  }, [movieId, itemMediaType, user]);
+  }, [movieId, itemMediaType, isPremiumUser, user]);
 
   useEffect(() => {
     if (!movieId) {
@@ -463,15 +481,15 @@ export default function MovieOverlay({
   const hasCredits = cast.length > 0 || crew.length > 0;
   const hideCreditsButtonOnDesktop = cast.length <= 6 && crew.length === 0;
   const mediaTypeSafe: "movie" | "tv" = itemMediaType || (movie?.number_of_seasons != null ? "tv" : "movie");
-  const watchlisted = !!(movie && user && isInWatchlist(mediaTypeSafe, movie.id));
-  const watched = !!(movie && user && isWatched(mediaTypeSafe, movie.id));
-  const listMemberships = movie && user ? membershipsFor(mediaTypeSafe, movie.id) : new Set<string>();
+  const watchlisted = !!(movie && user && isPremiumUser && isInWatchlist(mediaTypeSafe, movie.id));
+  const watched = !!(movie && user && isPremiumUser && isWatched(mediaTypeSafe, movie.id));
+  const listMemberships = movie && user && isPremiumUser ? membershipsFor(mediaTypeSafe, movie.id) : new Set<string>();
   const listMembershipCount = listMemberships.size;
   const listButtonActive = listPanelOpen || listMembershipCount > 0;
 
   const posterUrl = movie?.poster_path ? `${TMDB_IMG}/w300${movie.poster_path}` : "";
   const handleToggleWatchlist = async () => {
-    if (!movie || !user || watchlistBusy) return;
+    if (!movie || !user || !isPremiumUser || watchlistBusy) return;
     setWatchlistBusy(true);
     setWatchlistErr("");
     try {
@@ -498,7 +516,7 @@ export default function MovieOverlay({
   };
 
   const handleToggleWatched = async () => {
-    if (!movie || !user || watchedBusy) return;
+    if (!movie || !user || !isPremiumUser || watchedBusy) return;
     setWatchedBusy(true);
     setWatchedErr("");
     try {
@@ -525,7 +543,7 @@ export default function MovieOverlay({
   };
 
   const handleToggleListPanel = async () => {
-    if (!movie || !user || newListBusy || !!listBusyId) return;
+    if (!movie || !user || !isPremiumUser || newListBusy || !!listBusyId) return;
     if (listPanelOpen) {
       setListPanelOpen(false);
       return;
@@ -545,7 +563,7 @@ export default function MovieOverlay({
   };
 
   const handleToggleListMembership = async (listId: string) => {
-    if (!movie || !user || !!listBusyId || newListBusy) return;
+    if (!movie || !user || !isPremiumUser || !!listBusyId || newListBusy) return;
     setListBusyId(listId);
     setListErr("");
     try {
@@ -565,7 +583,7 @@ export default function MovieOverlay({
   };
 
   const handleCreateListAndAdd = async () => {
-    if (!movie || !user || !newListName.trim() || newListBusy || !!listBusyId) return;
+    if (!movie || !user || !isPremiumUser || !newListName.trim() || newListBusy || !!listBusyId) return;
     setNewListBusy(true);
     setListErr("");
     try {
@@ -588,10 +606,10 @@ export default function MovieOverlay({
 
   const pendingAlertOptions = (alertOptions?.options || []).filter((option) => !option.currently_met);
   const hasRegisteredAlert = !!alertOptions?.options?.some((option) => option.already_subscribed);
-  const showAlertCta = !!user && !!alertOptions?.show_button && pendingAlertOptions.length > 0;
+  const showAlertCta = !!user && isPremiumUser && !!alertOptions?.show_button && pendingAlertOptions.length > 0;
 
   const handleCreateAlert = async (conditionType: NotificationConditionType) => {
-    if (!movie || !user || alertBusyCondition) return;
+    if (!movie || !user || !isPremiumUser || alertBusyCondition) return;
     setAlertBusyCondition(conditionType);
     setAlertErr("");
     try {
@@ -706,7 +724,7 @@ export default function MovieOverlay({
                           <span className="ml-2">&middot; {movie.number_of_seasons} season{movie.number_of_seasons !== 1 ? "s" : ""}</span>
                         )}
                       </p>
-                      {user && (
+                      {isPremiumUser && (
                         <>
                           <div className="mb-2 flex flex-wrap gap-2">
                             <button
@@ -824,7 +842,11 @@ export default function MovieOverlay({
                               </h4>
                               <div className="flex gap-3">
                                 {directors.map((d) => (
-                                  <PersonCircle key={d.id} person={d} onClick={setSelectedPersonId} />
+                                  <PersonCircle
+                                    key={d.id}
+                                    person={d}
+                                    onClick={allowPersonClicks ? setSelectedPersonId : undefined}
+                                  />
                                 ))}
                               </div>
                             </div>
@@ -834,7 +856,12 @@ export default function MovieOverlay({
                               <h4 className="text-xs text-muted uppercase tracking-wider mb-2">Cast</h4>
                               <div className="flex gap-3">
                                 {topCast.map((p) => (
-                                  <PersonCircle key={p.id} person={p} role={p.character} onClick={setSelectedPersonId} />
+                                  <PersonCircle
+                                    key={p.id}
+                                    person={p}
+                                    role={p.character}
+                                    onClick={allowPersonClicks ? setSelectedPersonId : undefined}
+                                  />
                                 ))}
                               </div>
                             </div>
@@ -853,7 +880,7 @@ export default function MovieOverlay({
                     </div>
                   </div>
 
-                  {user && (
+                  {isPremiumUser && (
                     <div className="mb-4 sm:mb-5">
                       {alertOptionsLoading && (
                         <div className="text-xs text-muted">Checking alert options...</div>
@@ -959,7 +986,7 @@ export default function MovieOverlay({
             </motion.div>
 
             <AnimatePresence>
-              {listPanelOpen && user && movie && (
+              {listPanelOpen && user && isPremiumUser && movie && (
                 <motion.div
                   className="fixed inset-0 z-[330] grid place-items-center p-3 sm:p-5"
                   initial={{ opacity: 0 }}
@@ -1079,7 +1106,8 @@ export default function MovieOverlay({
         onClose={() => setCreditsOpen(false)}
         cast={cast}
         crew={crew}
-        onPersonClick={setSelectedPersonId}
+        onPersonClick={allowPersonClicks ? setSelectedPersonId : undefined}
+        allowPersonClicks={allowPersonClicks}
       />
 
       <PersonWorksModal

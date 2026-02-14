@@ -8,13 +8,17 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .auth import get_current_user
+from .auth import get_current_user, get_current_premium_user
 from .audit import add_audit_log
 from .database import get_db
 from .models import NotificationSubscription, User, UserNotification, UserPreferences
 from . import mailer, tmdb
 
-router = APIRouter(prefix="/api/notifications", tags=["notifications"])
+router = APIRouter(
+    prefix="/api/notifications",
+    tags=["notifications"],
+    dependencies=[Depends(get_current_premium_user)],
+)
 
 CONDITION_AVAILABLE_PRIMARY = "available_primary"
 # Current stream-focused conditions

@@ -199,8 +199,8 @@ function AdminContent() {
 
   const onUpdateUserField = async (
     target: AdminUser,
-    field: "is_admin" | "is_active",
-    nextValue: boolean,
+    field: "is_admin" | "is_active" | "subscription_tier",
+    nextValue: boolean | "non_premium" | "free_premium" | "premium",
     actionReason?: string
   ) => {
     if (target[field] === nextValue) return;
@@ -213,7 +213,11 @@ function AdminContent() {
       });
       setUsers((prev) => prev.map((u) => (u.id === target.id ? result.user : u)));
       if (user?.id === target.id) {
-        updateUser({ is_admin: result.user.is_admin, is_active: result.user.is_active });
+        updateUser({
+          is_admin: result.user.is_admin,
+          is_active: result.user.is_active,
+          subscription_tier: result.user.subscription_tier,
+        });
       }
       if (field === "is_admin" && user?.id === target.id && !result.user.is_admin) {
         setIsAdmin(false);
@@ -267,6 +271,19 @@ function AdminContent() {
       return;
     }
     await onUpdateUserField(target, "is_active", nextIsActive);
+  };
+
+  const onTierChange = async (target: AdminUser, nextTier: "non_premium" | "free_premium" | "premium") => {
+    if (target.subscription_tier === nextTier) return;
+    const action =
+      nextTier === "free_premium"
+        ? "grant free premium"
+        : nextTier === "premium"
+          ? "set paid premium"
+          : "downgrade to non-premium";
+    const ok = window.confirm(`Are you sure you want to ${action} for ${target.email}?`);
+    if (!ok) return;
+    await onUpdateUserField(target, "subscription_tier", nextTier);
   };
 
   const onDeleteConfirmed = async () => {
@@ -533,7 +550,7 @@ function AdminContent() {
           )}
 
           <div className="overflow-x-auto rounded-xl border border-border">
-            <table className="min-w-[980px] w-full text-sm">
+            <table className="min-w-[1080px] w-full text-sm">
               <thead className="bg-panel-2/70">
                 <tr className="text-left">
                   <th className="px-3 py-2 font-medium text-muted">Email</th>
@@ -542,6 +559,7 @@ function AdminContent() {
                   <th className="px-3 py-2 font-medium text-muted">Countries</th>
                   <th className="px-3 py-2 font-medium text-muted">Services</th>
                   <th className="px-3 py-2 font-medium text-muted">Role</th>
+                  <th className="px-3 py-2 font-medium text-muted">Plan</th>
                   <th className="px-3 py-2 font-medium text-muted">Status</th>
                   <th className="px-3 py-2 font-medium text-muted">Actions</th>
                 </tr>
@@ -549,13 +567,13 @@ function AdminContent() {
               <tbody>
                 {loadingData ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-10 text-center text-muted">
+                    <td colSpan={9} className="px-3 py-10 text-center text-muted">
                       Loading users...
                     </td>
                   </tr>
                 ) : users.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-3 py-10 text-center text-muted">
+                    <td colSpan={9} className="px-3 py-10 text-center text-muted">
                       No users found.
                     </td>
                   </tr>
@@ -563,9 +581,11 @@ function AdminContent() {
                   users.map((row) => {
                     const adminKey = `${row.id}:is_admin`;
                     const activeKey = `${row.id}:is_active`;
+                    const tierKey = `${row.id}:subscription_tier`;
                     const adminBusy = updatingKeys.has(adminKey);
                     const activeBusy = updatingKeys.has(activeKey);
-                    const rowBusy = adminBusy || activeBusy;
+                    const tierBusy = updatingKeys.has(tierKey);
+                    const rowBusy = adminBusy || activeBusy || tierBusy;
                     const statusLabel = !row.is_active
                       ? "Disabled"
                       : row.email_verified
@@ -592,6 +612,23 @@ function AdminContent() {
                             }`}
                           >
                             {row.is_admin ? "Admin" : "User"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <span
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
+                              row.subscription_tier === "premium"
+                                ? "border-fuchsia-500/45 bg-fuchsia-500/15 text-fuchsia-200"
+                                : row.subscription_tier === "free_premium"
+                                  ? "border-violet-500/45 bg-violet-500/15 text-violet-200"
+                                : "border-border bg-panel-2 text-muted"
+                            }`}
+                          >
+                            {row.subscription_tier === "premium"
+                              ? "Premium"
+                              : row.subscription_tier === "free_premium"
+                                ? "Free Premium"
+                                : "Non-premium"}
                           </span>
                         </td>
                         <td className="px-3 py-2">
@@ -623,6 +660,14 @@ function AdminContent() {
                                 void onStatusChange(row, "active");
                                 return;
                               }
+                              if (action === "upgrade_premium") {
+                                void onTierChange(row, "free_premium");
+                                return;
+                              }
+                              if (action === "downgrade_non_premium") {
+                                void onTierChange(row, "non_premium");
+                                return;
+                              }
                               if (action === "reset_password") {
                                 onOpenPasswordResetAction(row);
                                 return;
@@ -648,6 +693,11 @@ function AdminContent() {
                               </option>
                             ) : (
                               <option value="reactivate_user">Reactivate user</option>
+                            )}
+                            {row.subscription_tier === "premium" || row.subscription_tier === "free_premium" ? (
+                              <option value="downgrade_non_premium">Set non-premium</option>
+                            ) : (
+                              <option value="upgrade_premium">Set free premium</option>
                             )}
                             <option value="reset_password">Reset password</option>
                             <option value="delete_user" disabled={row.id === user.id}>

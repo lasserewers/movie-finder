@@ -18,8 +18,17 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    subscription_tier: Mapped[str] = mapped_column(String(24), default="non_premium", nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lemon_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lemon_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lemon_subscription_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    lemon_variant_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    lemon_last_event_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    lemon_last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lemon_subscription_renews_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lemon_subscription_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     preferences: Mapped["UserPreferences"] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
