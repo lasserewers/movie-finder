@@ -19,6 +19,7 @@ import NotificationAlertsOverlay from "./components/NotificationAlertsOverlay";
 import SearchOverlay from "./components/SearchOverlay";
 import AdvancedSearchModal from "./components/AdvancedSearchModal";
 import AuthModal from "./components/AuthModal";
+import PremiumShowcaseModal from "./components/PremiumShowcaseModal";
 import SettingsCenterModal, {
   type SettingsCenterSection,
   type HomeContentMode,
@@ -55,11 +56,82 @@ const BILLING_RETURN_QUERY_KEY = "billing";
 const BILLING_RETURN_QUERY_VALUE = "return";
 const BILLING_PLAN_QUERY_KEY = "billing_plan";
 type BillingReturnPlan = "monthly" | "yearly" | null;
+type PremiumPlanChoice = "monthly" | "yearly";
 const PREMIUM_ONLY_SETTINGS_SECTIONS = new Set<SettingsCenterSection>([
   "notifications",
   "home",
   "linked",
 ]);
+interface PremiumFeatureDescriptor {
+  id: string;
+  title: string;
+  detail: string;
+}
+
+const PREMIUM_FEATURE_DETAILS: PremiumFeatureDescriptor[] = [
+  {
+    id: "advanced_search",
+    title: "Advanced search filters",
+    detail: "Filter by rating, year, genres, runtime, language, and sort options to find the right title faster.",
+  },
+  {
+    id: "multi_country",
+    title: "Multiple countries",
+    detail: "Track availability across multiple countries at once instead of checking one region at a time.",
+  },
+  {
+    id: "vpn_toggle",
+    title: "VPN-aware browsing",
+    detail: "Use VPN mode to expand discovery and surface titles available in other regions instantly.",
+  },
+  {
+    id: "streamable_only",
+    title: "Streamable-only mode",
+    detail: "Focus on titles you can actually watch now on your services instead of endless unavailable results.",
+  },
+  {
+    id: "all_country_services",
+    title: "Cross-country service catalog",
+    detail: "See services from additional countries to uncover more licensed content you can reach with VPN.",
+  },
+  {
+    id: "watchlist",
+    title: "Watchlist",
+    detail: "Save titles for later and keep your next picks organized in one place.",
+  },
+  {
+    id: "lists",
+    title: "Custom lists",
+    detail: "Build and manage themed lists for weekend plans, franchises, favorites, and more.",
+  },
+  {
+    id: "notifications",
+    title: "Availability notifications",
+    detail: "Get notified when something you care about becomes available on your selected services.",
+  },
+  {
+    id: "no_ads",
+    title: "No ads ever",
+    detail: "Premium keeps your discovery flow clean and focused with no ads interrupting browsing.",
+  },
+  {
+    id: "upcoming_features",
+    title: "Access upcoming features",
+    detail: "Get early access to new discovery tools and premium improvements as they roll out.",
+  },
+  {
+    id: "account_sync",
+    title: "Sync accounts",
+    detail: "Sync external watch history and list data so FullStreamer reflects what you already track elsewhere.",
+  },
+  {
+    id: "support_solo_dev",
+    title: "Support solo developer",
+    detail: "Help cover the real costs of running FullStreamer and still leave me enough for a cup of coffee.",
+  },
+];
+const PREMIUM_MONTHLY_PRICE_LABEL = "DKK 19.99 / month";
+const PREMIUM_YEARLY_PRICE_LABEL = "DKK 199.99 / year";
 
 function userViewPrefsKey(email: string) {
   return `${USER_VIEW_PREFS_STORAGE_PREFIX}${email.trim().toLowerCase()}`;
@@ -102,6 +174,9 @@ function AppContent() {
   const [settingsCenterSection, setSettingsCenterSection] = useState<SettingsCenterSection>("account");
   const [billingReturnSyncing, setBillingReturnSyncing] = useState(false);
   const [billingReturnPlan, setBillingReturnPlan] = useState<BillingReturnPlan>(null);
+  const [homeFeatureInfoOpen, setHomeFeatureInfoOpen] = useState<Set<string>>(new Set());
+  const [premiumShowcaseOpen, setPremiumShowcaseOpen] = useState(false);
+  const [premiumShowcasePlan, setPremiumShowcasePlan] = useState<PremiumPlanChoice | null>(null);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [vpnPromptOpen, setVpnPromptOpen] = useState(false);
   const [vpnPromptCountryCount, setVpnPromptCountryCount] = useState(1);
@@ -628,6 +703,16 @@ function AppContent() {
     setAuthModalOpen(true);
   }, []);
 
+  const openPremiumShowcase = useCallback((plan: PremiumPlanChoice | null = null) => {
+    setPremiumShowcasePlan(plan);
+    setPremiumShowcaseOpen(true);
+  }, []);
+
+  const closePremiumShowcase = useCallback(() => {
+    setPremiumShowcaseOpen(false);
+    setPremiumShowcasePlan(null);
+  }, []);
+
   useEffect(() => {
     if (authLoading || user) return;
     let mode: "login" | "signup" | null = null;
@@ -772,6 +857,18 @@ function AppContent() {
     [isPremiumUser]
   );
 
+  const handlePremiumPlanSelect = useCallback(
+    (_plan: PremiumPlanChoice) => {
+      closePremiumShowcase();
+      if (!user) {
+        openAuthModal("signup");
+        return;
+      }
+      openSettingsCenter("subscription");
+    },
+    [closePremiumShowcase, openAuthModal, openSettingsCenter, user]
+  );
+
   const clearBillingReturnParams = useCallback(() => {
     try {
       const url = new URL(window.location.href);
@@ -903,10 +1000,10 @@ function AppContent() {
   const handleSearchSubmit = useCallback(
     (q: string, filtered: boolean) => {
       setSearchQuery(q);
-      setSearchFiltered(isPremiumUser ? true : filtered);
+      setSearchFiltered(filtered);
       setSearchOpen(true);
     },
-    [isPremiumUser]
+    []
   );
 
   const handleOpenAdvancedSearch = useCallback((initialQuery: string) => {
@@ -915,12 +1012,12 @@ function AppContent() {
       return;
     }
     if (!isPremiumUser) {
-      openSettingsCenter("subscription");
+      openPremiumShowcase();
       return;
     }
     setAdvancedSearchInitialQuery(initialQuery);
     setAdvancedSearchOpen(true);
-  }, [isPremiumUser, openAuthModal, openSettingsCenter, user]);
+  }, [isPremiumUser, openAuthModal, openPremiumShowcase, user]);
 
   useEffect(() => {
     if ((!user || !isPremiumUser) && advancedSearchOpen) {
@@ -1064,7 +1161,7 @@ function AppContent() {
     (id: string) => {
       if (id === "__watchlist__") {
         if (!isPremiumUser) {
-          openSettingsCenter("subscription");
+          openPremiumShowcase();
           return;
         }
         setWatchlistOverlayOpen(true);
@@ -1072,7 +1169,7 @@ function AppContent() {
       }
       if (id.startsWith(USER_LIST_HOME_SECTION_PREFIX)) {
         if (!isPremiumUser) {
-          openSettingsCenter("subscription");
+          openPremiumShowcase();
           return;
         }
         const listId = id.slice(USER_LIST_HOME_SECTION_PREFIX.length);
@@ -1084,7 +1181,7 @@ function AppContent() {
       }
       setSelectedSection(sectionMap.get(id) || null);
     },
-    [sectionMap, isPremiumUser, openSettingsCenter]
+    [sectionMap, isPremiumUser, openPremiumShowcase]
   );
   const watchlistHomeBlock = user && isPremiumUser ? (
     watchlistLoading ? (
@@ -1169,34 +1266,34 @@ function AppContent() {
       return;
     }
     if (!isPremiumUser) {
-      openSettingsCenter("subscription");
+      openPremiumShowcase();
       return;
     }
     setWatchlistOverlayOpen(true);
-  }, [isPremiumUser, openAuthModal, openSettingsCenter, user]);
+  }, [isPremiumUser, openAuthModal, openPremiumShowcase, user]);
   const handleOpenWatched = useCallback(() => {
     if (!user) {
       openAuthModal("login");
       return;
     }
     if (!isPremiumUser) {
-      openSettingsCenter("subscription");
+      openPremiumShowcase();
       return;
     }
     setWatchedOverlayOpen(true);
-  }, [isPremiumUser, openAuthModal, openSettingsCenter, user]);
+  }, [isPremiumUser, openAuthModal, openPremiumShowcase, user]);
   const handleOpenLists = useCallback(() => {
     if (!user) {
       openAuthModal("login");
       return;
     }
     if (!isPremiumUser) {
-      openSettingsCenter("subscription");
+      openPremiumShowcase();
       return;
     }
     setListsOverlayInitialListId(null);
     setListsOverlayOpen(true);
-  }, [isPremiumUser, openAuthModal, openSettingsCenter, user]);
+  }, [isPremiumUser, openAuthModal, openPremiumShowcase, user]);
   const handleOpenListsFromSettings = useCallback(() => {
     setSettingsCenterOpen(false);
     handleOpenLists();
@@ -1232,13 +1329,13 @@ function AppContent() {
       return;
     }
     if (!isPremiumUser) {
-      openSettingsCenter("subscription");
+      openPremiumShowcase();
       return;
     }
     clearUnreadIndicator();
     void refreshNotifications(true);
     setNotificationsOverlayOpen(true);
-  }, [clearUnreadIndicator, isPremiumUser, openAuthModal, openSettingsCenter, refreshNotifications, user]);
+  }, [clearUnreadIndicator, isPremiumUser, openAuthModal, openPremiumShowcase, refreshNotifications, user]);
   const handleCloseNotifications = useCallback(() => {
     setNotificationsOverlayOpen(false);
     void markAllRead();
@@ -1259,6 +1356,7 @@ function AppContent() {
     searchOpen ||
     advancedSearchOpen ||
     settingsCenterOpen ||
+    premiumShowcaseOpen ||
     onboardingOpen ||
     authModalOpen ||
     vpnPromptOpen;
@@ -1299,7 +1397,7 @@ function AppContent() {
           onOpenSettings={() => openSettingsCenter("services")}
           vpnEnabled={usingVpn}
           isPremiumUser={isPremiumUser}
-          onOpenSubscription={() => openSettingsCenter("subscription")}
+          onOpenSubscription={() => openPremiumShowcase()}
           onSearchSubmit={handleSearchSubmit}
           onOpenAdvancedSearch={handleOpenAdvancedSearch}
           scrollContainer={useScopedMainScroll ? mainScrollEl : null}
@@ -1555,10 +1653,97 @@ function AppContent() {
                     </button>
                   ))}
                 </div>
+                <div className="rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs text-amber-100/90 max-sm:w-full">
+                  Premium unlocks advanced search, multiple countries, VPN toggle, and streamable-only power tools.
+                  <button
+                    type="button"
+                    onClick={() => openPremiumShowcase()}
+                    className="ml-2 underline decoration-amber-200/70 underline-offset-2 hover:text-text"
+                  >
+                    See premium
+                  </button>
+                </div>
               </>
             )}
           </div>
           </div>
+
+          {!isPremiumUser && (
+            <section className="mb-6 sm:mb-8 rounded-2xl border border-amber-300/35 bg-gradient-to-br from-amber-300/16 via-amber-200/8 to-orange-500/18 p-4 sm:p-6 shadow-[0_14px_50px_-28px_rgba(245,158,11,0.65)]">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/45 bg-amber-200/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-100">
+                  Premium Upgrade
+                </div>
+                <div className="text-xs text-amber-100/90">
+                  Cheap upgrade, big gain across all your paid services.
+                </div>
+              </div>
+              <h2 className="mt-3 text-xl sm:text-2xl font-display text-text">
+                Get more from every subscription and VPN region you already pay for.
+              </h2>
+              <p className="mt-2 text-sm text-amber-100/85 max-w-3xl">
+                FullStreamer Premium helps you browse smarter and find more of what is already available to you.
+                Stop wasting time jumping between apps and regions. Search once, filter fast, and stream more.
+              </p>
+              <div className="mt-4 grid items-start gap-2 sm:grid-cols-2">
+                {PREMIUM_FEATURE_DETAILS.map((feature) => (
+                  <div
+                    key={feature.id}
+                    className="self-start rounded-xl border border-amber-200/30 bg-black/15 px-3 py-2.5 text-sm text-amber-50/95"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-medium text-amber-50">{feature.title}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setHomeFeatureInfoOpen((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(feature.id)) {
+                              next.delete(feature.id);
+                            } else {
+                              next.add(feature.id);
+                            }
+                            return next;
+                          })
+                        }
+                        className="h-5 w-5 flex-shrink-0 rounded-full border border-amber-100/45 bg-amber-100/20 text-[11px] font-semibold text-amber-50 hover:bg-amber-100/30 transition-colors"
+                        aria-label={`More info about ${feature.title}`}
+                        title={`More info about ${feature.title}`}
+                      >
+                        i
+                      </button>
+                    </div>
+                    {homeFeatureInfoOpen.has(feature.id) && (
+                      <p className="mt-2 text-xs text-amber-100/90 leading-relaxed">{feature.detail}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => openPremiumShowcase("monthly")}
+                  className="rounded-xl border border-amber-100/45 bg-gradient-to-br from-amber-200/30 to-orange-400/25 px-4 py-3 text-left hover:from-amber-200/40 hover:to-orange-400/35 transition-colors"
+                >
+                  <div className="text-xs uppercase tracking-[0.07em] text-amber-100/85">Monthly Plan</div>
+                  <div className="mt-1 text-lg font-semibold text-text">{PREMIUM_MONTHLY_PRICE_LABEL}</div>
+                  <div className="mt-1 text-xs text-amber-50/90">Perfect if you want flexibility.</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openPremiumShowcase("yearly")}
+                  className="relative rounded-xl border border-amber-100/60 bg-gradient-to-br from-amber-300/35 to-orange-500/30 px-4 py-3 text-left hover:from-amber-300/45 hover:to-orange-500/40 transition-colors"
+                >
+                  <span className="absolute right-3 top-2 inline-flex rounded-full border border-amber-100/50 bg-amber-100/20 px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-amber-50">
+                    Best Value
+                  </span>
+                  <div className="text-xs uppercase tracking-[0.07em] text-amber-100/85">Yearly Plan</div>
+                  <div className="mt-1 text-lg font-semibold text-text">{PREMIUM_YEARLY_PRICE_LABEL}</div>
+                  <div className="mt-1 text-xs text-amber-50/90">Save money and keep discovery always on.</div>
+                </button>
+              </div>
+            </section>
+          )}
 
           <section className="flex flex-col gap-6 sm:gap-10">
           {sections.map((section, index) => (
@@ -1701,11 +1886,14 @@ function AppContent() {
       <SearchOverlay
         open={searchOpen}
         query={searchQuery}
-        filtered={isPremiumUser ? true : searchFiltered}
+        filtered={searchFiltered}
         vpnEnabled={isPremiumUser ? usingVpn : false}
         isLoggedIn={isPremiumUser}
-        initialContentMode={isPremiumUser ? "streamable" : searchFiltered ? "streamable" : "all"}
-        lockStreamable={isPremiumUser}
+        initialContentMode={searchFiltered ? "streamable" : "all"}
+        lockStreamable={false}
+        onOpenUpgrade={() => {
+          openPremiumShowcase();
+        }}
         onClose={() => setSearchOpen(false)}
         onSelectMovie={handleSelectMovie}
       />
@@ -1721,6 +1909,25 @@ function AppContent() {
           lockStreamable
         />
       )}
+
+      <PremiumShowcaseModal
+        open={premiumShowcaseOpen}
+        isLoggedIn={!!user}
+        features={PREMIUM_FEATURE_DETAILS}
+        monthlyPriceLabel={PREMIUM_MONTHLY_PRICE_LABEL}
+        yearlyPriceLabel={PREMIUM_YEARLY_PRICE_LABEL}
+        preferredPlan={premiumShowcasePlan}
+        onClose={closePremiumShowcase}
+        onChoosePlan={handlePremiumPlanSelect}
+        onSignup={() => {
+          closePremiumShowcase();
+          openAuthModal("signup");
+        }}
+        onLogin={() => {
+          closePremiumShowcase();
+          openAuthModal("login");
+        }}
+      />
 
       <SettingsCenterModal
         open={settingsCenterOpen}

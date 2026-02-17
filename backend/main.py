@@ -816,8 +816,6 @@ async def search(
     limit: int = Query(10, ge=1, le=40),
     user: User | None = Depends(get_optional_user),
 ):
-    if user and user_is_premium(user):
-        raise HTTPException(status_code=403, detail="Signed-in search only supports streamable results.")
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "movie"
     page = max(1, page)
@@ -870,8 +868,6 @@ async def search_page(
     limit: int = Query(20, ge=1, le=40),
     user: User | None = Depends(get_optional_user),
 ):
-    if user and user_is_premium(user):
-        raise HTTPException(status_code=403, detail="Signed-in search only supports streamable results.")
     if media_type not in VALID_MEDIA_TYPES:
         media_type = "movie"
     page = max(1, page)

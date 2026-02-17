@@ -104,8 +104,7 @@ export default function Topbar({
       <div className="flex flex-1 justify-end max-sm:order-3 max-sm:basis-full">
         <SearchBar
           onSelectMovie={onSelectMovie}
-          showFilterToggle={false}
-          forceStreamable={!!user && isPremiumUser}
+          showFilterToggle={!!user && isPremiumUser}
           searchDisabled={false}
           onDisabledClick={onOpenSubscription}
           onOpenSettings={onOpenSettings}
@@ -135,6 +134,24 @@ export default function Topbar({
               <line x1="4" y1="18" x2="20" y2="18" />
               <circle cx="11" cy="18" r="2" />
             </svg>
+          </button>
+        )}
+        {!isPremiumUser && onOpenSubscription && (
+          <button
+            onClick={onOpenSubscription}
+            className="h-[44px] sm:h-[52px] w-[76px] sm:w-[84px] border border-amber-300/50 rounded-full flex items-center justify-center gap-1 sm:gap-1.5 bg-amber-300/10 hover:bg-amber-300/20 transition-colors text-amber-100"
+            aria-label="Unlock advanced search"
+            title="Unlock advanced search"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="flex-shrink-0 sm:w-[15px] sm:h-[15px]">
+              <rect x="3" y="11" width="18" height="10" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            <span className="text-[0.58rem] sm:text-[0.64rem] font-semibold tracking-[0.03em] leading-[1.02] text-center">
+              Advanced
+              <br />
+              Search
+            </span>
           </button>
         )}
         {user ? (

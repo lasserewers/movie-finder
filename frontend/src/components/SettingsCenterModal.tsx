@@ -120,6 +120,76 @@ const DELIVERY_OPTIONS: Array<{ value: NotificationDelivery; label: string; desc
   { value: "email", label: "Email", description: "Only by email." },
   { value: "both", label: "Both", description: "In-app and email notifications." },
 ];
+interface PremiumFeatureDescriptor {
+  id: string;
+  title: string;
+  detail: string;
+}
+
+const PREMIUM_FEATURE_LIST: PremiumFeatureDescriptor[] = [
+  {
+    id: "advanced_search",
+    title: "Advanced search with deep filters",
+    detail: "Use year, vote, runtime, genre, language, and sort controls to narrow down results in seconds.",
+  },
+  {
+    id: "streamable_only",
+    title: "Streamable-only discovery",
+    detail: "Focus on titles available right now on your chosen services instead of chasing unavailable results.",
+  },
+  {
+    id: "multi_country",
+    title: "Multiple countries",
+    detail: "Compare and browse multiple countries at once to uncover bigger catalogs.",
+  },
+  {
+    id: "vpn_toggle",
+    title: "VPN toggle",
+    detail: "Switch VPN mode and instantly see what opens up in additional regions.",
+  },
+  {
+    id: "cross_country_services",
+    title: "Cross-country services",
+    detail: "Include services from other countries so you can find more from the subscriptions you already pay for.",
+  },
+  {
+    id: "watchlist",
+    title: "Watchlist",
+    detail: "Track what to watch next with a dedicated watchlist that stays in sync with your account.",
+  },
+  {
+    id: "lists",
+    title: "Custom lists",
+    detail: "Create, reorder, and manage personal lists for themes, moods, and franchise marathons.",
+  },
+  {
+    id: "notifications",
+    title: "Availability notifications",
+    detail: "Get notified when a title becomes available, so you do not miss new arrivals.",
+  },
+  {
+    id: "no_ads",
+    title: "No ads ever",
+    detail: "Premium keeps FullStreamer clean with zero ads while you browse and plan what to watch.",
+  },
+  {
+    id: "upcoming_features",
+    title: "Access upcoming features",
+    detail: "Get early access to new discovery features and improvements as they launch.",
+  },
+  {
+    id: "linked_sync",
+    title: "Sync accounts",
+    detail: "Sync exported history and lists to avoid rebuilding your movie and TV tracking from scratch.",
+  },
+  {
+    id: "support_solo_dev",
+    title: "Support solo developer",
+    detail: "Help cover the cost of running FullStreamer and still leave me enough for a cup of coffee.",
+  },
+];
+const PREMIUM_MONTHLY_PRICE_LABEL = "DKK 19.99 / month";
+const PREMIUM_YEARLY_PRICE_LABEL = "DKK 199.99 / year";
 
 export default function SettingsCenterModal({
   open,
@@ -193,6 +263,7 @@ export default function SettingsCenterModal({
   const [billingPortalLoading, setBillingPortalLoading] = useState(false);
   const [billingStatus, setBillingStatus] = useState<BillingStatusResponse | null>(null);
   const [billingErr, setBillingErr] = useState("");
+  const [subscriptionFeatureInfoOpen, setSubscriptionFeatureInfoOpen] = useState<Set<string>>(new Set());
 
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
   const [countryQuery, setCountryQuery] = useState("");
@@ -276,6 +347,7 @@ export default function SettingsCenterModal({
     setLinkedDropActive(false);
     setBillingErr("");
     setBillingStatus(null);
+    setSubscriptionFeatureInfoOpen(new Set());
   }, [open, initialSection, isPremiumUser, countries, providerIds]);
 
   useEffect(() => {
@@ -1234,6 +1306,19 @@ export default function SettingsCenterModal({
               ? "Select the countries where you primarily watch content."
               : "Non-premium accounts can use one country at a time."}
           </p>
+          {!isPremiumUser && (
+            <div className="rounded-xl border border-amber-300/35 bg-amber-300/10 px-3 py-2.5 text-xs text-amber-100/90">
+              Premium lets you save and browse multiple countries simultaneously, which means more available titles
+              from the services and VPN locations you already use.
+              <button
+                type="button"
+                onClick={() => setActiveSection("subscription")}
+                className="ml-2 underline decoration-amber-200/70 underline-offset-2 hover:text-text"
+              >
+                View premium plans
+              </button>
+            </div>
+          )}
 
           {selectedCountries.size > 0 && (
             <div className="flex flex-wrap gap-1.5">
@@ -1306,6 +1391,19 @@ export default function SettingsCenterModal({
         <div className="space-y-3">
           <h4 className="text-sm font-semibold text-text">Streaming services</h4>
           <p className="text-sm text-muted">Select the services you subscribe to.</p>
+          {!isPremiumUser && (
+            <div className="rounded-xl border border-amber-300/35 bg-amber-300/10 px-3 py-2.5 text-xs text-amber-100/90">
+              Premium unlocks services from other countries and streamable-only discovery, so you can uncover far
+              more titles from subscriptions you already pay for.
+              <button
+                type="button"
+                onClick={() => setActiveSection("subscription")}
+                className="ml-2 underline decoration-amber-200/70 underline-offset-2 hover:text-text"
+              >
+                Upgrade to premium
+              </button>
+            </div>
+          )}
 
           <div className="bg-panel-2 border border-border rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
@@ -2008,70 +2106,141 @@ export default function SettingsCenterModal({
     }
 
     return (
-      <div className="space-y-3">
+      <div className="space-y-4">
         <h4 className="text-sm font-semibold text-text">Subscription</h4>
-        <p className="text-sm text-muted">
-          {subscriptionTier === "premium"
-            ? "You are on the premium plan."
-            : subscriptionTier === "free_premium"
-              ? "You are on the free premium plan."
-              : "You are on the non-premium plan."}
-        </p>
-        <div
-          className={`rounded-xl border px-3 py-3 ${
-            isPremiumUser
-              ? "border-emerald-500/35 bg-emerald-500/10"
-              : "border-border/80 bg-panel-2/50"
-          }`}
-        >
-          <div className="text-sm text-text font-semibold">
-            Current plan: {subscriptionTier === "premium" ? "Premium" : subscriptionTier === "free_premium" ? "Free Premium" : "Non-premium"}
+
+        <div className="rounded-2xl border border-amber-300/35 bg-gradient-to-br from-amber-300/15 via-amber-200/8 to-orange-500/18 px-4 py-4 sm:px-5">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="max-w-2xl">
+              <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/45 bg-amber-200/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-amber-100">
+                Premium Access
+              </div>
+              <h5 className="mt-2 text-lg sm:text-xl font-semibold text-text">
+                A cheap way to get more from every streaming subscription and VPN service you already pay for.
+              </h5>
+              <p className="mt-2 text-sm text-amber-100/85">
+                Browse smarter, find more, and stop missing titles hidden across your providers and regions.
+                FullStreamer Premium turns your existing subscriptions into more watchable content.
+              </p>
+            </div>
+            <div className="rounded-xl border border-amber-200/40 bg-black/20 px-3 py-2 text-sm text-amber-50">
+              Current plan:{" "}
+              <span className="font-semibold text-text">
+                {subscriptionTier === "premium"
+                  ? "Premium"
+                  : subscriptionTier === "free_premium"
+                    ? "Free Premium"
+                    : "Non-premium"}
+              </span>
+            </div>
           </div>
-          {isPremiumUser ? (
-            <p className="text-xs text-muted mt-1">
-              Advanced search, multi-country, VPN toggle, watchlist, lists, notifications, and linked account sync are enabled.
-            </p>
-          ) : (
-            <p className="text-xs text-muted mt-1">
-              Upgrade to premium for advanced search, multi-country support, VPN toggle, watchlist, lists, notifications, and linked account sync.
-            </p>
-          )}
+
+          <div className="mt-4 grid items-start gap-2 sm:grid-cols-2">
+            {PREMIUM_FEATURE_LIST.map((feature) => (
+              <div
+                key={feature.id}
+                className="self-start rounded-lg border border-amber-200/25 bg-black/15 px-3 py-2 text-sm text-amber-50/95"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-medium text-amber-50">{feature.title}</span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSubscriptionFeatureInfoOpen((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(feature.id)) {
+                          next.delete(feature.id);
+                        } else {
+                          next.add(feature.id);
+                        }
+                        return next;
+                      })
+                    }
+                    className="h-5 w-5 flex-shrink-0 rounded-full border border-amber-100/45 bg-amber-100/20 text-[11px] font-semibold text-amber-50 hover:bg-amber-100/30 transition-colors"
+                    aria-label={`More info about ${feature.title}`}
+                    title={`More info about ${feature.title}`}
+                  >
+                    i
+                  </button>
+                </div>
+                {subscriptionFeatureInfoOpen.has(feature.id) && (
+                  <p className="mt-2 text-xs text-amber-100/90 leading-relaxed">{feature.detail}</p>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
+
         {billingStatus?.subscription_status && (
           <div className="text-xs text-muted">
             Billing status: <span className="text-text">{billingStatus.subscription_status}</span>
           </div>
         )}
+
         {billingErr && (
           <div className="text-sm text-red-300 bg-red-500/10 rounded-md px-3 py-2">
             {billingErr}
           </div>
         )}
-        <div className="flex flex-wrap gap-2">
-          {subscriptionTier === "non_premium" && (
-            <>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-amber-200/30 bg-panel-2/40 px-4 py-4">
+            <div className="text-[11px] uppercase tracking-[0.08em] text-amber-100/85">Monthly</div>
+            <div className="mt-1 text-xl font-semibold text-text">{PREMIUM_MONTHLY_PRICE_LABEL}</div>
+            <p className="mt-1 text-xs text-muted">
+              Full premium features with flexible monthly billing.
+            </p>
+            {subscriptionTier === "non_premium" ? (
               <button
                 type="button"
                 onClick={() => void handleStartPaidCheckout("monthly")}
                 disabled={Boolean(
                   billingCheckoutPlanLoading || billingLoading || !billingStatus?.monthly_checkout_enabled
                 )}
-                className="h-10 px-4 rounded-lg border border-accent/70 bg-accent/15 text-sm text-text hover:bg-accent/25 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
+                className="mt-3 h-10 w-full rounded-lg border border-amber-200/55 bg-amber-200/20 text-sm font-semibold text-text hover:bg-amber-200/30 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
               >
-                {billingCheckoutPlanLoading === "monthly" ? "Redirecting..." : "Monthly with Lemon Squeezy"}
+                {billingCheckoutPlanLoading === "monthly" ? "Redirecting..." : "Start Monthly Plan"}
               </button>
+            ) : (
+              <div className="mt-3 rounded-lg border border-border/70 bg-bg/35 px-3 py-2 text-xs text-muted">
+                {subscriptionTier === "free_premium"
+                  ? "Free Premium is admin-managed."
+                  : "You already have premium access."}
+              </div>
+            )}
+          </div>
+
+          <div className="relative rounded-xl border border-amber-100/45 bg-gradient-to-br from-amber-300/18 to-orange-500/18 px-4 py-4">
+            <span className="absolute right-3 top-2 inline-flex rounded-full border border-amber-100/50 bg-amber-100/20 px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-amber-50">
+              Best Value
+            </span>
+            <div className="text-[11px] uppercase tracking-[0.08em] text-amber-100/85">Yearly</div>
+            <div className="mt-1 text-xl font-semibold text-text">{PREMIUM_YEARLY_PRICE_LABEL}</div>
+            <p className="mt-1 text-xs text-amber-100/90">
+              Lower effective monthly cost and always-on premium discovery.
+            </p>
+            {subscriptionTier === "non_premium" ? (
               <button
                 type="button"
                 onClick={() => void handleStartPaidCheckout("yearly")}
                 disabled={Boolean(
                   billingCheckoutPlanLoading || billingLoading || !billingStatus?.yearly_checkout_enabled
                 )}
-                className="h-10 px-4 rounded-lg border border-accent/70 bg-accent/15 text-sm text-text hover:bg-accent/25 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
+                className="mt-3 h-10 w-full rounded-lg border border-amber-100/70 bg-amber-100/25 text-sm font-semibold text-text hover:bg-amber-100/35 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
               >
-                {billingCheckoutPlanLoading === "yearly" ? "Redirecting..." : "Yearly with Lemon Squeezy"}
+                {billingCheckoutPlanLoading === "yearly" ? "Redirecting..." : "Start Yearly Plan"}
               </button>
-            </>
-          )}
+            ) : (
+              <div className="mt-3 rounded-lg border border-amber-200/25 bg-black/15 px-3 py-2 text-xs text-amber-50/90">
+                {subscriptionTier === "free_premium"
+                  ? "Free Premium keeps all premium features enabled."
+                  : "Your account is already on premium."}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
           {isPremiumUser && billingStatus?.portal_enabled && (
             <button
               type="button"
@@ -2091,9 +2260,10 @@ export default function SettingsCenterModal({
             {billingLoading ? "Refreshing..." : "Refresh status"}
           </button>
         </div>
+
         {billingStatus && !billingStatus.configured_checkout && (
           <p className="text-xs text-muted">
-            Checkout is not configured yet. Set the Lemon Squeezy environment variables on the backend first.
+            Checkout is not configured yet. Set the Stripe billing environment variables on the backend first.
           </p>
         )}
       </div>

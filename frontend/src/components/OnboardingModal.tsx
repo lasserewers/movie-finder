@@ -94,6 +94,11 @@ export default function OnboardingModal({
                 ? "Select your primary country"
                 : "Select the countries where you primarily watch content"}
             </p>
+            {singleSelect && (
+              <div className="mb-3 rounded-lg border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-xs text-amber-100/90">
+                Premium unlocks multiple countries, VPN mode, and deeper discovery across more services.
+              </div>
+            )}
 
             {/* Selected countries */}
             {selected.size > 0 && (

@@ -58,6 +58,14 @@ async def init_db():
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_last_event_at TIMESTAMPTZ NULL"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_subscription_renews_at TIMESTAMPTZ NULL"))
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS lemon_subscription_ends_at TIMESTAMPTZ NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_status VARCHAR(40)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_price_id VARCHAR(64)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_last_event_name VARCHAR(120)"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_last_event_at TIMESTAMPTZ NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_current_period_end TIMESTAMPTZ NULL"))
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_cancel_at TIMESTAMPTZ NULL"))
         await conn.execute(
             text(
                 "ALTER TABLE user_preferences "

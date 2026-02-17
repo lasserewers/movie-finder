@@ -22,7 +22,7 @@ export default function HeroSection({
       {showGuestPrompt && (
         <div className="mt-3 sm:mt-4 max-w-[640px] rounded-xl border border-accent/40 bg-accent/10 p-3 sm:p-4">
           <p className="text-sm text-text">
-            Log in or sign up to unlock your curated home screen and search only titles you can actually stream.
+            Log in or sign up to unlock a curated home screen based on your country and services, and browse what is available across the subscriptions you already pay for.
           </p>
           <div className="mt-2.5 flex items-center gap-2">
             <button

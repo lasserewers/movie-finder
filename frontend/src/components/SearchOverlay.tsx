@@ -34,6 +34,7 @@ interface Props {
   initialContentMode?: ContentMode;
   lockStreamable?: boolean;
   onClose: () => void;
+  onOpenUpgrade?: () => void;
   onSelectMovie: (id: number, mediaType?: "movie" | "tv") => void;
 }
 
@@ -46,6 +47,7 @@ export default function SearchOverlay({
   initialContentMode,
   lockStreamable = false,
   onClose,
+  onOpenUpgrade,
   onSelectMovie,
 }: Props) {
   const INITIAL_BATCH = 36;
@@ -454,6 +456,24 @@ export default function SearchOverlay({
                 &times;
               </button>
             </div>
+
+            {!lockStreamable && !isLoggedIn && (
+              <div className="mx-6 sm:mx-8 mt-4 rounded-xl border border-amber-300/35 bg-amber-300/10 px-3 py-2.5">
+                <p className="text-xs text-amber-100/90 leading-relaxed">
+                  Premium gives you advanced search, streamable-only mode, multi-country discovery, and VPN-aware
+                  browsing so you find more of what your subscriptions already include.
+                  {onOpenUpgrade && (
+                    <button
+                      type="button"
+                      onClick={onOpenUpgrade}
+                      className="ml-2 underline decoration-amber-200/70 underline-offset-2 hover:text-text"
+                    >
+                      Unlock premium
+                    </button>
+                  )}
+                </p>
+              </div>
+            )}
 
             {/* Toolbar */}
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-6 sm:px-8 pt-4 pb-2">

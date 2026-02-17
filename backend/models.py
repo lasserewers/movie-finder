@@ -29,6 +29,14 @@ class User(Base):
     lemon_last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lemon_subscription_renews_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lemon_subscription_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stripe_subscription_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    stripe_price_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stripe_last_event_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    stripe_last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stripe_subscription_current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stripe_subscription_cancel_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     preferences: Mapped["UserPreferences"] = relationship(back_populates="user", uselist=False, cascade="all, delete-orphan")
     password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
