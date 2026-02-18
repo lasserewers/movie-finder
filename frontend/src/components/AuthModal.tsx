@@ -24,6 +24,7 @@ export default function AuthModal({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [acceptLegal, setAcceptLegal] = useState(false);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState("");
   const [verificationFromLogin, setVerificationFromLogin] = useState(false);
   const [info, setInfo] = useState("");
@@ -41,6 +42,7 @@ export default function AuthModal({
     setEmail("");
     setPassword("");
     setConfirmPassword("");
+    setAcceptLegal(false);
     setPendingVerificationEmail("");
     setVerificationFromLogin(false);
     setInfo("");
@@ -74,13 +76,17 @@ export default function AuthModal({
       setError("Passwords do not match");
       return;
     }
+    if (mode === "signup" && !acceptLegal) {
+      setError("Please accept the Terms of Service and Privacy Policy.");
+      return;
+    }
     if (submitInFlightRef.current) return;
     submitInFlightRef.current = true;
 
     setLoading(true);
     try {
       if (mode === "signup") {
-        const result = await signup(email, password);
+        const result = await signup(email, password, acceptLegal);
         if (result.requiresEmailVerification) {
           setPendingVerificationEmail(result.email || email.trim().toLowerCase());
           setVerificationFromLogin(false);
@@ -144,6 +150,7 @@ export default function AuthModal({
 
   const switchMode = () => {
     setMode(mode === "login" ? "signup" : "login");
+    setAcceptLegal(false);
     setPendingVerificationEmail("");
     setVerificationFromLogin(false);
     setInfo("");
@@ -287,6 +294,37 @@ export default function AuthModal({
                         className="px-3 py-2.5 text-sm border border-border rounded-lg bg-bg-2 text-text outline-none focus:border-accent-2 transition-colors"
                       />
                     </div>
+                  )}
+                  {mode === "signup" && (
+                    <label className="flex items-start gap-2 rounded-lg border border-border/70 bg-bg/40 px-3 py-2 text-xs text-muted">
+                      <input
+                        type="checkbox"
+                        checked={acceptLegal}
+                        onChange={(e) => setAcceptLegal(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 accent-accent"
+                      />
+                      <span>
+                        I agree to the{" "}
+                        <a
+                          href="/terms"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent-2 underline underline-offset-2"
+                        >
+                          Terms of Service
+                        </a>{" "}
+                        and{" "}
+                        <a
+                          href="/privacy"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-accent-2 underline underline-offset-2"
+                        >
+                          Privacy Policy
+                        </a>
+                        .
+                      </span>
+                    </label>
                   )}
                   {error && (
                     <div className="text-sm text-red-400 bg-red-400/10 rounded-lg px-3 py-2">

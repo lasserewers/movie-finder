@@ -103,6 +103,7 @@ async def _verification_resend_cooldown_remaining_seconds(
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+    accept_legal: bool = False
 
 
 class LoginRequest(BaseModel):
@@ -112,6 +113,8 @@ class LoginRequest(BaseModel):
 
 @router.post("/signup")
 async def signup(body: SignupRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    if not body.accept_legal:
+        raise HTTPException(status_code=400, detail="You must accept the Terms of Service and Privacy Policy.")
     existing = await db.execute(select(User).where(User.email == body.email.lower()))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Email already registered")

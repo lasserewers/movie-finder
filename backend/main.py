@@ -3108,26 +3108,16 @@ async def regions():
 
 @app.get("/api/geo")
 async def geo(request: Request):
-    """Detect user's country from IP address."""
-    # Get client IP - check forwarded headers first (for proxies/tunnels)
-    client_ip = (
-        request.headers.get("CF-Connecting-IP")  # Cloudflare
-        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        or request.headers.get("X-Real-IP")
-        or (request.client.host if request.client else None)
-    )
-    if not client_ip or client_ip in ("127.0.0.1", "::1", "localhost"):
-        return {"country": "US"}
-    try:
-        async with httpx.AsyncClient(timeout=3) as client:
-            resp = await client.get(f"http://ip-api.com/json/{client_ip}?fields=countryCode")
-            if resp.status_code == 200:
-                data = resp.json()
-                country = data.get("countryCode", "US")
-                if country and len(country) == 2:
-                    return {"country": country.upper()}
-    except Exception:
-        pass
+    """Detect user's country from trusted reverse-proxy geo headers."""
+    for header_name in (
+        "CF-IPCountry",  # Cloudflare
+        "CloudFront-Viewer-Country",  # AWS CloudFront
+        "X-Vercel-IP-Country",  # Vercel
+        "X-AppEngine-Country",  # GCP App Engine
+    ):
+        value = (request.headers.get(header_name) or "").strip().upper()
+        if len(value) == 2 and value.isalpha() and value not in {"XX", "ZZ", "T1"}:
+            return {"country": "GB" if value == "UK" else value}
     return {"country": "US"}
 
 
@@ -3213,6 +3203,19 @@ async def confirm_signup_email_frontend(subpath: str = ""):
 @app.get("/title", include_in_schema=False)
 @app.get("/title/{subpath:path}", include_in_schema=False)
 async def title_frontend(subpath: str = ""):
+    index_file = FRONTEND_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return JSONResponse(status_code=404, content={"detail": "Frontend build not found"})
+
+
+@app.get("/terms", include_in_schema=False)
+@app.get("/terms/{subpath:path}", include_in_schema=False)
+@app.get("/privacy", include_in_schema=False)
+@app.get("/privacy/{subpath:path}", include_in_schema=False)
+@app.get("/legal", include_in_schema=False)
+@app.get("/legal/{subpath:path}", include_in_schema=False)
+async def legal_frontend(subpath: str = ""):
     index_file = FRONTEND_DIR / "index.html"
     if index_file.exists():
         return FileResponse(index_file)

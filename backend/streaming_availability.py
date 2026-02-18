@@ -20,6 +20,13 @@ TMDB_WATCH_LINK_TTL = 6 * 60 * 60
 _HREF_RE = re.compile(r'href=[\"\']([^\"\']+)[\"\']', re.IGNORECASE)
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name, "")
+    if raw is None or raw == "":
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 async def get_streaming_links(
     tmdb_id: int,
     media_type: str = "movie",
@@ -99,10 +106,9 @@ async def get_streaming_links(
     }
     movie_info = dict(base_result.get("movie_info") or {})
 
-    # Enrich sparse API data with provider-level clickout links from TMDB watch pages.
-    # TMDB embeds JustWatch clickouts with providerId + monetizationType, which gives
-    # us much wider deeplink coverage (including long-tail regional services).
-    if countries:
+    # Optional compatibility mode only. Disabled by default for compliance:
+    # TMDB explicitly prohibits scraping the TMDB website.
+    if countries and _env_bool("ENABLE_TMDB_WATCH_PAGE_SCRAPE", default=False):
         clickouts = await _get_tmdb_watch_clickouts(tmdb_id, media_type, countries)
         for country_code, entries in clickouts.items():
             existing = streaming.get(country_code, [])

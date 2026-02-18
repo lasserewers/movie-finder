@@ -80,7 +80,7 @@ export interface SignupResult {
   user: User | null;
 }
 
-export async function signup(email: string, password: string): Promise<SignupResult> {
+export async function signup(email: string, password: string, acceptLegal: boolean): Promise<SignupResult> {
   const data = await apiFetch<{
     id?: string;
     email: string;
@@ -91,7 +91,7 @@ export async function signup(email: string, password: string): Promise<SignupRes
     requires_email_verification?: boolean;
   }>("/api/auth/signup", {
     method: "POST",
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, accept_legal: acceptLegal }),
   });
   if (data.requires_email_verification) {
     return {

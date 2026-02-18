@@ -20,6 +20,13 @@ _cache: dict[tuple[str, int, str], tuple[float, dict]] = {}
 _client: httpx.AsyncClient | None = None
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name, "")
+    if raw is None or raw == "":
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _blank_scores() -> dict:
     return {
         "letterboxd": {"display": None, "url": None, "source": None},
@@ -768,6 +775,16 @@ async def _fetch_letterboxd_page_score(
     return None, None
 
 
+def _letterboxd_page_fetch_enabled() -> bool:
+    # Disabled by default for compliance. Enable only if you have explicit permission.
+    return _env_bool("LETTERBOXD_ENABLE_PAGE_SCRAPE", default=False)
+
+
+def _scraped_ratings_enabled() -> bool:
+    # Disabled by default for compliance. Enable only if you have explicit permission.
+    return _env_bool("ENABLE_SCRAPED_RATINGS", default=False)
+
+
 def _estimate_letterboxd_score(media_type: str, details: dict) -> float | None:
     enable_estimate = os.environ.get("LETTERBOXD_ENABLE_TMDB_ESTIMATE", "false").strip().lower() in {
         "1",
@@ -847,7 +864,9 @@ async def get_media_scores(media_type: str, details: dict) -> dict:
         if imdb_id:
             scores["letterboxd"]["url"] = f"{LETTERBOXD_BASE_URL}/imdb/{imdb_id}/"
     else:
-        page_value, page_url = await _fetch_letterboxd_page_score(title=title, year=year, imdb_id=imdb_id)
+        page_value, page_url = (None, None)
+        if _letterboxd_page_fetch_enabled():
+            page_value, page_url = await _fetch_letterboxd_page_score(title=title, year=year, imdb_id=imdb_id)
         if page_url:
             scores["letterboxd"]["url"] = page_url
         if page_value is not None:
@@ -865,42 +884,45 @@ async def get_media_scores(media_type: str, details: dict) -> dict:
 
     if imdb_id:
         scores["imdb"]["url"] = f"https://www.imdb.com/title/{imdb_id}/"
-        imdb_rating_live = await _fetch_imdb_rating(imdb_id)
-        if imdb_rating_live is not None:
-            scores["imdb"]["display"] = f"{imdb_rating_live:.1f}/10"
-            scores["imdb"]["source"] = "imdb"
 
-    metacritic_url, metacritic_score, metacritic_user_score = await _resolve_metacritic_url_and_score(
-        title=title,
-        media_type=media_type,
-        year=year,
-    )
-    if metacritic_url:
-        scores["metacritic"]["url"] = metacritic_url
-        scores["metacritic_audience"]["url"] = metacritic_url
-    if metacritic_score is not None:
-        scores["metacritic"]["display"] = f"{metacritic_score}/100"
-        scores["metacritic"]["source"] = "metacritic"
-    if metacritic_user_score is not None:
-        scores["metacritic_audience"]["display"] = f"{metacritic_user_score:.1f}/10"
-        scores["metacritic_audience"]["source"] = "metacritic"
+    if _scraped_ratings_enabled():
+        if imdb_id:
+            imdb_rating_live = await _fetch_imdb_rating(imdb_id)
+            if imdb_rating_live is not None:
+                scores["imdb"]["display"] = f"{imdb_rating_live:.1f}/10"
+                scores["imdb"]["source"] = "imdb"
 
-    rotten_url = await _resolve_rotten_url(
-        omdb_data=omdb_data,
-        title=title,
-        media_type=media_type,
-        year=year,
-    )
-    if rotten_url:
-        scores["rotten_tomatoes_critics"]["url"] = rotten_url
-        scores["rotten_tomatoes_audience"]["url"] = rotten_url
-        fetched_critics, fetched_audience = await _fetch_rotten_scores(rotten_url)
-        if fetched_critics is not None:
-            scores["rotten_tomatoes_critics"]["display"] = f"{fetched_critics}%"
-            scores["rotten_tomatoes_critics"]["source"] = "rotten_tomatoes"
-        if fetched_audience is not None:
-            scores["rotten_tomatoes_audience"]["display"] = f"{fetched_audience}%"
-            scores["rotten_tomatoes_audience"]["source"] = "rotten_tomatoes"
+        metacritic_url, metacritic_score, metacritic_user_score = await _resolve_metacritic_url_and_score(
+            title=title,
+            media_type=media_type,
+            year=year,
+        )
+        if metacritic_url:
+            scores["metacritic"]["url"] = metacritic_url
+            scores["metacritic_audience"]["url"] = metacritic_url
+        if metacritic_score is not None:
+            scores["metacritic"]["display"] = f"{metacritic_score}/100"
+            scores["metacritic"]["source"] = "metacritic"
+        if metacritic_user_score is not None:
+            scores["metacritic_audience"]["display"] = f"{metacritic_user_score:.1f}/10"
+            scores["metacritic_audience"]["source"] = "metacritic"
+
+        rotten_url = await _resolve_rotten_url(
+            omdb_data=omdb_data,
+            title=title,
+            media_type=media_type,
+            year=year,
+        )
+        if rotten_url:
+            scores["rotten_tomatoes_critics"]["url"] = rotten_url
+            scores["rotten_tomatoes_audience"]["url"] = rotten_url
+            fetched_critics, fetched_audience = await _fetch_rotten_scores(rotten_url)
+            if fetched_critics is not None:
+                scores["rotten_tomatoes_critics"]["display"] = f"{fetched_critics}%"
+                scores["rotten_tomatoes_critics"]["source"] = "rotten_tomatoes"
+            if fetched_audience is not None:
+                scores["rotten_tomatoes_audience"]["display"] = f"{fetched_audience}%"
+                scores["rotten_tomatoes_audience"]["source"] = "rotten_tomatoes"
 
     _cache[cache_key] = (now, scores)
     return scores

@@ -1794,8 +1794,18 @@ function AppContent() {
           )}
           </section>
 
-          <footer className="text-center py-6 text-muted text-sm">
-            Streaming data provided by JustWatch via TMDB
+          <footer className="py-7 text-center text-sm text-muted">
+            <div>Streaming data provided by JustWatch via TMDB and Streaming Availability.</div>
+            <div className="mt-1">This product uses the TMDB API but is not endorsed or certified by TMDB.</div>
+            <div className="mt-3 flex items-center justify-center gap-3 text-xs">
+              <a href="/terms" className="underline underline-offset-2 hover:text-text">
+                Terms of Service
+              </a>
+              <span className="text-border">•</span>
+              <a href="/privacy" className="underline underline-offset-2 hover:text-text">
+                Privacy Policy
+              </a>
+            </div>
           </footer>
         </div>
       </main>
