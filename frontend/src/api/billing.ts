@@ -19,10 +19,13 @@ export async function getBillingStatus(): Promise<BillingStatusResponse> {
   return apiFetch("/api/billing/status");
 }
 
-export async function createBillingCheckout(plan: BillingPlan): Promise<{ checkout_url: string; plan: BillingPlan }> {
+export async function createBillingCheckout(
+  plan: BillingPlan,
+  currency?: "EUR" | "USD" | "GBP"
+): Promise<{ checkout_url: string; plan: BillingPlan; currency?: string; country?: string | null }> {
   return apiFetch("/api/billing/checkout", {
     method: "POST",
-    body: JSON.stringify({ plan }),
+    body: JSON.stringify({ plan, currency }),
   });
 }
 

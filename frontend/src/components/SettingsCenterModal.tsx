@@ -30,6 +30,7 @@ import { useConfig } from "../hooks/useConfig";
 import { useLists } from "../hooks/useLists";
 import { useWatched } from "../hooks/useWatched";
 import type { ProviderInfo, Region } from "../api/movies";
+import { premiumPriceLabelsForCountry } from "../utils/billingPricing";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
 const HOME_CONTENT_LABEL: Record<HomeContentMode, string> = {
@@ -188,9 +189,6 @@ const PREMIUM_FEATURE_LIST: PremiumFeatureDescriptor[] = [
     detail: "Help cover the cost of running FullStreamer and still leave me enough for a cup of coffee.",
   },
 ];
-const PREMIUM_MONTHLY_PRICE_LABEL = "DKK 19.99 / month";
-const PREMIUM_YEARLY_PRICE_LABEL = "DKK 199.99 / year";
-
 export default function SettingsCenterModal({
   open,
   onClose,
@@ -296,6 +294,14 @@ export default function SettingsCenterModal({
         ? SECTION_OPTIONS
         : SECTION_OPTIONS.filter((section) => !PREMIUM_ONLY_SECTION_IDS.has(section.id)),
     [isPremiumUser]
+  );
+  const billingDisplayCountry = useMemo(() => {
+    const currentCountries = Array.from(selectedCountries);
+    return currentCountries[0] || countries[0] || "US";
+  }, [selectedCountries, countries]);
+  const premiumPriceLabels = useMemo(
+    () => premiumPriceLabelsForCountry(billingDisplayCountry),
+    [billingDisplayCountry]
   );
 
   useEffect(() => {
@@ -950,7 +956,7 @@ export default function SettingsCenterModal({
     setBillingErr("");
     setBillingCheckoutPlanLoading(plan);
     try {
-      const result = await createBillingCheckout(plan);
+      const result = await createBillingCheckout(plan, premiumPriceLabels.currency);
       const checkoutUrl = (result.checkout_url || "").trim();
       if (!checkoutUrl) {
         throw new Error("No checkout URL returned.");
@@ -962,7 +968,7 @@ export default function SettingsCenterModal({
     } finally {
       setBillingCheckoutPlanLoading(null);
     }
-  }, [billingCheckoutPlanLoading]);
+  }, [billingCheckoutPlanLoading, premiumPriceLabels.currency]);
 
   const handleOpenBillingPortal = useCallback(async () => {
     if (billingPortalLoading) return;
@@ -2186,7 +2192,7 @@ export default function SettingsCenterModal({
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-xl border border-amber-200/30 bg-panel-2/40 px-4 py-4">
             <div className="text-[11px] uppercase tracking-[0.08em] text-amber-100/85">Monthly</div>
-            <div className="mt-1 text-xl font-semibold text-text">{PREMIUM_MONTHLY_PRICE_LABEL}</div>
+            <div className="mt-1 text-xl font-semibold text-text">{premiumPriceLabels.monthlyLabel}</div>
             <p className="mt-1 text-xs text-muted">
               Full premium features with flexible monthly billing.
             </p>
@@ -2215,7 +2221,7 @@ export default function SettingsCenterModal({
               Best Value
             </span>
             <div className="text-[11px] uppercase tracking-[0.08em] text-amber-100/85">Yearly</div>
-            <div className="mt-1 text-xl font-semibold text-text">{PREMIUM_YEARLY_PRICE_LABEL}</div>
+            <div className="mt-1 text-xl font-semibold text-text">{premiumPriceLabels.yearlyLabel}</div>
             <p className="mt-1 text-xs text-amber-100/90">
               Lower effective monthly cost and always-on premium discovery.
             </p>

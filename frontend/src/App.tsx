@@ -33,6 +33,7 @@ import { getHome, getRegions, getGeoCountry, type HomeSection, type Region, type
 import type { UserListItem } from "./api/lists";
 import { checkAuth } from "./api/auth";
 import { getBillingStatus } from "./api/billing";
+import { premiumPriceLabelsForCountry } from "./utils/billingPricing";
 import { IOS_BRAVE } from "./utils/platform";
 
 const MEDIA_OPTIONS: { value: MediaType; label: string }[] = [
@@ -130,9 +131,6 @@ const PREMIUM_FEATURE_DETAILS: PremiumFeatureDescriptor[] = [
     detail: "Help cover the real costs of running FullStreamer and still leave me enough for a cup of coffee.",
   },
 ];
-const PREMIUM_MONTHLY_PRICE_LABEL = "DKK 19.99 / month";
-const PREMIUM_YEARLY_PRICE_LABEL = "DKK 199.99 / year";
-
 function userViewPrefsKey(email: string) {
   return `${USER_VIEW_PREFS_STORAGE_PREFIX}${email.trim().toLowerCase()}`;
 }
@@ -213,6 +211,13 @@ function AppContent() {
       return "";
     }
   });
+  const billingDisplayCountry = user
+    ? (countries[0] || guestCountry || DEFAULT_ONBOARDING_COUNTRY)
+    : (guestCountry || DEFAULT_ONBOARDING_COUNTRY);
+  const premiumPriceLabels = useMemo(
+    () => premiumPriceLabelsForCountry(billingDisplayCountry),
+    [billingDisplayCountry]
+  );
 
   const [sections, setSections] = useState<HomeSection[]>([]);
   const [homePage, setHomePage] = useState(1);
@@ -1726,7 +1731,7 @@ function AppContent() {
                   className="rounded-xl border border-amber-100/45 bg-gradient-to-br from-amber-200/30 to-orange-400/25 px-4 py-3 text-left hover:from-amber-200/40 hover:to-orange-400/35 transition-colors"
                 >
                   <div className="text-xs uppercase tracking-[0.07em] text-amber-100/85">Monthly Plan</div>
-                  <div className="mt-1 text-lg font-semibold text-text">{PREMIUM_MONTHLY_PRICE_LABEL}</div>
+                  <div className="mt-1 text-lg font-semibold text-text">{premiumPriceLabels.monthlyLabel}</div>
                   <div className="mt-1 text-xs text-amber-50/90">Perfect if you want flexibility.</div>
                 </button>
                 <button
@@ -1738,7 +1743,7 @@ function AppContent() {
                     Best Value
                   </span>
                   <div className="text-xs uppercase tracking-[0.07em] text-amber-100/85">Yearly Plan</div>
-                  <div className="mt-1 text-lg font-semibold text-text">{PREMIUM_YEARLY_PRICE_LABEL}</div>
+                  <div className="mt-1 text-lg font-semibold text-text">{premiumPriceLabels.yearlyLabel}</div>
                   <div className="mt-1 text-xs text-amber-50/90">Save money and keep discovery always on.</div>
                 </button>
               </div>
@@ -1924,8 +1929,8 @@ function AppContent() {
         open={premiumShowcaseOpen}
         isLoggedIn={!!user}
         features={PREMIUM_FEATURE_DETAILS}
-        monthlyPriceLabel={PREMIUM_MONTHLY_PRICE_LABEL}
-        yearlyPriceLabel={PREMIUM_YEARLY_PRICE_LABEL}
+        monthlyPriceLabel={premiumPriceLabels.monthlyLabel}
+        yearlyPriceLabel={premiumPriceLabels.yearlyLabel}
         preferredPlan={premiumShowcasePlan}
         onClose={closePremiumShowcase}
         onChoosePlan={handlePremiumPlanSelect}
