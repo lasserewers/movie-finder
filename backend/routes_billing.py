@@ -32,6 +32,7 @@ BILLING_PLAN_MONTHLY = "monthly"
 BILLING_PLAN_YEARLY = "yearly"
 BillingPlan = Literal["monthly", "yearly"]
 SUPPORTED_BILLING_CURRENCIES = ("EUR", "USD", "GBP")
+SANCTIONED_COUNTRY_CODES = {"CU", "IR", "KP", "SY"}
 
 
 class CreateCheckoutRequest(BaseModel):
@@ -84,6 +85,11 @@ def _normalize_country_code(value: object) -> str | None:
     if normalized == "UK":
         return "GB"
     return normalized
+
+
+def _is_sanctioned_country_code(value: object) -> bool:
+    normalized = _normalize_country_code(value)
+    return bool(normalized and normalized in SANCTIONED_COUNTRY_CODES)
 
 
 def _normalize_event_name(value: object) -> str | None:
@@ -598,6 +604,8 @@ async def create_checkout_link(
         raise HTTPException(status_code=400, detail="Only non-premium accounts can start paid checkout.")
 
     checkout_country = await _checkout_country_code(db, user, request)
+    if _is_sanctioned_country_code(checkout_country):
+        raise HTTPException(status_code=403, detail="Paid checkout is unavailable in your region.")
     selected_currency = requested_currency or _currency_for_country(checkout_country)
     price_id = _plan_price_id(selected_plan, currency=selected_currency)
     if not price_id:

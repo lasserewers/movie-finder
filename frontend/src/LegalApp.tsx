@@ -4,7 +4,7 @@ type LegalSection = {
   body: string[];
 };
 
-const EFFECTIVE_DATE = "February 17, 2026";
+const EFFECTIVE_DATE = "February 19, 2026";
 
 const TERMS_SECTIONS: LegalSection[] = [
   {
@@ -30,20 +30,31 @@ const TERMS_SECTIONS: LegalSection[] = [
       "Premium subscriptions are billed in advance on a recurring basis (monthly or yearly) unless canceled.",
       "Payments are processed by Stripe. FullStreamer does not store full card numbers or card security codes.",
       "If payment fails, premium access may be limited or removed until billing is resolved.",
+      "Checkout is available only in supported regions and may be restricted to meet legal and payment-compliance obligations.",
+    ],
+  },
+  {
+    id: "sanctions",
+    title: "4. Sanctions and Restricted Regions",
+    body: [
+      "FullStreamer does not provide paid services to, from, or within prohibited or sanctioned jurisdictions.",
+      "This includes Cuba, Iran, North Korea, Syria, and the Crimea, Donetsk, and Luhansk regions of Ukraine.",
+      "We may block country selection, checkout, or account access where needed to comply with legal requirements.",
     ],
   },
   {
     id: "acceptable-use",
-    title: "4. Acceptable Use",
+    title: "5. Acceptable Use",
     body: [
       "Do not abuse, disrupt, reverse engineer, or attempt unauthorized access to FullStreamer systems or data.",
       "Do not use automated methods to scrape or bulk-extract FullStreamer content or APIs without written permission.",
       "Do not use FullStreamer to violate third-party rights or the terms of the streaming platforms you use.",
+      "Do not attempt to bypass regional, sanctions, or payment-compliance controls.",
     ],
   },
   {
     id: "third-party-data",
-    title: "5. Third-Party Data and Attribution",
+    title: "6. Third-Party Data and Attribution",
     body: [
       "FullStreamer uses third-party APIs and data sources, including TMDB, Streaming Availability (via RapidAPI), and Stripe.",
       "Streaming availability can change quickly and may differ by region, account, VPN status, and provider licensing updates.",
@@ -53,7 +64,7 @@ const TERMS_SECTIONS: LegalSection[] = [
   },
   {
     id: "ip",
-    title: "6. Intellectual Property",
+    title: "7. Intellectual Property",
     body: [
       "FullStreamer software, branding, and original UI content are owned by FullStreamer unless otherwise stated.",
       "Movie, TV, logo, and provider metadata remain the property of their respective owners and licensors.",
@@ -61,7 +72,7 @@ const TERMS_SECTIONS: LegalSection[] = [
   },
   {
     id: "disclaimer",
-    title: "7. Disclaimer and Liability",
+    title: "8. Disclaimer and Liability",
     body: [
       "FullStreamer is provided on an as-is and as-available basis without warranties of uninterrupted or error-free operation.",
       "To the extent permitted by law, FullStreamer is not liable for indirect, incidental, special, or consequential damages.",
@@ -69,7 +80,7 @@ const TERMS_SECTIONS: LegalSection[] = [
   },
   {
     id: "termination",
-    title: "8. Suspension or Termination",
+    title: "9. Suspension or Termination",
     body: [
       "We may suspend or terminate access for abuse, fraud, legal risk, or serious terms violations.",
       "You may stop using the service at any time and can cancel paid subscriptions through billing management.",
@@ -77,7 +88,7 @@ const TERMS_SECTIONS: LegalSection[] = [
   },
   {
     id: "updates",
-    title: "9. Changes",
+    title: "10. Changes",
     body: [
       "We may update these terms as the product evolves. Material changes will be reflected by updating the effective date on this page.",
     ],
@@ -101,7 +112,7 @@ const PRIVACY_SECTIONS: LegalSection[] = [
       "Usage data: selected providers, selected countries, watchlist/list/watched activity, notification preferences, and linked account sync metadata.",
       "Cookies: authentication, session continuity, and CSRF protection cookies required for secure sign-in.",
       "Billing data: Stripe customer/subscription IDs and subscription status metadata. We do not store full card details.",
-      "Technical data: security logs and basic request metadata used to operate and secure the service.",
+      "Technical data: security logs, basic request metadata, and coarse country code signals from trusted reverse-proxy headers used to operate and secure the service.",
     ],
   },
   {
@@ -111,7 +122,7 @@ const PRIVACY_SECTIONS: LegalSection[] = [
       "To provide core features like discovery, personalization, saved lists, notifications, and account management.",
       "To process subscriptions and manage billing states.",
       "To secure the platform, prevent abuse, and troubleshoot reliability issues.",
-      "To comply with legal obligations and enforce our terms.",
+      "To comply with legal obligations, including sanctions and payment-compliance requirements, and to enforce our terms.",
     ],
   },
   {
@@ -120,12 +131,22 @@ const PRIVACY_SECTIONS: LegalSection[] = [
     body: [
       "TMDB and Streaming Availability provide entertainment metadata and availability data used in FullStreamer features.",
       "Stripe processes payments and customer billing portal workflows.",
+      "Payment providers may perform their own compliance checks and restrict transactions where legally required.",
       "Letterboxd import features use your export files when you upload them for sync operations.",
     ],
   },
   {
+    id: "compliance",
+    title: "5. Compliance and Regional Restrictions",
+    body: [
+      "We use coarse location signals and account settings to enforce legal and payment-compliance restrictions.",
+      "If your location is in a prohibited or sanctioned region, some features including paid checkout may be unavailable.",
+      "We do not knowingly provide paid services in Cuba, Iran, North Korea, Syria, or the Crimea, Donetsk, and Luhansk regions of Ukraine.",
+    ],
+  },
+  {
     id: "retention",
-    title: "5. Data Retention",
+    title: "6. Data Retention",
     body: [
       "We keep account and feature data while your account is active, and for a limited period afterward when needed for security, audit, or legal purposes.",
       "You can request account deletion. Some records may be retained where required by law or fraud-prevention needs.",
@@ -133,7 +154,7 @@ const PRIVACY_SECTIONS: LegalSection[] = [
   },
   {
     id: "security",
-    title: "6. Security",
+    title: "7. Security",
     body: [
       "We use reasonable technical and organizational safeguards to protect stored data.",
       "No internet system is perfectly secure, so absolute security cannot be guaranteed.",
@@ -141,7 +162,7 @@ const PRIVACY_SECTIONS: LegalSection[] = [
   },
   {
     id: "your-rights",
-    title: "7. Your Rights and Choices",
+    title: "8. Your Rights and Choices",
     body: [
       "You can update account preferences and linked-data settings from within the app.",
       "You can request account deletion and data export requests by contacting legal@fullstreamer.com.",
@@ -150,14 +171,14 @@ const PRIVACY_SECTIONS: LegalSection[] = [
   },
   {
     id: "international",
-    title: "8. International Transfers",
+    title: "9. International Transfers",
     body: [
       "Your data may be processed in countries other than your own. We take reasonable steps to protect data during such transfers.",
     ],
   },
   {
     id: "policy-updates",
-    title: "9. Policy Updates",
+    title: "10. Policy Updates",
     body: [
       "We may update this policy as services and legal requirements evolve. Material updates are reflected by changing the effective date.",
     ],

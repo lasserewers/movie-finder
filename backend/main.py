@@ -64,6 +64,8 @@ ADVANCED_SORT_BY_OPTIONS = {
 }
 ADVANCED_PAGE_SCAN_LIMIT = 4
 ADVANCED_SEARCH_CACHE_VERSION = "2"
+SANCTIONED_COUNTRY_CODES = {"CU", "IR", "KP", "SY"}
+SANCTIONED_UA_REGION_KEYWORDS = ("crimea", "donetsk", "luhansk")
 
 
 def _normalize_result(item: dict) -> dict:
@@ -1774,11 +1776,11 @@ async def _get_watch_providers_cached(item_id: int, media_type: str = "movie") -
 def _normalize_country_codes(countries: list[str] | None) -> set[str] | None:
     if not countries:
         return None
-    normalized = {
-        c.strip().upper()
-        for c in countries
-        if isinstance(c, str) and len(c.strip()) == 2 and c.strip().isalpha()
-    }
+    normalized: set[str] = set()
+    for raw in countries:
+        code = _normalize_country_code(raw)
+        if code:
+            normalized.add(code)
     return normalized or None
 
 
@@ -1788,10 +1790,8 @@ def _normalize_country_list(countries: list[str] | None) -> list[str]:
     normalized: list[str] = []
     seen: set[str] = set()
     for raw in countries:
-        if not isinstance(raw, str):
-            continue
-        code = raw.strip().upper()
-        if len(code) != 2 or not code.isalpha() or code in seen:
+        code = _normalize_country_code(raw)
+        if not code or code in seen:
             continue
         seen.add(code)
         normalized.append(code)
@@ -2419,11 +2419,17 @@ async def _fetch_section_page(section: dict, page: int, media_type: str = "movie
     return data
 
 
-def _normalize_country_code(country: str | None) -> str | None:
-    if not country:
+def _normalize_country_code(country: object) -> str | None:
+    if not isinstance(country, str):
         return None
     code = country.strip().upper()
+    if code == "UK":
+        code = "GB"
     if len(code) != 2 or not code.isalpha():
+        return None
+    if code in {"XX", "ZZ", "T1"}:
+        return None
+    if code in SANCTIONED_COUNTRY_CODES:
         return None
     return code
 
@@ -3098,12 +3104,30 @@ async def section(
 
 @app.get("/api/providers")
 async def provider_list(country: str | None = None):
-    return await tmdb.get_provider_list(country)
+    normalized_country = _normalize_country_code(country) if country else None
+    if country and not normalized_country:
+        raise HTTPException(status_code=400, detail="Unsupported country code.")
+    return await tmdb.get_provider_list(normalized_country)
 
 
 @app.get("/api/regions")
 async def regions():
-    return await tmdb.get_available_regions()
+    raw_regions = await tmdb.get_available_regions()
+    filtered_regions: list[dict] = []
+    for region in raw_regions:
+        if not isinstance(region, dict):
+            continue
+        code = _normalize_country_code(region.get("iso_3166_1"))
+        if not code:
+            continue
+        english_name = str(region.get("english_name") or "")
+        lower_name = english_name.lower()
+        if code == "UA" and any(keyword in lower_name for keyword in SANCTIONED_UA_REGION_KEYWORDS):
+            continue
+        filtered_region = dict(region)
+        filtered_region["iso_3166_1"] = code
+        filtered_regions.append(filtered_region)
+    return filtered_regions
 
 
 @app.get("/api/geo")
@@ -3115,9 +3139,10 @@ async def geo(request: Request):
         "X-Vercel-IP-Country",  # Vercel
         "X-AppEngine-Country",  # GCP App Engine
     ):
-        value = (request.headers.get(header_name) or "").strip().upper()
-        if len(value) == 2 and value.isalpha() and value not in {"XX", "ZZ", "T1"}:
-            return {"country": "GB" if value == "UK" else value}
+        value = request.headers.get(header_name)
+        normalized = _normalize_country_code(value)
+        if normalized:
+            return {"country": normalized}
     return {"country": "US"}
 
 
