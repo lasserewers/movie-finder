@@ -23,7 +23,7 @@ from .auth import (
     get_user_subscription_tier,
 )
 from .database import get_db
-from .models import User, UserPreferences
+from .models import User
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -284,30 +284,6 @@ def _request_country_code(request: Request) -> tuple[str | None, bool]:
             return candidate, False
         saw_unusable_country_header = True
     return None, saw_unusable_country_header
-
-
-def _primary_country_from_prefs(prefs: object) -> str | None:
-    countries = getattr(prefs, "countries", None)
-    if not isinstance(countries, list):
-        return None
-    for raw_country in countries:
-        normalized = _normalize_country_code(raw_country)
-        if normalized:
-            return normalized
-    return None
-
-
-async def _checkout_country_code(db: AsyncSession, user: User, request: Request) -> tuple[str | None, bool]:
-    request_country, unusable_country_header = _request_country_code(request)
-    if request_country:
-        return request_country, unusable_country_header
-
-    prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user.id))
-    if prefs:
-        prefs_country = _primary_country_from_prefs(prefs)
-        if prefs_country:
-            return prefs_country, unusable_country_header
-    return None, unusable_country_header
 
 
 def _stripe_headers(*, form_encoded: bool = False) -> dict[str, str]:
@@ -611,7 +587,7 @@ async def create_checkout_link(
             raise HTTPException(status_code=400, detail="This account already has paid premium.")
         raise HTTPException(status_code=400, detail="Only non-premium accounts can start paid checkout.")
 
-    checkout_country, unusable_country_header = await _checkout_country_code(db, user, request)
+    checkout_country, unusable_country_header = _request_country_code(request)
     if unusable_country_header:
         raise HTTPException(
             status_code=403,
@@ -625,7 +601,7 @@ async def create_checkout_link(
     if _is_sanctioned_country_code(checkout_country):
         raise HTTPException(
             status_code=403,
-            detail="Paid checkout is unavailable in your region due legal and payment restrictions.",
+            detail="Paid checkout is unavailable in your region due to legal and payment restrictions.",
         )
     selected_currency = requested_currency or _currency_for_country(checkout_country)
     price_id = _plan_price_id(selected_plan, currency=selected_currency)
