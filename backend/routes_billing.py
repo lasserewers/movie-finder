@@ -33,6 +33,12 @@ BILLING_PLAN_YEARLY = "yearly"
 BillingPlan = Literal["monthly", "yearly"]
 SUPPORTED_BILLING_CURRENCIES = ("EUR", "USD", "GBP")
 SANCTIONED_COUNTRY_CODES = {"CU", "IR", "KP", "SY"}
+REQUEST_COUNTRY_HEADERS = (
+    "CF-IPCountry",  # Cloudflare
+    "CloudFront-Viewer-Country",  # AWS CloudFront
+    "X-Vercel-IP-Country",  # Vercel
+    "X-AppEngine-Country",  # Google App Engine
+)
 
 
 class CreateCheckoutRequest(BaseModel):
@@ -264,18 +270,20 @@ def _build_portal_return_url() -> str:
     return _env("STRIPE_PORTAL_RETURN_URL") or _default_frontend_url()
 
 
-def _request_country_code(request: Request) -> str | None:
-    candidate_headers = (
-        "CF-IPCountry",  # Cloudflare
-        "CloudFront-Viewer-Country",  # AWS CloudFront
-        "X-Vercel-IP-Country",  # Vercel
-        "X-AppEngine-Country",  # Google App Engine
-    )
-    for header_name in candidate_headers:
-        candidate = _normalize_country_code(request.headers.get(header_name))
+def _request_country_code(request: Request) -> tuple[str | None, bool]:
+    saw_unusable_country_header = False
+    for header_name in REQUEST_COUNTRY_HEADERS:
+        raw_value = request.headers.get(header_name)
+        if not isinstance(raw_value, str):
+            continue
+        raw_value = raw_value.strip().upper()
+        if not raw_value:
+            continue
+        candidate = _normalize_country_code(raw_value)
         if candidate:
-            return candidate
-    return None
+            return candidate, False
+        saw_unusable_country_header = True
+    return None, saw_unusable_country_header
 
 
 def _primary_country_from_prefs(prefs: object) -> str | None:
@@ -289,17 +297,17 @@ def _primary_country_from_prefs(prefs: object) -> str | None:
     return None
 
 
-async def _checkout_country_code(db: AsyncSession, user: User, request: Request) -> str | None:
-    request_country = _request_country_code(request)
+async def _checkout_country_code(db: AsyncSession, user: User, request: Request) -> tuple[str | None, bool]:
+    request_country, unusable_country_header = _request_country_code(request)
     if request_country:
-        return request_country
+        return request_country, unusable_country_header
 
     prefs = await db.scalar(select(UserPreferences).where(UserPreferences.user_id == user.id))
     if prefs:
         prefs_country = _primary_country_from_prefs(prefs)
         if prefs_country:
-            return prefs_country
-    return None
+            return prefs_country, unusable_country_header
+    return None, unusable_country_header
 
 
 def _stripe_headers(*, form_encoded: bool = False) -> dict[str, str]:
@@ -603,9 +611,22 @@ async def create_checkout_link(
             raise HTTPException(status_code=400, detail="This account already has paid premium.")
         raise HTTPException(status_code=400, detail="Only non-premium accounts can start paid checkout.")
 
-    checkout_country = await _checkout_country_code(db, user, request)
+    checkout_country, unusable_country_header = await _checkout_country_code(db, user, request)
+    if unusable_country_header:
+        raise HTTPException(
+            status_code=403,
+            detail="Paid checkout is unavailable because your region could not be verified.",
+        )
+    if not checkout_country:
+        raise HTTPException(
+            status_code=403,
+            detail="Paid checkout is unavailable because your region could not be verified.",
+        )
     if _is_sanctioned_country_code(checkout_country):
-        raise HTTPException(status_code=403, detail="Paid checkout is unavailable in your region.")
+        raise HTTPException(
+            status_code=403,
+            detail="Paid checkout is unavailable in your region due legal and payment restrictions.",
+        )
     selected_currency = requested_currency or _currency_for_country(checkout_country)
     price_id = _plan_price_id(selected_plan, currency=selected_currency)
     if not price_id:
