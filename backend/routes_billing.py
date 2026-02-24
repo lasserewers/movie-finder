@@ -39,6 +39,8 @@ REQUEST_COUNTRY_HEADERS = (
     "X-Vercel-IP-Country",  # Vercel
     "X-AppEngine-Country",  # Google App Engine
 )
+COMPLIANCE_TEST_COUNTRY_HEADER = "X-FullStreamer-Compliance-Country"
+COMPLIANCE_TEST_TOKEN_HEADER = "X-FullStreamer-Compliance-Token"
 
 
 class CreateCheckoutRequest(BaseModel):
@@ -284,6 +286,23 @@ def _request_country_code(request: Request) -> tuple[str | None, bool]:
             return candidate, False
         saw_unusable_country_header = True
     return None, saw_unusable_country_header
+
+
+def _compliance_test_country_override(request: Request) -> str | None:
+    """
+    Optional compliance-demo override for checkout recordings.
+    This should remain disabled in normal operation.
+    """
+    if not _env_bool("BILLING_COMPLIANCE_TEST_MODE", default=False):
+        return None
+
+    required_token = _env("BILLING_COMPLIANCE_TEST_TOKEN")
+    if required_token:
+        provided_token = str(request.headers.get(COMPLIANCE_TEST_TOKEN_HEADER) or "").strip()
+        if not provided_token or not hmac.compare_digest(provided_token, required_token):
+            return None
+
+    return _normalize_country_code(request.headers.get(COMPLIANCE_TEST_COUNTRY_HEADER))
 
 
 def _stripe_headers(*, form_encoded: bool = False) -> dict[str, str]:
@@ -586,6 +605,13 @@ async def create_checkout_link(
         if current_tier == SUBSCRIPTION_TIER_PREMIUM:
             raise HTTPException(status_code=400, detail="This account already has paid premium.")
         raise HTTPException(status_code=400, detail="Only non-premium accounts can start paid checkout.")
+
+    compliance_country_override = _compliance_test_country_override(request)
+    if compliance_country_override and _is_sanctioned_country_code(compliance_country_override):
+        raise HTTPException(
+            status_code=403,
+            detail="Paid checkout is unavailable in your region due to legal and payment restrictions.",
+        )
 
     checkout_country, unusable_country_header = _request_country_code(request)
     if unusable_country_header:
