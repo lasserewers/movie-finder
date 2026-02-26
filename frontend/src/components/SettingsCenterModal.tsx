@@ -2254,7 +2254,7 @@ export default function SettingsCenterModal({
               disabled={billingPortalLoading || billingLoading}
               className="h-10 px-4 rounded-lg border border-border text-sm text-muted hover:text-text hover:border-accent-2 transition-colors disabled:opacity-55 disabled:cursor-not-allowed"
             >
-              {billingPortalLoading ? "Opening..." : "Manage billing"}
+              {billingPortalLoading ? "Opening..." : "Manage subscription"}
             </button>
           )}
           <button
@@ -2266,6 +2266,11 @@ export default function SettingsCenterModal({
             {billingLoading ? "Refreshing..." : "Refresh status"}
           </button>
         </div>
+        {isPremiumUser && billingStatus?.portal_enabled && (
+          <p className="text-xs text-muted">
+            To stop your paid plan, open <span className="text-text">Manage subscription</span> and cancel there.
+          </p>
+        )}
 
         {billingStatus && !billingStatus.configured_checkout && (
           <p className="text-xs text-muted">

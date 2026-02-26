@@ -941,8 +941,6 @@ function AppContent() {
       return;
     }
 
-    openSettingsCenter("subscription");
-
     let cancelled = false;
     const MAX_ATTEMPTS = 12;
     const RETRY_DELAY_MS = 2500;
@@ -978,7 +976,7 @@ function AppContent() {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, user, finishBillingReturnSync, openSettingsCenter, updateUser]);
+  }, [authLoading, user, finishBillingReturnSync, updateUser]);
 
   const handleOnboardingDone = async (selectedCountries: string[]) => {
     const normalizedSelectedCountries = isPremiumUser
