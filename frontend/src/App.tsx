@@ -32,7 +32,8 @@ import { useInfiniteScroll } from "./hooks/useInfiniteScroll";
 import { getHome, getRegions, getGeoCountry, type HomeSection, type Region, type MediaType } from "./api/movies";
 import type { UserListItem } from "./api/lists";
 import { checkAuth } from "./api/auth";
-import { getBillingStatus } from "./api/billing";
+import { createBillingCheckout, getBillingStatus } from "./api/billing";
+import { ApiError } from "./api/client";
 import { premiumPriceLabelsForCountry } from "./utils/billingPricing";
 import { IOS_BRAVE } from "./utils/platform";
 
@@ -175,6 +176,8 @@ function AppContent() {
   const [homeFeatureInfoOpen, setHomeFeatureInfoOpen] = useState<Set<string>>(new Set());
   const [premiumShowcaseOpen, setPremiumShowcaseOpen] = useState(false);
   const [premiumShowcasePlan, setPremiumShowcasePlan] = useState<PremiumPlanChoice | null>(null);
+  const [premiumCheckoutPlanLoading, setPremiumCheckoutPlanLoading] = useState<PremiumPlanChoice | null>(null);
+  const [premiumCheckoutErr, setPremiumCheckoutErr] = useState("");
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [vpnPromptOpen, setVpnPromptOpen] = useState(false);
   const [vpnPromptCountryCount, setVpnPromptCountryCount] = useState(1);
@@ -709,6 +712,7 @@ function AppContent() {
   }, []);
 
   const openPremiumShowcase = useCallback((plan: PremiumPlanChoice | null = null) => {
+    setPremiumCheckoutErr("");
     setPremiumShowcasePlan(plan);
     setPremiumShowcaseOpen(true);
   }, []);
@@ -716,6 +720,7 @@ function AppContent() {
   const closePremiumShowcase = useCallback(() => {
     setPremiumShowcaseOpen(false);
     setPremiumShowcasePlan(null);
+    setPremiumCheckoutErr("");
   }, []);
 
   useEffect(() => {
@@ -863,15 +868,31 @@ function AppContent() {
   );
 
   const handlePremiumPlanSelect = useCallback(
-    (_plan: PremiumPlanChoice) => {
-      closePremiumShowcase();
+    async (plan: PremiumPlanChoice) => {
+      if (premiumCheckoutPlanLoading) return;
       if (!user) {
+        closePremiumShowcase();
         openAuthModal("signup");
         return;
       }
-      openSettingsCenter("subscription");
+
+      setPremiumCheckoutErr("");
+      setPremiumCheckoutPlanLoading(plan);
+      try {
+        const result = await createBillingCheckout(plan, premiumPriceLabels.currency);
+        const checkoutUrl = (result.checkout_url || "").trim();
+        if (!checkoutUrl) {
+          throw new Error("No checkout URL returned.");
+        }
+        window.location.assign(checkoutUrl);
+      } catch (err) {
+        const e = err as ApiError;
+        setPremiumCheckoutErr(err instanceof ApiError ? e.message : "Could not start checkout.");
+      } finally {
+        setPremiumCheckoutPlanLoading(null);
+      }
     },
-    [closePremiumShowcase, openAuthModal, openSettingsCenter, user]
+    [closePremiumShowcase, openAuthModal, premiumCheckoutPlanLoading, premiumPriceLabels.currency, user]
   );
 
   const clearBillingReturnParams = useCallback(() => {
@@ -1727,26 +1748,41 @@ function AppContent() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <button
                   type="button"
-                  onClick={() => openPremiumShowcase("monthly")}
-                  className="rounded-xl border border-amber-100/45 bg-gradient-to-br from-amber-200/30 to-orange-400/25 px-4 py-3 text-left hover:from-amber-200/40 hover:to-orange-400/35 transition-colors"
+                  onClick={() => void handlePremiumPlanSelect("monthly")}
+                  disabled={Boolean(premiumCheckoutPlanLoading)}
+                  className="rounded-xl border border-amber-100/45 bg-gradient-to-br from-amber-200/30 to-orange-400/25 px-4 py-3 text-left hover:from-amber-200/40 hover:to-orange-400/35 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <div className="text-xs uppercase tracking-[0.07em] text-amber-100/85">Monthly Plan</div>
                   <div className="mt-1 text-lg font-semibold text-text">{premiumPriceLabels.monthlyLabel}</div>
-                  <div className="mt-1 text-xs text-amber-50/90">Perfect if you want flexibility.</div>
+                  <div className="mt-1 text-xs text-amber-50/90">
+                    {premiumCheckoutPlanLoading === "monthly"
+                      ? "Redirecting to checkout..."
+                      : "Perfect if you want flexibility."}
+                  </div>
                 </button>
                 <button
                   type="button"
-                  onClick={() => openPremiumShowcase("yearly")}
-                  className="relative rounded-xl border border-amber-100/60 bg-gradient-to-br from-amber-300/35 to-orange-500/30 px-4 py-3 text-left hover:from-amber-300/45 hover:to-orange-500/40 transition-colors"
+                  onClick={() => void handlePremiumPlanSelect("yearly")}
+                  disabled={Boolean(premiumCheckoutPlanLoading)}
+                  className="relative rounded-xl border border-amber-100/60 bg-gradient-to-br from-amber-300/35 to-orange-500/30 px-4 py-3 text-left hover:from-amber-300/45 hover:to-orange-500/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <span className="absolute right-3 top-2 inline-flex rounded-full border border-amber-100/50 bg-amber-100/20 px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-amber-50">
                     Best Value
                   </span>
                   <div className="text-xs uppercase tracking-[0.07em] text-amber-100/85">Yearly Plan</div>
                   <div className="mt-1 text-lg font-semibold text-text">{premiumPriceLabels.yearlyLabel}</div>
-                  <div className="mt-1 text-xs text-amber-50/90">Save money and keep discovery always on.</div>
+                  <div className="mt-1 text-xs text-amber-50/90">
+                    {premiumCheckoutPlanLoading === "yearly"
+                      ? "Redirecting to checkout..."
+                      : "Save money and keep discovery always on."}
+                  </div>
                 </button>
               </div>
+              {premiumCheckoutErr && (
+                <div className="mt-3 rounded-xl border border-red-400/35 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                  {premiumCheckoutErr}
+                </div>
+              )}
             </section>
           )}
 
@@ -1931,9 +1967,11 @@ function AppContent() {
         features={PREMIUM_FEATURE_DETAILS}
         monthlyPriceLabel={premiumPriceLabels.monthlyLabel}
         yearlyPriceLabel={premiumPriceLabels.yearlyLabel}
+        loadingPlan={premiumCheckoutPlanLoading}
+        checkoutError={premiumCheckoutErr}
         preferredPlan={premiumShowcasePlan}
         onClose={closePremiumShowcase}
-        onChoosePlan={handlePremiumPlanSelect}
+        onChoosePlan={(plan) => void handlePremiumPlanSelect(plan)}
         onSignup={() => {
           closePremiumShowcase();
           openAuthModal("signup");

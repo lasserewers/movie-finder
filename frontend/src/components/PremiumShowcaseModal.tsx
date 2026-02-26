@@ -15,6 +15,8 @@ interface Props {
   features: PremiumFeatureDescriptor[];
   monthlyPriceLabel: string;
   yearlyPriceLabel: string;
+  loadingPlan?: PremiumPlanChoice | null;
+  checkoutError?: string;
   preferredPlan?: PremiumPlanChoice | null;
   onClose: () => void;
   onChoosePlan: (plan: PremiumPlanChoice) => void;
@@ -28,6 +30,8 @@ export default function PremiumShowcaseModal({
   features,
   monthlyPriceLabel,
   yearlyPriceLabel,
+  loadingPlan = null,
+  checkoutError = "",
   preferredPlan = null,
   onClose,
   onChoosePlan,
@@ -130,27 +134,40 @@ export default function PremiumShowcaseModal({
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <button
                   type="button"
+                  disabled={Boolean(loadingPlan)}
                   onClick={() => handleChoosePlan("monthly")}
-                  className="rounded-xl border border-amber-100/45 bg-gradient-to-br from-amber-200/30 to-orange-400/25 px-4 py-3 text-left hover:from-amber-200/40 hover:to-orange-400/35 transition-colors"
+                  className="rounded-xl border border-amber-100/45 bg-gradient-to-br from-amber-200/30 to-orange-400/25 px-4 py-3 text-left hover:from-amber-200/40 hover:to-orange-400/35 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <div className="text-xs uppercase tracking-[0.07em] text-amber-100/85">Monthly Plan</div>
                   <div className="mt-1 text-lg font-semibold text-text">{monthlyPriceLabel}</div>
-                  <p className="mt-1 text-xs text-amber-100/90">Flexible entry point. Cancel anytime.</p>
+                  <p className="mt-1 text-xs text-amber-100/90">
+                    {loadingPlan === "monthly" ? "Redirecting to checkout..." : "Flexible entry point. Cancel anytime."}
+                  </p>
                 </button>
 
                 <button
                   type="button"
+                  disabled={Boolean(loadingPlan)}
                   onClick={() => handleChoosePlan("yearly")}
-                  className="relative rounded-xl border border-amber-100/60 bg-gradient-to-br from-amber-300/35 to-orange-500/30 px-4 py-3 text-left hover:from-amber-300/45 hover:to-orange-500/40 transition-colors"
+                  className="relative rounded-xl border border-amber-100/60 bg-gradient-to-br from-amber-300/35 to-orange-500/30 px-4 py-3 text-left hover:from-amber-300/45 hover:to-orange-500/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <span className="absolute right-3 top-2 inline-flex rounded-full border border-amber-100/50 bg-amber-100/20 px-2 py-0.5 text-[10px] uppercase tracking-[0.08em] text-amber-50">
                     Best Value
                   </span>
                   <div className="text-xs uppercase tracking-[0.08em] text-amber-100/85">Yearly Plan</div>
                   <div className="mt-1 text-lg font-semibold text-text">{yearlyPriceLabel}</div>
-                  <p className="mt-1 text-xs text-amber-100/90">Lower yearly cost for always-on discovery.</p>
+                  <p className="mt-1 text-xs text-amber-100/90">
+                    {loadingPlan === "yearly"
+                      ? "Redirecting to checkout..."
+                      : "Lower yearly cost for always-on discovery."}
+                  </p>
                 </button>
               </div>
+              {checkoutError && (
+                <div className="mt-3 rounded-xl border border-red-400/35 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                  {checkoutError}
+                </div>
+              )}
 
               {!isLoggedIn && (
                 <div className="mt-4 flex flex-wrap items-center gap-2">
