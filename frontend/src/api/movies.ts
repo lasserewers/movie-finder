@@ -207,7 +207,7 @@ export async function searchFilteredPage(
   countries?: string[],
   vpn = false,
   includePaid = false
-): Promise<{ results: Movie[]; page?: number; total_pages?: number }> {
+): Promise<{ results: Movie[]; page?: number; total_pages?: number; next_page?: number }> {
   const ids = providerIds.join(",");
   const countriesParam = countries && countries.length ? `&countries=${encodeURIComponent(countries.join(","))}` : "";
   const vpnParam = vpn ? "&vpn=1" : "";

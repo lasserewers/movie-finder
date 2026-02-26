@@ -1955,7 +1955,7 @@ function AppContent() {
           onSelectMovie={handleSelectMovie}
           regions={regions}
           isLoggedIn={true}
-          lockStreamable
+          lockStreamable={false}
         />
       )}
 

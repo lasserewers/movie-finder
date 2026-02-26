@@ -210,7 +210,7 @@ export default function SearchOverlay({
       let lastPageCount = 0;
       let fetchedPages = 0;
 
-      const fetchPage = async (limit: number) => {
+      const fetchPage = async (limit: number): Promise<{ results?: Movie[]; total_pages?: number; next_page?: number }> => {
         const ids = Array.from(providerIds);
         if (localMediaType === "mix") {
           if (effectiveFiltered) {
@@ -225,6 +225,7 @@ export default function SearchOverlay({
             return {
               results: combined,
               total_pages: Math.max(movieData.total_pages || 0, tvData.total_pages || 0),
+              next_page: Math.max(movieData.next_page || page + 1, tvData.next_page || page + 1),
             };
           }
           const [movieData, tvData] = await Promise.all([
@@ -258,7 +259,7 @@ export default function SearchOverlay({
       while (remaining > 0) {
         if (version !== versionRef.current) return;
         if (totalPages && page > totalPages) break;
-        let data: { results?: Movie[]; total_pages?: number } = {};
+        let data: { results?: Movie[]; total_pages?: number; next_page?: number } = {};
         try {
           try {
             data = await fetchPage(pageLimit);
@@ -348,7 +349,8 @@ export default function SearchOverlay({
           }
         }
 
-        page += 1;
+        // For filtered results, backend scans multiple TMDB pages and returns next_page
+        page = data.next_page ?? page + 1;
         if (!totalPages && lastPageCount < pageLimit) break;
       }
 
@@ -522,6 +524,7 @@ export default function SearchOverlay({
 
               {isLoggedIn && (
                 <div className="flex items-center gap-2 max-sm:w-full">
+                  {contentMode === "streamable" && (
                   <button
                     onClick={() => setLocalVpn((prev) => !prev)}
                     aria-pressed={localVpn}
@@ -546,6 +549,7 @@ export default function SearchOverlay({
                       />
                     </span>
                   </button>
+                  )}
 
                   {!lockStreamable && (
                     <button

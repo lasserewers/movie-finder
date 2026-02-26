@@ -974,35 +974,6 @@ export default function AdvancedSearchModal({
                 <div className="flex flex-wrap items-center gap-2 max-sm:w-full max-sm:justify-center">
                   {isLoggedIn && (
                     <>
-                      <button
-                        onClick={() => {
-                          const next = !localVpn;
-                          setLocalVpn(next);
-                          if (searched) void executeSearch(1, false, { vpn: next });
-                        }}
-                        aria-pressed={localVpn}
-                        className={`h-[40px] px-3 border rounded-full text-sm font-medium transition-colors flex items-center justify-between gap-2 ${
-                          localVpn
-                            ? "border-accent/60 bg-accent/10 text-text"
-                            : "border-border bg-panel text-muted"
-                        }`}
-                      >
-                        <span className="truncate">{localVpn ? "Using VPN" : "Not using VPN"}</span>
-                        <span
-                          className={`relative h-4 w-8 flex-shrink-0 rounded-full border transition-colors ${
-                            localVpn
-                              ? "bg-accent border-accent"
-                              : "bg-panel-2 border-border"
-                          }`}
-                        >
-                          <span
-                            className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-white transition-transform ${
-                              localVpn ? "translate-x-[14px]" : ""
-                            }`}
-                          />
-                        </span>
-                      </button>
-
                       {!lockStreamable && (
                         <button
                           onClick={() => {
@@ -1041,6 +1012,37 @@ export default function AdvancedSearchModal({
                                   : contentMode === "streamable"
                                     ? "translate-x-[24px]"
                                     : ""
+                              }`}
+                            />
+                          </span>
+                        </button>
+                      )}
+
+                      {contentMode === "streamable" && (
+                        <button
+                          onClick={() => {
+                            const next = !localVpn;
+                            setLocalVpn(next);
+                            if (searched) void executeSearch(1, false, { vpn: next });
+                          }}
+                          aria-pressed={localVpn}
+                          className={`h-[40px] px-3 border rounded-full text-sm font-medium transition-colors flex items-center justify-between gap-2 ${
+                            localVpn
+                              ? "border-accent/60 bg-accent/10 text-text"
+                              : "border-border bg-panel text-muted"
+                          }`}
+                        >
+                          <span className="truncate">{localVpn ? "Using VPN" : "Not using VPN"}</span>
+                          <span
+                            className={`relative h-4 w-8 flex-shrink-0 rounded-full border transition-colors ${
+                              localVpn
+                                ? "bg-accent border-accent"
+                                : "bg-panel-2 border-border"
+                            }`}
+                          >
+                            <span
+                              className={`absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-white transition-transform ${
+                                localVpn ? "translate-x-[14px]" : ""
                               }`}
                             />
                           </span>

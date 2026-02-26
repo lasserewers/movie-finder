@@ -1007,10 +1007,9 @@ async def search_advanced(
     actor_people = _parse_csv_int_values(actor_ids, max_items=12)
     director_people = _parse_csv_int_values(director_ids, max_items=12)
     sort_key = _normalize_advanced_sort(sort_by)
-    # Premium search is streamable-only.
-    content_mode_key = "streamable"
-    filtered_mode = True
-    include_paid_mode = False
+    content_mode_key = content_mode if content_mode in ("all", "available", "streamable") else "streamable"
+    filtered_mode = content_mode_key != "all"
+    include_paid_mode = content_mode_key == "available"
 
     ids: set[int] = set()
     allowed_countries: set[str] | None = None
@@ -1432,25 +1431,57 @@ async def search_filtered_page(
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
     flag_cache: dict[tuple[str, int, str], bool] = {}
 
+    MAX_SCAN_PAGES = 10  # scan up to 10 TMDB pages per request to fill limit
+
     async def _search_and_filter_page(search_fn, mt: str):
-        data = await search_fn(q, page=page)
-        raw = data.get("results", [])
-        for m in raw:
-            _normalize_result(m)
-            m["media_type"] = mt
-        filtered = await _filter_results(
-            raw,
-            ids,
-            semaphore,
-            flag_cache,
-            mt,
-            include_paid=include_paid,
-            allowed_countries=allowed_countries,
-        )
-        data["results"] = filtered[:limit]
-        data["filtered"] = True
-        data["page"] = page
-        return data
+        """Scan multiple TMDB search pages until we have `limit` filtered results."""
+        pool: list[dict] = []
+        seen_ids: set[int] = set()
+        cur_page = page
+        total_pages = None
+        last_data: dict = {}
+
+        while len(pool) < limit and (cur_page - page) < MAX_SCAN_PAGES:
+            if total_pages is not None and cur_page > total_pages:
+                break
+            data = await search_fn(q, page=cur_page)
+            last_data = data
+            if total_pages is None:
+                total_pages = data.get("total_pages", 1)
+            raw = data.get("results", [])
+            if not raw:
+                break
+            for m in raw:
+                _normalize_result(m)
+                m["media_type"] = mt
+            filtered = await _filter_results(
+                raw,
+                ids,
+                semaphore,
+                flag_cache,
+                mt,
+                include_paid=include_paid,
+                allowed_countries=allowed_countries,
+            )
+            for m in filtered:
+                mid = m.get("id")
+                if mid in seen_ids:
+                    continue
+                seen_ids.add(mid)
+                pool.append(m)
+                if len(pool) >= limit:
+                    break
+            cur_page += 1
+
+        last_data["results"] = pool[:limit]
+        last_data["filtered"] = True
+        last_data["page"] = page
+        # Report the next unscanned page so the frontend can continue
+        last_data["next_page"] = cur_page
+        # Signal exhaustion if we ran out of TMDB pages
+        if total_pages is not None and cur_page > total_pages:
+            last_data["total_pages"] = page  # no more pages
+        return last_data
 
     if media_type == "mix":
         data_m, data_t = await asyncio.gather(
@@ -1466,7 +1497,13 @@ async def search_filtered_page(
         base["results"] = combined
         base["filtered"] = True
         base["page"] = page
-        base["total_pages"] = max(data_m.get("total_pages", 0), data_t.get("total_pages", 0))
+        # Use max next_page so both streams advance together
+        base["next_page"] = max(data_m.get("next_page", page + 1), data_t.get("next_page", page + 1))
+        max_tp = max(data_m.get("total_pages", 0), data_t.get("total_pages", 0))
+        if base["next_page"] > max_tp:
+            base["total_pages"] = page
+        else:
+            base["total_pages"] = max_tp
         base["total_results"] = (data_m.get("total_results") or 0) + (data_t.get("total_results") or 0)
         return base
 
