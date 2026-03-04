@@ -37,6 +37,8 @@ from .routes_watched import router as watched_router
 from .routes_lists import router as lists_router
 from .routes_notifications import router as notifications_router
 from .routes_billing import router as billing_router
+from .routes_plex import router as plex_router
+from . import plex as plex_mod
 
 WATCH_PROVIDER_TTL = 6 * 60 * 60
 WATCH_PROVIDER_CACHE: dict[tuple[str, int], tuple[float, dict]] = {}
@@ -97,6 +99,7 @@ async def lifespan(app: FastAPI):
     await tmdb.close_client()
     await streaming_availability.close_client()
     await ratings.close_client()
+    await plex_mod.close_client()
     await close_db()
 
 
@@ -156,6 +159,7 @@ app.include_router(watched_router)
 app.include_router(lists_router)
 app.include_router(notifications_router)
 app.include_router(billing_router)
+app.include_router(plex_router)
 
 
 def _parse_csv_int_values(raw: str | None, max_items: int = 12) -> list[int]:
@@ -627,6 +631,7 @@ async def _advanced_discover_search(
     director_ids: list[int] | None = None,
     semaphore: asyncio.Semaphore | None = None,
     flag_cache: dict[tuple[str, int, str], bool] | None = None,
+    plex_tmdb_ids: set[int] | None = None,
 ) -> dict:
     p = max(1, page)
     total_pages = 0
@@ -676,6 +681,7 @@ async def _advanced_discover_search(
                 media_type=media_type,
                 include_paid=include_paid,
                 allowed_countries=allowed_countries,
+                plex_tmdb_ids=plex_tmdb_ids,
             )
         for item in page_candidates:
             results.append(item)
@@ -718,6 +724,7 @@ async def _advanced_keyword_search(
     semaphore: asyncio.Semaphore | None = None,
     flag_cache: dict[tuple[str, int, str], bool] | None = None,
     scan_limit: int = 8,
+    plex_tmdb_ids: set[int] | None = None,
 ) -> dict:
     p = max(1, page)
     total_pages = 0
@@ -780,6 +787,7 @@ async def _advanced_keyword_search(
                 media_type=media_type,
                 include_paid=include_paid,
                 allowed_countries=allowed_countries,
+                plex_tmdb_ids=plex_tmdb_ids,
             )
         for item in _sort_advanced_results(page_candidates, sort_by):
             results.append(item)
@@ -1059,6 +1067,14 @@ async def search_advanced(
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
     flag_cache: dict[tuple[str, int, str], bool] = {}
 
+    # Load Plex library IDs for filtering (cached, fast)
+    plex_ids: set[int] | None = None
+    if filtered_mode:
+        from .routes_plex import get_plex_tmdb_ids as _get_plex_ids
+        prefs_for_plex = await _get_user_prefs(db, user.id)
+        if prefs_for_plex and prefs_for_plex.plex_token:
+            plex_ids = await _get_plex_ids(db, user.id)
+
     if media_type == "mix":
         movie_params = _build_advanced_discover_params(
             "movie",
@@ -1116,6 +1132,7 @@ async def search_advanced(
                     allowed_countries=allowed_countries,
                     semaphore=semaphore,
                     flag_cache=flag_cache,
+                    plex_tmdb_ids=plex_ids,
                 ),
                 _advanced_keyword_search(
                     "tv",
@@ -1138,6 +1155,7 @@ async def search_advanced(
                     allowed_countries=allowed_countries,
                     semaphore=semaphore,
                     flag_cache=flag_cache,
+                    plex_tmdb_ids=plex_ids,
                 ),
             )
         else:
@@ -1155,6 +1173,7 @@ async def search_advanced(
                     director_ids=director_people,
                     semaphore=semaphore,
                     flag_cache=flag_cache,
+                    plex_tmdb_ids=plex_ids,
                 ),
                 _advanced_discover_search(
                     "tv",
@@ -1169,6 +1188,7 @@ async def search_advanced(
                     director_ids=director_people,
                     semaphore=semaphore,
                     flag_cache=flag_cache,
+                    plex_tmdb_ids=plex_ids,
                 ),
             )
         seen: set[tuple[str, int]] = set()
@@ -1230,6 +1250,7 @@ async def search_advanced(
             allowed_countries=allowed_countries,
             semaphore=semaphore,
             flag_cache=flag_cache,
+            plex_tmdb_ids=plex_ids,
         )
         data["results"] = _sort_advanced_results(data.get("results", []), sort_key)[:limit]
     else:
@@ -1246,6 +1267,7 @@ async def search_advanced(
             director_ids=director_people,
             semaphore=semaphore,
             flag_cache=flag_cache,
+            plex_tmdb_ids=plex_ids,
         )
     payload = {
         "results": data.get("results", []),
@@ -1321,6 +1343,11 @@ async def search_filtered(
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
     flag_cache: dict[tuple[str, int, str], bool] = {}
 
+    from .routes_plex import get_plex_tmdb_ids as _get_plex_ids
+    _plex_ids: set[int] | None = None
+    if prefs and prefs.plex_token:
+        _plex_ids = await _get_plex_ids(db, user.id)
+
     async def _search_and_filter(search_fn, mt: str):
         seen = set()
         results: list = []
@@ -1357,6 +1384,7 @@ async def search_filtered(
                     mt,
                     include_paid=include_paid,
                     allowed_countries=allowed_countries,
+                    plex_tmdb_ids=_plex_ids,
                 )
                 for m in filtered:
                     results.append(m)
@@ -1431,6 +1459,11 @@ async def search_filtered_page(
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
     flag_cache: dict[tuple[str, int, str], bool] = {}
 
+    from .routes_plex import get_plex_tmdb_ids as _get_plex_ids
+    _sfp_plex_ids: set[int] | None = None
+    if prefs and prefs.plex_token:
+        _sfp_plex_ids = await _get_plex_ids(db, user.id)
+
     MAX_SCAN_PAGES = 10  # scan up to 10 TMDB pages per request to fill limit
 
     async def _search_and_filter_page(search_fn, mt: str):
@@ -1462,6 +1495,7 @@ async def search_filtered_page(
                 mt,
                 include_paid=include_paid,
                 allowed_countries=allowed_countries,
+                plex_tmdb_ids=_sfp_plex_ids,
             )
             for m in filtered:
                 mid = m.get("id")
@@ -1511,12 +1545,51 @@ async def search_filtered_page(
     return await _search_and_filter_page(search_fn, media_type)
 
 
+PLEX_PROVIDER_ID = -1
+
+
+async def _inject_plex_provider(db: AsyncSession, user_id, tmdb_id: int, media_type: str, providers: dict) -> dict:
+    """If this TMDB ID is in user's Plex library, inject a Plex provider entry."""
+    from .routes_plex import get_plex_tmdb_ids
+    plex_ids = await get_plex_tmdb_ids(db, user_id)
+    if tmdb_id not in plex_ids:
+        return providers
+    from .models import PlexLibraryItem
+    result = await db.execute(
+        select(PlexLibraryItem.plex_rating_key, PlexLibraryItem.plex_title)
+        .where(PlexLibraryItem.user_id == user_id, PlexLibraryItem.tmdb_id == tmdb_id)
+        .limit(1)
+    )
+    row = result.first()
+    rating_key = row.plex_rating_key if row else None
+    # Load machine_id for deep link
+    prefs = await _get_user_prefs(db, user_id)
+    machine_id = prefs.plex_machine_id if prefs else None
+    plex_entry = {
+        "provider_id": PLEX_PROVIDER_ID,
+        "provider_name": "Plex",
+        "logo_path": "__plex__",
+    }
+    deep_link = ""
+    if rating_key and machine_id:
+        deep_link = f"plex://play/?metadataKey=%2Flibrary%2Fmetadata%2F{rating_key}&server={machine_id}"
+    providers = dict(providers)
+    providers["PLEX"] = {"flatrate": [plex_entry], "link": deep_link}
+    return providers
+
+
 @app.get("/api/movie/{movie_id}/providers")
-async def movie_providers(movie_id: int):
+async def movie_providers(
+    movie_id: int,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
     providers, details = await asyncio.gather(
         tmdb.get_watch_providers(movie_id),
         tmdb.get_movie_details(movie_id),
     )
+    if user:
+        providers = await _inject_plex_provider(db, user.id, movie_id, "movie", providers)
     return {"movie": details, "providers": providers}
 
 
@@ -1541,7 +1614,11 @@ async def movie_links(movie_id: int, countries: str | None = None):
 
 
 @app.get("/api/tv/{tv_id}/providers")
-async def tv_providers(tv_id: int):
+async def tv_providers(
+    tv_id: int,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
     providers, details = await asyncio.gather(
         tmdb.get_tv_watch_providers(tv_id),
         tmdb.get_tv_details(tv_id),
@@ -1564,6 +1641,8 @@ async def tv_providers(tv_id: int):
     if preferred_season_count is not None:
         details["number_of_seasons"] = preferred_season_count
     _normalize_result(details)
+    if user:
+        providers = await _inject_plex_provider(db, user.id, tv_id, "tv", providers)
     return {"movie": details, "providers": providers}
 
 
@@ -1853,7 +1932,11 @@ async def _item_has_provider(
     include_paid: bool = False,
     allowed_countries: set[str] | None = None,
     country_scope_key: str = "*",
+    plex_tmdb_ids: set[int] | None = None,
 ) -> bool:
+    # Fast Plex library check (O(1) set lookup, no API call)
+    if plex_tmdb_ids and item_id in plex_tmdb_ids:
+        return True
     cache_key = (media_type, item_id, country_scope_key)
     if cache_key in flag_cache:
         return flag_cache[cache_key]
@@ -1884,6 +1967,7 @@ async def _filter_results(
     media_type: str = "movie",
     include_paid: bool = False,
     allowed_countries: set[str] | None = None,
+    plex_tmdb_ids: set[int] | None = None,
 ) -> list:
     seen = set()
     items = []
@@ -1908,6 +1992,7 @@ async def _filter_results(
                 include_paid=include_paid,
                 allowed_countries=allowed_countries,
                 country_scope_key=country_scope_key,
+                plex_tmdb_ids=plex_tmdb_ids,
             )
             for m in items
         )
@@ -2750,6 +2835,11 @@ async def home(
         cached = HOME_CACHE.get(cache_key)
         if cached and (now - cached[0]) < HOME_CACHE_TTL:
             return cached[1]
+    from .routes_plex import get_plex_tmdb_ids as _get_plex_ids
+    _home_plex_ids: set[int] | None = None
+    if user and prefs and prefs.plex_token:
+        _home_plex_ids = await _get_plex_ids(db, user.id)
+
     sections_config = await _home_section_config(ids, section_countries, media_type)
     total_sections = len(sections_config)
     start = (page - 1) * page_size
@@ -2851,6 +2941,7 @@ async def home(
                     media_type,
                     include_paid=include_paid,
                     allowed_countries=allowed_countries,
+                    plex_tmdb_ids=_home_plex_ids,
                 )
             add_to_pool(filtered, section_pool_target)
             section_payload["next_cursor"] = data.get("next_cursor")
@@ -2879,6 +2970,7 @@ async def home(
                     media_type,
                     include_paid=include_paid,
                     allowed_countries=allowed_countries,
+                    plex_tmdb_ids=_home_plex_ids,
                 )
             add_to_pool(filtered, section_pool_target)
             scanned += 1
@@ -2906,6 +2998,7 @@ async def home(
                     media_type,
                     include_paid=include_paid,
                     allowed_countries=allowed_countries,
+                    plex_tmdb_ids=_home_plex_ids,
                 )
             add_to_pool(filtered, row_limit)
             scanned += 1
@@ -3014,6 +3107,11 @@ async def section(
         if cached and (now - cached[0]) < SECTION_CACHE_TTL:
             return cached[1]
 
+    from .routes_plex import get_plex_tmdb_ids as _get_plex_ids
+    _more_plex_ids: set[int] | None = None
+    if user and prefs and prefs.plex_token:
+        _more_plex_ids = await _get_plex_ids(db, user.id)
+
     sections = await _home_section_config(ids, section_countries, media_type)
     section_def = next((s for s in sections if s["id"] == section_id), None)
     if not section_def:
@@ -3043,6 +3141,7 @@ async def section(
                 media_type,
                 include_paid=include_paid,
                 allowed_countries=allowed_countries,
+                plex_tmdb_ids=_more_plex_ids,
             )
         results = _exclude_watched_items(results, exclude_watched_keys, media_type)
         target = pages * 20
@@ -3108,6 +3207,7 @@ async def section(
                 media_type,
                 include_paid=include_paid,
                 allowed_countries=allowed_countries,
+                plex_tmdb_ids=_more_plex_ids,
             )
         for m in filtered:
             key = _item_row_key(m, fallback_media_type=media_type)
@@ -3191,7 +3291,12 @@ async def get_config(user: User = Depends(get_current_user), db: AsyncSession = 
     countries = _user_country_list_for_tier(user, prefs)
     if not user_is_premium(user) and not countries:
         countries = ["US"]
-    return {"provider_ids": prefs.provider_ids or [], "countries": countries, "theme": prefs.theme or "dark"}
+    return {
+        "provider_ids": prefs.provider_ids or [],
+        "countries": countries,
+        "theme": prefs.theme or "dark",
+        "plex_connected": bool(prefs.plex_token),
+    }
 
 
 @app.post("/api/config")

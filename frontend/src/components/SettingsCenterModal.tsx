@@ -30,6 +30,13 @@ import { useConfig } from "../hooks/useConfig";
 import { useLists } from "../hooks/useLists";
 import { useWatched } from "../hooks/useWatched";
 import type { ProviderInfo, Region } from "../api/movies";
+import {
+  getPlexStatus,
+  createPlexPin,
+  checkPlexPin,
+  syncPlexLibrary,
+  disconnectPlex,
+} from "../api/plex";
 import { premiumPriceLabelsForCountry } from "../utils/billingPricing";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
@@ -216,6 +223,7 @@ export default function SettingsCenterModal({
   const { refresh: refreshLists } = useLists();
 
   const [activeSection, setActiveSection] = useState<SettingsCenterSection>(initialSection);
+  const [syncTab, setSyncTab] = useState<"letterboxd" | "plex">("letterboxd");
 
   const [emailPassword, setEmailPassword] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -262,6 +270,18 @@ export default function SettingsCenterModal({
   const [billingStatus, setBillingStatus] = useState<BillingStatusResponse | null>(null);
   const [billingErr, setBillingErr] = useState("");
   const [subscriptionFeatureInfoOpen, setSubscriptionFeatureInfoOpen] = useState<Set<string>>(new Set());
+
+  const [plexLoading, setPlexLoading] = useState(false);
+  const [plexSyncing, setPlexSyncing] = useState(false);
+  const [plexConnected, setPlexConnected] = useState(false);
+  const [plexServerName, setPlexServerName] = useState<string | null>(null);
+  const [plexItemCount, setPlexItemCount] = useState<number | null>(null);
+  const [plexSyncStatus, setPlexSyncStatus] = useState<string | null>(null);
+  const [plexLastSyncAt, setPlexLastSyncAt] = useState<string | null>(null);
+  const [plexWebhookSecret, setPlexWebhookSecret] = useState<string | null>(null);
+  const [plexWebhookCopied, setPlexWebhookCopied] = useState(false);
+  const [plexErr, setPlexErr] = useState("");
+  const plexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
   const [countryQuery, setCountryQuery] = useState("");
@@ -539,6 +559,58 @@ export default function SettingsCenterModal({
       cancelled = true;
     };
   }, [open, activeSection, linkedExportFile]);
+
+  const plexTabActive = open && activeSection === "linked" && syncTab === "plex";
+
+  useEffect(() => {
+    if (!plexTabActive) return;
+    let cancelled = false;
+    setPlexLoading(true);
+    setPlexErr("");
+    getPlexStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setPlexConnected(status.connected);
+        setPlexServerName(status.server_name);
+        setPlexItemCount(status.item_count);
+        setPlexSyncStatus(status.sync_status);
+        setPlexLastSyncAt(status.last_sync_at);
+        setPlexWebhookSecret(status.webhook_secret);
+        if (status.sync_status === "syncing") setPlexSyncing(true);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setPlexErr(err instanceof ApiError ? err.message : "Could not load Plex status.");
+      })
+      .finally(() => {
+        if (!cancelled) setPlexLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (plexPollRef.current) {
+        clearInterval(plexPollRef.current);
+        plexPollRef.current = null;
+      }
+    };
+  }, [plexTabActive]);
+
+  // Auto-poll while Plex sync is in progress
+  useEffect(() => {
+    if (!plexTabActive || plexSyncStatus !== "syncing") return;
+    const interval = setInterval(async () => {
+      try {
+        const status = await getPlexStatus();
+        setPlexConnected(status.connected);
+        setPlexServerName(status.server_name);
+        setPlexItemCount(status.item_count);
+        setPlexSyncStatus(status.sync_status);
+        setPlexLastSyncAt(status.last_sync_at);
+        setPlexWebhookSecret(status.webhook_secret);
+        if (status.sync_status !== "syncing") setPlexSyncing(false);
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [plexTabActive, plexSyncStatus]);
 
   useEffect(() => {
     if (!open || activeSection !== "subscription") return;
@@ -1781,9 +1853,27 @@ export default function SettingsCenterModal({
     if (activeSection === "linked") {
       return (
         <div className="space-y-4">
+          <div className="flex gap-1 rounded-lg border border-border/70 bg-bg/40 p-1">
+            {(["letterboxd", "plex"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setSyncTab(tab)}
+                className={`flex-1 px-3 py-2 rounded-md text-sm font-semibold transition-colors ${
+                  syncTab === tab
+                    ? "bg-accent/15 text-text border border-accent/50"
+                    : "text-muted border border-transparent hover:text-text hover:bg-white/5"
+                }`}
+              >
+                {tab === "letterboxd" ? "Letterboxd" : "Plex"}
+              </button>
+            ))}
+          </div>
+
+          {syncTab === "letterboxd" ? (
+          <div className="space-y-4">
           <div>
-            <h4 className="text-sm font-semibold text-text">Sync accounts</h4>
-            <p className="text-sm text-muted mt-1">
+            <p className="text-sm text-muted">
               Upload your Letterboxd data export ZIP to sync watchlist and watched titles.
             </p>
           </div>
@@ -2106,6 +2196,189 @@ export default function SettingsCenterModal({
                 </div>
               )}
             </div>
+          )}
+        </div>
+          ) : (
+          <div className="space-y-4">
+      {(() => {
+      const handlePlexConnect = async () => {
+        setPlexLoading(true);
+        setPlexErr("");
+        try {
+          const redirectUri = `${window.location.origin}/settings`;
+          const { pin_id, auth_url } = await createPlexPin(redirectUri);
+          const popup = window.open(auth_url, "plex_auth", "width=800,height=600");
+          plexPollRef.current = setInterval(async () => {
+            try {
+              const result = await checkPlexPin(pin_id);
+              if (result.authenticated) {
+                if (plexPollRef.current) {
+                  clearInterval(plexPollRef.current);
+                  plexPollRef.current = null;
+                }
+                popup?.close();
+                setPlexConnected(true);
+                setPlexServerName(result.server_name || null);
+                setPlexSyncing(true);
+                setPlexSyncStatus("syncing");
+                setPlexLoading(false);
+                try {
+                  await syncPlexLibrary();
+                } catch { /* sync runs in background */ }
+              }
+            } catch { /* keep polling */ }
+          }, 2000);
+          setTimeout(() => {
+            if (plexPollRef.current) {
+              clearInterval(plexPollRef.current);
+              plexPollRef.current = null;
+              setPlexLoading(false);
+            }
+          }, 300000);
+        } catch (err) {
+          setPlexErr(err instanceof ApiError ? err.message : "Could not start Plex connection.");
+          setPlexLoading(false);
+        }
+      };
+
+      const handlePlexSync = async () => {
+        setPlexSyncing(true);
+        setPlexSyncStatus("syncing");
+        setPlexErr("");
+        try {
+          await syncPlexLibrary();
+        } catch (err) {
+          setPlexErr(err instanceof ApiError ? err.message : "Could not start sync.");
+          setPlexSyncing(false);
+          setPlexSyncStatus(null);
+        }
+      };
+
+      const handlePlexDisconnect = async () => {
+        setPlexLoading(true);
+        setPlexErr("");
+        try {
+          await disconnectPlex();
+          setPlexConnected(false);
+          setPlexServerName(null);
+          setPlexItemCount(null);
+          setPlexSyncStatus(null);
+          setPlexLastSyncAt(null);
+        } catch (err) {
+          setPlexErr(err instanceof ApiError ? err.message : "Could not disconnect Plex.");
+        } finally {
+          setPlexLoading(false);
+        }
+      };
+
+      const handlePlexRefreshStatus = async () => {
+        try {
+          const status = await getPlexStatus();
+          setPlexConnected(status.connected);
+          setPlexServerName(status.server_name);
+          setPlexItemCount(status.item_count);
+          setPlexSyncStatus(status.sync_status);
+          setPlexLastSyncAt(status.last_sync_at);
+          setPlexWebhookSecret(status.webhook_secret);
+          if (status.sync_status !== "syncing") setPlexSyncing(false);
+        } catch { /* ignore */ }
+      };
+
+      return (
+        <>
+          <p className="text-sm text-muted">
+            Connect your Plex account to see your personal library items as available when searching and filtering.
+          </p>
+
+          {plexLoading && !plexConnected ? (
+            <div className="text-sm text-muted">Loading...</div>
+          ) : !plexConnected ? (
+            <div className="space-y-3">
+              <button
+                onClick={handlePlexConnect}
+                disabled={plexLoading}
+                className="px-4 py-2.5 font-semibold rounded-lg bg-[#E5A00D] text-black hover:bg-[#E5A00D]/85 transition-colors disabled:opacity-50 text-sm"
+              >
+                {plexLoading ? "Connecting..." : "Connect Plex Account"}
+              </button>
+              {plexErr && <div className="text-sm text-red-400">{plexErr}</div>}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  <span className="text-sm font-semibold text-text">Connected to {plexServerName}</span>
+                </div>
+                <div className="text-xs text-muted mt-1">
+                  {plexItemCount != null ? `${plexItemCount} items synced` : "Not synced yet"}
+                  {plexLastSyncAt && ` \u2022 Last sync: ${new Date(plexLastSyncAt).toLocaleDateString()}`}
+                </div>
+                {plexSyncStatus === "syncing" && (
+                  <div className="text-xs text-accent-2 mt-1">Syncing in progress...</div>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {plexSyncStatus === "syncing" ? (
+                  <button
+                    onClick={handlePlexRefreshStatus}
+                    className="px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors text-sm"
+                  >
+                    Check sync status
+                  </button>
+                ) : (
+                  <button
+                    onClick={handlePlexSync}
+                    disabled={plexSyncing}
+                    className="px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
+                  >
+                    {plexSyncing ? "Syncing..." : "Re-sync Library"}
+                  </button>
+                )}
+                <button
+                  onClick={handlePlexDisconnect}
+                  disabled={plexLoading}
+                  className="px-4 py-2.5 font-semibold rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50 text-sm"
+                >
+                  Disconnect
+                </button>
+              </div>
+
+              {plexWebhookSecret && (
+                <div className="rounded-lg border border-border/70 bg-bg/40 px-3 py-2.5 space-y-1.5">
+                  <div className="text-xs font-semibold text-text">Automatic Sync (Webhook)</div>
+                  <p className="text-xs text-muted">
+                    Add this URL in your Plex server settings under Settings &rarr; Webhooks to
+                    automatically sync when you add new items.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-xs bg-black/30 rounded px-2 py-1.5 text-muted break-all select-all">
+                      {`${window.location.origin}/api/plex/webhook/${plexWebhookSecret}`}
+                    </code>
+                    <button
+                      onClick={() => {
+                        void navigator.clipboard.writeText(
+                          `${window.location.origin}/api/plex/webhook/${plexWebhookSecret}`
+                        );
+                        setPlexWebhookCopied(true);
+                        setTimeout(() => setPlexWebhookCopied(false), 2000);
+                      }}
+                      className="shrink-0 px-2.5 py-1.5 text-xs font-semibold rounded border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors"
+                    >
+                      {plexWebhookCopied ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {plexErr && <div className="text-sm text-red-400">{plexErr}</div>}
+            </div>
+          )}
+        </>
+      );
+      })()}
+          </div>
           )}
         </div>
       );

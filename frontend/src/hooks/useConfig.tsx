@@ -12,6 +12,7 @@ interface ConfigContextValue {
   providerIds: Set<number>;
   countries: string[];
   theme: string;
+  plexConnected: boolean;
   providerMap: Record<number, string>;
   allProviders: ProviderInfo[];
   loadConfig: () => Promise<void>;
@@ -91,6 +92,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   });
   const [providerMap, setProviderMap] = useState<Record<number, string>>({});
   const [allProviders, setAllProviders] = useState<ProviderInfo[]>([]);
+  const [plexConnected, setPlexConnected] = useState(false);
 
   const loadConfig = useCallback(async () => {
     const cfg = await configApi.getConfig();
@@ -104,6 +106,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     const ids = new Set(cfg.provider_ids || []);
     setProviderIds(ids);
     setCountries(cfg.countries || []);
+    setPlexConnected(cfg.plex_connected || false);
 
     const t = localStorage.getItem("theme") || cfg.theme || "dark";
     setThemeState(t);
@@ -143,6 +146,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         providerIds,
         countries,
         theme,
+        plexConnected,
         providerMap,
         allProviders,
         loadConfig,

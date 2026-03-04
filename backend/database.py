@@ -102,6 +102,26 @@ async def init_db():
                 "ADD COLUMN IF NOT EXISTS letterboxd_watchlist_last_sync_at TIMESTAMPTZ NULL"
             )
         )
+        # Plex integration columns on user_preferences
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_token TEXT"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_server_name VARCHAR(200)"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_server_uri VARCHAR(500)"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_server_token VARCHAR(200)"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_machine_id VARCHAR(100)"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_library_section_ids TEXT"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_sync_status VARCHAR(40)"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_sync_message TEXT"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_last_sync_at TIMESTAMPTZ NULL"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_item_count INTEGER"))
+        await conn.execute(text("ALTER TABLE user_preferences ADD COLUMN IF NOT EXISTS plex_webhook_secret VARCHAR(64)"))
+        # plex_library_items table is created by Base.metadata.create_all above;
+        # add composite index for the fast membership-check query.
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_plex_library_items_user_tmdb "
+                "ON plex_library_items (user_id, tmdb_id)"
+            )
+        )
         await conn.execute(
             text(
                 "ALTER TABLE user_list_items "

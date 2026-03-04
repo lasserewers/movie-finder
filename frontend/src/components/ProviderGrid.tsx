@@ -4,6 +4,7 @@ import type { CountryProviders, ProviderInfo, StreamingLink } from "../api/movie
 import { useConfig } from "../hooks/useConfig";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p";
+const PLEX_LOGO = "/plex-logo.svg";
 const QUALITY_LABELS: Record<string, string> = { uhd: "4K", qhd: "1440p", hd: "HD", sd: "SD" };
 
 function countryFlag(code: string) {
@@ -252,9 +253,11 @@ function ProviderCard({ provider, countryCode, streamingLinks, isGuest }: CardPr
 
   const content = (
     <>
-      {provider.logo_path && (
+      {provider.logo_path === "__plex__" ? (
+        <img src={PLEX_LOGO} alt="Plex" className="w-9 h-9 sm:w-12 sm:h-12 rounded-[10px]" />
+      ) : provider.logo_path ? (
         <img src={`${TMDB_IMG}/w92${provider.logo_path}`} alt="" className="w-9 h-9 sm:w-12 sm:h-12 rounded-[10px]" />
-      )}
+      ) : null}
       <span className="text-[0.68rem] sm:text-[0.8rem] leading-tight text-center">{provider.provider_name}</span>
       <span className="text-[0.56rem] sm:text-[0.65rem] text-muted uppercase">{typeLabel}</span>
       {deep?.quality && typeof deep.quality === "string" && QUALITY_LABELS[deep.quality] && (
@@ -389,7 +392,7 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
   const otherMyRows: { country: string; providers: (ProviderInfo & { type: string; link?: string })[] }[] = [];
   if (!guestCountry) {
     for (const [country, data] of Object.entries(providers)) {
-      if (myCountrySet.has(country)) continue;
+      if (country === "PLEX" || myCountrySet.has(country)) continue;
       const myServicesMap = new Map<number, ProviderInfo & { type: string; link?: string }>();
       for (const type of ["flatrate", "free", "ads"]) {
         const list = data[type as keyof CountryProviders] as ProviderInfo[] | undefined;
@@ -408,7 +411,7 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
 
   // Other countries where this title is available on any service (stream/rent/buy)
   const otherAvailableCountries = Object.entries(providers)
-    .filter(([country, data]) => !myCountrySet.has(country) && hasAnyAvailability(data))
+    .filter(([country, data]) => country !== "PLEX" && !myCountrySet.has(country) && hasAnyAvailability(data))
     .map(([country]) => country)
     .sort((a, b) => a.localeCompare(b));
 
@@ -419,8 +422,21 @@ export default function ProviderGrid({ providers, streamingLinks, countryNameMap
     ),
   }));
 
+  const plexData = providers["PLEX"];
+  const plexProviders = plexData ? buildProviders(plexData, ["flatrate"]).map((p) => ({ ...p, isMine: true })) : [];
+
   return (
     <div>
+      {plexProviders.length > 0 && (
+        <div className="mb-4">
+          <h3 className="text-sm sm:text-base font-semibold mb-2">In your Plex library</h3>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(102px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-1.5 sm:gap-2 mb-3">
+            {plexProviders.map((p, i) => (
+              <ProviderCard key={`plex-${i}`} provider={p} countryCode="PLEX" streamingLinks={streamingLinks} isGuest={false} />
+            ))}
+          </div>
+        </div>
+      )}
       {displayCountries.map((code) => {
         const data = providers[code];
         if (!data) {

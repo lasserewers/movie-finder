@@ -4,6 +4,7 @@ export interface UserConfig {
   provider_ids: number[];
   countries: string[];
   theme?: string;
+  plex_connected?: boolean;
 }
 
 export async function getConfig(): Promise<UserConfig> {
