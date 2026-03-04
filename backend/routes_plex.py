@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import plex
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/api/plex", tags=["plex"])
 # In-memory cache of Plex TMDB IDs per user for fast filter checks
 # ---------------------------------------------------------------------------
 _plex_tmdb_cache: dict[_uuid.UUID, tuple[float, set[int]]] = {}
-PLEX_CACHE_TTL = 10 * 60  # 10 minutes
+PLEX_CACHE_TTL = 2 * 60  # 2 minutes
 
 
 async def get_plex_tmdb_ids(db: AsyncSession, user_id: _uuid.UUID) -> set[int]:
@@ -49,7 +50,7 @@ def invalidate_plex_cache(user_id: _uuid.UUID):
 # Webhook debounce: at most one sync per user per 5 minutes
 # ---------------------------------------------------------------------------
 _webhook_last_sync: dict[_uuid.UUID, float] = {}
-WEBHOOK_DEBOUNCE = 5 * 60  # 5 minutes
+WEBHOOK_DEBOUNCE = 30  # 30 seconds (incremental sync is fast)
 
 
 # ---------------------------------------------------------------------------
@@ -71,42 +72,93 @@ async def _ensure_prefs(db: AsyncSession, user_id: _uuid.UUID) -> UserPreference
 
 
 # ---------------------------------------------------------------------------
-# Background sync task
+# Background sync helpers
+# ---------------------------------------------------------------------------
+
+UPSERT_BATCH_SIZE = 200
+
+
+async def _bulk_upsert_plex_items(db: AsyncSession, user_id: _uuid.UUID, items: list[dict]):
+    """Upsert Plex items in batches, then delete stale rows."""
+    seen_keys: set[tuple[int, str]] = set()
+    deduped: list[dict] = []
+    for item in items:
+        key = (item["tmdb_id"], item["media_type"])
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped.append(item)
+
+    # Batch upsert
+    for i in range(0, len(deduped), UPSERT_BATCH_SIZE):
+        batch = deduped[i : i + UPSERT_BATCH_SIZE]
+        insert_stmt = pg_insert(PlexLibraryItem).values([
+            {
+                "user_id": user_id,
+                "tmdb_id": item["tmdb_id"],
+                "media_type": item["media_type"],
+                "plex_title": item["title"],
+                "plex_rating_key": item["rating_key"],
+            }
+            for item in batch
+        ])
+        stmt = insert_stmt.on_conflict_do_update(
+            constraint="uq_plex_library_user_tmdb_media",
+            set_={
+                "plex_title": insert_stmt.excluded.plex_title,
+                "plex_rating_key": insert_stmt.excluded.plex_rating_key,
+            },
+        )
+        await db.execute(stmt)
+
+    # Bulk delete stale rows
+    if seen_keys:
+        existing = await db.execute(
+            select(PlexLibraryItem.id, PlexLibraryItem.tmdb_id, PlexLibraryItem.media_type)
+            .where(PlexLibraryItem.user_id == user_id)
+        )
+        stale_ids = [
+            row.id for row in existing.all()
+            if (row.tmdb_id, row.media_type) not in seen_keys
+        ]
+        if stale_ids:
+            await db.execute(
+                delete(PlexLibraryItem).where(PlexLibraryItem.id.in_(stale_ids))
+            )
+    else:
+        await db.execute(delete(PlexLibraryItem).where(PlexLibraryItem.user_id == user_id))
+
+
+async def _fetch_all_sections(server_uri: str, server_token: str, section_keys: list[str]) -> list[dict]:
+    """Fetch all library sections in parallel."""
+    async def fetch_one(key: str) -> list[dict]:
+        try:
+            return await plex.get_library_items(server_uri, server_token, key)
+        except Exception:
+            return []
+
+    results = await asyncio.gather(*(fetch_one(k) for k in section_keys))
+    all_items: list[dict] = []
+    for items in results:
+        all_items.extend(items)
+    return all_items
+
+
+# ---------------------------------------------------------------------------
+# Background sync tasks
 # ---------------------------------------------------------------------------
 
 async def _run_plex_sync(user_id: _uuid.UUID):
-    """Background task that syncs user's Plex library to DB."""
+    """Full background sync — re-fetches entire Plex library."""
     async with async_session() as db:
         try:
             prefs = await _get_prefs(db, user_id)
             if not prefs or not prefs.plex_server_uri or not prefs.plex_server_token:
                 return
 
-            section_keys = (prefs.plex_library_section_ids or "").split(",")
-            all_items: list[dict] = []
-            for key in section_keys:
-                key = key.strip()
-                if not key:
-                    continue
-                try:
-                    items = await plex.get_library_items(
-                        prefs.plex_server_uri, prefs.plex_server_token, key
-                    )
-                    all_items.extend(items)
-                except Exception:
-                    # Skip unreachable sections but continue with others
-                    continue
+            section_keys = [k.strip() for k in (prefs.plex_library_section_ids or "").split(",") if k.strip()]
+            all_items = await _fetch_all_sections(prefs.plex_server_uri, prefs.plex_server_token, section_keys)
 
-            # Clear existing items and bulk insert
-            await db.execute(delete(PlexLibraryItem).where(PlexLibraryItem.user_id == user_id))
-            for item in all_items:
-                db.add(PlexLibraryItem(
-                    user_id=user_id,
-                    tmdb_id=item["tmdb_id"],
-                    media_type=item["media_type"],
-                    plex_title=item["title"],
-                    plex_rating_key=item["rating_key"],
-                ))
+            await _bulk_upsert_plex_items(db, user_id, all_items)
 
             prefs.plex_sync_status = "ok"
             prefs.plex_sync_message = f"Synced {len(all_items)} items"
@@ -114,8 +166,96 @@ async def _run_plex_sync(user_id: _uuid.UUID):
             prefs.plex_item_count = len(all_items)
             await db.commit()
 
-            # Update in-memory cache
             _plex_tmdb_cache[user_id] = (time.time(), {i["tmdb_id"] for i in all_items})
+
+        except Exception as e:
+            try:
+                prefs = await _get_prefs(db, user_id)
+                if prefs:
+                    prefs.plex_sync_status = "error"
+                    prefs.plex_sync_message = str(e)[:500]
+                    await db.commit()
+            except Exception:
+                pass
+
+
+async def _run_plex_incremental_sync(user_id: _uuid.UUID):
+    """Fast incremental sync — fetches only recently added items."""
+    async with async_session() as db:
+        try:
+            prefs = await _get_prefs(db, user_id)
+            if not prefs or not prefs.plex_server_uri or not prefs.plex_server_token:
+                return
+
+            section_keys = [k.strip() for k in (prefs.plex_library_section_ids or "").split(",") if k.strip()]
+
+            # Fetch recently added from all sections in parallel
+            async def fetch_recent(key: str) -> list[dict]:
+                try:
+                    return await plex.get_recently_added(prefs.plex_server_uri, prefs.plex_server_token, key)
+                except Exception:
+                    return []
+
+            results = await asyncio.gather(*(fetch_recent(k) for k in section_keys))
+            new_items: list[dict] = []
+            for items in results:
+                new_items.extend(items)
+
+            if not new_items:
+                prefs.plex_sync_status = "ok"
+                prefs.plex_sync_message = "No new items found"
+                await db.commit()
+                return
+
+            # Upsert only the new items (no stale-item deletion — full sync handles that)
+            seen_keys: set[tuple[int, str]] = set()
+            deduped: list[dict] = []
+            for item in new_items:
+                key = (item["tmdb_id"], item["media_type"])
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    deduped.append(item)
+
+            insert_stmt = pg_insert(PlexLibraryItem).values([
+                {
+                    "user_id": user_id,
+                    "tmdb_id": item["tmdb_id"],
+                    "media_type": item["media_type"],
+                    "plex_title": item["title"],
+                    "plex_rating_key": item["rating_key"],
+                }
+                for item in deduped
+            ])
+            stmt = insert_stmt.on_conflict_do_update(
+                constraint="uq_plex_library_user_tmdb_media",
+                set_={
+                    "plex_title": insert_stmt.excluded.plex_title,
+                    "plex_rating_key": insert_stmt.excluded.plex_rating_key,
+                },
+            )
+            await db.execute(stmt)
+
+            # Update item count
+            count_result = await db.execute(
+                select(PlexLibraryItem.id).where(PlexLibraryItem.user_id == user_id)
+            )
+            total = len(count_result.all())
+
+            prefs.plex_sync_status = "ok"
+            prefs.plex_sync_message = f"Added {len(deduped)} new items ({total} total)"
+            prefs.plex_last_sync_at = datetime.now(timezone.utc)
+            prefs.plex_item_count = total
+            await db.commit()
+
+            # Update cache: add new IDs to existing set
+            cached = _plex_tmdb_cache.get(user_id)
+            if cached:
+                new_ids = cached[1] | {i["tmdb_id"] for i in deduped}
+                _plex_tmdb_cache[user_id] = (time.time(), new_ids)
+            else:
+                invalidate_plex_cache(user_id)
+
+            logger.info("Plex incremental sync done for user %s: %d new items", user_id, len(deduped))
 
         except Exception as e:
             try:
@@ -230,6 +370,7 @@ async def plex_sync(
     prefs.plex_sync_status = "syncing"
     prefs.plex_sync_message = "Starting sync..."
     await db.commit()
+    invalidate_plex_cache(user.id)
     background_tasks.add_task(_run_plex_sync, user.id)
     return {"ok": True, "message": "Sync started"}
 
@@ -293,6 +434,8 @@ async def plex_webhook(secret: str, request: Request):
         prefs.plex_sync_message = "Webhook-triggered sync..."
         await db.commit()
 
-    logger.info("Plex webhook triggering sync for user %s", user_id)
-    asyncio.create_task(_run_plex_sync(user_id))
+    # Invalidate cache immediately so requests during sync hit the DB
+    invalidate_plex_cache(user_id)
+    logger.info("Plex webhook triggering incremental sync for user %s", user_id)
+    asyncio.create_task(_run_plex_incremental_sync(user_id))
     return {"ok": True, "message": "Sync triggered"}

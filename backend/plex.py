@@ -158,11 +158,27 @@ def _extract_tmdb_id(item: dict) -> int | None:
     return None
 
 
+def _parse_metadata_items(metadata_list: list[dict]) -> list[dict]:
+    """Extract TMDB-matched items from Plex Metadata entries."""
+    items: list[dict] = []
+    for meta in metadata_list:
+        tmdb_id = _extract_tmdb_id(meta)
+        if tmdb_id:
+            plex_type = meta.get("type", "movie")
+            items.append({
+                "tmdb_id": tmdb_id,
+                "title": meta.get("title", ""),
+                "rating_key": str(meta.get("ratingKey", "")),
+                "media_type": "tv" if plex_type == "show" else "movie",
+            })
+    return items
+
+
 async def get_library_items(
     server_uri: str,
     server_token: str,
     section_key: str,
-    batch_size: int = 100,
+    batch_size: int = 250,
 ) -> list[dict]:
     """Paginate through a library section, return [{tmdb_id, title, rating_key, media_type}]."""
     client = await _get_client()
@@ -183,20 +199,31 @@ async def get_library_items(
         metadata_list = container.get("Metadata", [])
         if not metadata_list:
             break
-        for meta in metadata_list:
-            tmdb_id = _extract_tmdb_id(meta)
-            if tmdb_id:
-                plex_type = meta.get("type", "movie")
-                items.append({
-                    "tmdb_id": tmdb_id,
-                    "title": meta.get("title", ""),
-                    "rating_key": str(meta.get("ratingKey", "")),
-                    "media_type": "tv" if plex_type == "show" else "movie",
-                })
+        items.extend(_parse_metadata_items(metadata_list))
         total_size = container.get("totalSize", 0)
         start += batch_size
         if start >= total_size:
             break
-        # Throttle to ~3 req/s to avoid overwhelming the PMS
-        await asyncio.sleep(0.33)
+        await asyncio.sleep(0.1)
     return items
+
+
+async def get_recently_added(
+    server_uri: str,
+    server_token: str,
+    section_key: str,
+    limit: int = 50,
+) -> list[dict]:
+    """Fetch recently added items from a library section."""
+    client = await _get_client()
+    resp = await client.get(
+        f"{server_uri}/library/sections/{section_key}/recentlyAdded",
+        headers={**PLEX_HEADERS, "X-Plex-Token": server_token},
+        params={
+            "includeGuids": 1,
+            "X-Plex-Container-Size": limit,
+        },
+    )
+    resp.raise_for_status()
+    container = resp.json().get("MediaContainer", {})
+    return _parse_metadata_items(container.get("Metadata", []))
