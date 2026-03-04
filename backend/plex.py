@@ -23,7 +23,7 @@ _LEGACY_TMDB_RE = re.compile(r"com\.plexapp\.agents\.themoviedb://(\d+)")
 async def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=15)
+        _client = httpx.AsyncClient(timeout=30)
     return _client
 
 
@@ -93,12 +93,18 @@ async def get_servers(plex_token: str) -> list[dict]:
         if "server" not in (resource.get("provides") or ""):
             continue
         conns = resource.get("connections", [])
-        # Prefer non-relay HTTPS, then any available connection
+        # Prefer remote (non-local) HTTPS, then relay, then any connection.
+        # Local-network URIs aren't reachable from a remote server.
         uri = None
         for conn in conns:
-            if conn.get("protocol") == "https" and not conn.get("relay"):
+            if conn.get("protocol") == "https" and not conn.get("relay") and not conn.get("local"):
                 uri = conn.get("uri")
                 break
+        if not uri:
+            for conn in conns:
+                if conn.get("relay") and conn.get("uri"):
+                    uri = conn["uri"]
+                    break
         if not uri:
             for conn in conns:
                 if conn.get("uri"):

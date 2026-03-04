@@ -2205,7 +2205,7 @@ export default function SettingsCenterModal({
         setPlexLoading(true);
         setPlexErr("");
         try {
-          const redirectUri = `${window.location.origin}/settings`;
+          const redirectUri = `${window.location.origin}/`;
           const { pin_id, auth_url } = await createPlexPin(redirectUri);
           const popup = window.open(auth_url, "plex_auth", "width=800,height=600");
           plexPollRef.current = setInterval(async () => {
