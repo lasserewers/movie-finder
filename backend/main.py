@@ -1572,7 +1572,7 @@ async def _inject_plex_provider(db: AsyncSession, user_id, tmdb_id: int, media_t
     }
     deep_link = ""
     if rating_key and machine_id:
-        deep_link = f"plex://play/?metadataKey=%2Flibrary%2Fmetadata%2F{rating_key}&server={machine_id}"
+        deep_link = f"https://app.plex.tv/desktop#!/server/{machine_id}/details?key=%2Flibrary%2Fmetadata%2F{rating_key}"
     providers = dict(providers)
     providers["PLEX"] = {"flatrate": [plex_entry], "link": deep_link}
     return providers
