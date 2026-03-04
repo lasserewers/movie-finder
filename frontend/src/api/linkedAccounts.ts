@@ -135,3 +135,60 @@ export async function unlinkLetterboxdWatchlist(): Promise<LetterboxdUnlinkResul
     method: "DELETE",
   });
 }
+
+
+// ---------------------------------------------------------------------------
+// IMDb CSV import
+// ---------------------------------------------------------------------------
+
+export interface ImdbSyncResult {
+  ok: boolean;
+  status: "ok" | "empty" | "no_matches" | "conflict";
+  message: string;
+  conflict_name?: string;
+  total_items: number;
+  added_count: number;
+  already_exists_count: number;
+  unmatched_count: number;
+}
+
+function buildImdbCsvForm(csvFile: File, extra?: Record<string, string>): FormData {
+  const form = new FormData();
+  form.append("file", csvFile, csvFile.name || "imdb-export.csv");
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      form.append(key, value);
+    }
+  }
+  return form;
+}
+
+export async function syncImdbWatchlist(csvFile: File): Promise<ImdbSyncResult> {
+  return apiFetch<ImdbSyncResult>("/api/watchlist/sync/imdb", {
+    method: "POST",
+    body: buildImdbCsvForm(csvFile),
+    timeoutMs: 600000,
+  });
+}
+
+export async function syncImdbRatings(csvFile: File): Promise<ImdbSyncResult> {
+  return apiFetch<ImdbSyncResult>("/api/watched/sync/imdb", {
+    method: "POST",
+    body: buildImdbCsvForm(csvFile),
+    timeoutMs: 600000,
+  });
+}
+
+export async function syncImdbList(
+  csvFile: File,
+  listName: string,
+  conflictMode?: "merge" | "overwrite",
+): Promise<ImdbSyncResult> {
+  const extra: Record<string, string> = { list_name: listName };
+  if (conflictMode) extra.conflict_mode = conflictMode;
+  return apiFetch<ImdbSyncResult>("/api/lists/sync/imdb", {
+    method: "POST",
+    body: buildImdbCsvForm(csvFile, extra),
+    timeoutMs: 600000,
+  });
+}

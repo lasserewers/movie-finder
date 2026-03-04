@@ -129,7 +129,7 @@ async def csrf_middleware(request: Request, call_next):
     if request.method in ("POST", "PUT", "PATCH", "DELETE"):
         # Skip CSRF for auth endpoints (login/signup don't have a token yet)
         path = request.url.path
-        if path not in ("/api/auth/login", "/api/auth/signup", "/api/auth/logout"):
+        if path not in ("/api/auth/login", "/api/auth/signup", "/api/auth/logout") and not path.startswith("/api/plex/webhook/"):
             if request.cookies.get("access_token"):
                 try:
                     verify_csrf(request)

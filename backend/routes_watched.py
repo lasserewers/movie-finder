@@ -634,3 +634,115 @@ async def remove_watched_item(
     await db.delete(row)
     await db.commit()
     return {"ok": True, "removed": True}
+
+
+# ---------------------------------------------------------------------------
+# IMDb ratings CSV → watched items
+# ---------------------------------------------------------------------------
+
+@router.post("/sync/imdb")
+async def sync_watched_from_imdb(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from .routes_watchlist import parse_imdb_csv, resolve_imdb_to_tmdb, IMDB_IMPORT_LIMIT
+
+    csv_bytes = await file.read()
+    entries = parse_imdb_csv(csv_bytes)
+    # Only items with a rating are "watched"
+    entries = [e for e in entries if e["your_rating"] is not None]
+    limit_applied = False
+    if LETTERBOXD_WATCHED_IMPORT_LIMIT > 0 and len(entries) > LETTERBOXD_WATCHED_IMPORT_LIMIT:
+        entries = entries[:LETTERBOXD_WATCHED_IMPORT_LIMIT]
+        limit_applied = True
+    elif len(entries) > IMDB_IMPORT_LIMIT:
+        entries = entries[:IMDB_IMPORT_LIMIT]
+        limit_applied = True
+
+    if not entries:
+        return {
+            "ok": True, "status": "empty",
+            "message": "No rated items found in this CSV. Make sure you're uploading your IMDb Ratings export.",
+            "total_items": 0, "added_count": 0, "already_exists_count": 0, "unmatched_count": 0,
+        }
+
+    resolved = await resolve_imdb_to_tmdb(entries)
+
+    existing_rows = (
+        await db.execute(select(WatchedItem).where(WatchedItem.user_id == user.id))
+    ).scalars().all()
+    existing_by_key = {(r.media_type, int(r.tmdb_id)): r for r in existing_rows}
+
+    total_items = len(entries)
+    added_count = 0
+    already_exists_count = 0
+    unmatched_count = 0
+    seen_import: set[tuple[str, int]] = set()
+    pending: list[WatchedItem] = []
+
+    for entry in entries:
+        tmdb_result = resolved.get(entry["imdb_id"])
+        if not tmdb_result:
+            unmatched_count += 1
+            continue
+        tmdb_id = int(tmdb_result.get("id") or 0)
+        if tmdb_id <= 0:
+            unmatched_count += 1
+            continue
+        media_type = tmdb_result.get("_media_type", entry["media_type"])
+        key = (media_type, tmdb_id)
+        if key in seen_import:
+            already_exists_count += 1
+            continue
+        seen_import.add(key)
+
+        title = str(tmdb_result.get("title") or tmdb_result.get("name") or entry["title"]).strip()
+        poster_path = str(tmdb_result.get("poster_path") or "").strip() or None
+        release_date = str(tmdb_result.get("release_date") or tmdb_result.get("first_air_date") or "").strip() or None
+
+        # Parse Date Rated for watched_at
+        watched_at = datetime.now(timezone.utc)
+        if entry["date_rated"]:
+            try:
+                watched_at = datetime.strptime(entry["date_rated"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+
+        if key in existing_by_key:
+            row = existing_by_key[key]
+            row.title = title
+            if poster_path:
+                row.poster_path = poster_path
+            if release_date:
+                row.release_date = release_date
+            already_exists_count += 1
+            continue
+
+        pending.append(WatchedItem(
+            user_id=user.id, tmdb_id=tmdb_id, media_type=media_type,
+            title=title, poster_path=poster_path, release_date=release_date,
+            watched_at=watched_at, created_at=datetime.now(timezone.utc),
+        ))
+        added_count += 1
+
+    if pending:
+        db.add_all(pending)
+
+    if total_items > 0 and added_count == 0 and already_exists_count == 0:
+        status = "no_matches"
+        message = "No titles could be matched from IMDb to TMDB."
+    else:
+        status = "ok"
+        message = f"Synced IMDb ratings as watched. Added {added_count}. {already_exists_count} already watched. {unmatched_count} unmatched."
+    if limit_applied:
+        message += f" Imported the first {IMDB_IMPORT_LIMIT} titles."
+
+    add_audit_log(db, action="user.watched_sync_imdb",
+                  message=f"IMDb ratings sync: added {added_count}, existing {already_exists_count}, unmatched {unmatched_count}.",
+                  actor_user=user, target_user=user)
+    await db.commit()
+
+    return {"ok": True, "status": status, "message": message,
+            "total_items": total_items, "added_count": added_count,
+            "already_exists_count": already_exists_count, "unmatched_count": unmatched_count}

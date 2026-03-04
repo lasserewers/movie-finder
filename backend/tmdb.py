@@ -220,3 +220,14 @@ async def get_tv_provider_list(country: str | None = None) -> list:
         params["watch_region"] = country
     data = await _get("/watch/providers/tv", params)
     return data.get("results", [])
+
+
+async def find_by_imdb_id(imdb_id: str) -> dict | None:
+    """Look up a movie or TV show by IMDb ID. Returns TMDB result with _media_type key, or None."""
+    data = await _get(f"/find/{imdb_id}", {"external_source": "imdb_id"})
+    for key in ("movie_results", "tv_results"):
+        if data.get(key):
+            result = data[key][0]
+            result["_media_type"] = "movie" if key == "movie_results" else "tv"
+            return result
+    return None

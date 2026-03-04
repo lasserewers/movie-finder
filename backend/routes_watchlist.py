@@ -1048,3 +1048,160 @@ async def remove_watchlist_item(
     await db.delete(row)
     await db.commit()
     return {"ok": True, "removed": True}
+
+
+# ---------------------------------------------------------------------------
+# IMDb CSV import helpers
+# ---------------------------------------------------------------------------
+
+IMDB_TITLE_TYPE_MAP: dict[str, str] = {
+    "movie": "movie",
+    "tvMovie": "movie",
+    "short": "movie",
+    "video": "movie",
+    "tvSeries": "tv",
+    "tvMiniSeries": "tv",
+    "tvShort": "tv",
+    "tvSpecial": "tv",
+}
+
+IMDB_IMPORT_LIMIT = 800
+
+
+def parse_imdb_csv(csv_bytes: bytes) -> list[dict]:
+    """Parse an IMDb CSV export. Returns list of {imdb_id, title, year, title_type, media_type, your_rating, date_rated}."""
+    text = csv_bytes.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    entries = []
+    seen: set[str] = set()
+    for row in reader:
+        imdb_id = (row.get("Const") or "").strip()
+        if not imdb_id.startswith("tt") or imdb_id in seen:
+            continue
+        seen.add(imdb_id)
+        title_type = (row.get("Title Type") or "").strip()
+        entries.append({
+            "imdb_id": imdb_id,
+            "title": (row.get("Title") or "").strip(),
+            "year": int(row["Year"]) if row.get("Year", "").strip().isdigit() else None,
+            "title_type": title_type,
+            "media_type": IMDB_TITLE_TYPE_MAP.get(title_type, "movie"),
+            "your_rating": int(row["Your Rating"]) if row.get("Your Rating", "").strip().isdigit() else None,
+            "date_rated": (row.get("Date Rated") or row.get("Date Added") or "").strip() or None,
+        })
+    return entries
+
+
+async def resolve_imdb_to_tmdb(entries: list[dict]) -> dict[str, dict | None]:
+    """Resolve IMDb IDs to TMDB results. Returns {imdb_id: tmdb_result_or_None}."""
+    sem = asyncio.Semaphore(4)
+    resolved: dict[str, dict | None] = {}
+
+    async def resolve_one(imdb_id: str) -> tuple[str, dict | None]:
+        async with sem:
+            try:
+                return imdb_id, await tmdb.find_by_imdb_id(imdb_id)
+            except Exception:
+                return imdb_id, None
+
+    unique_ids = list({e["imdb_id"] for e in entries})
+    tasks = [asyncio.create_task(resolve_one(iid)) for iid in unique_ids]
+    for task in asyncio.as_completed(tasks):
+        imdb_id, result = await task
+        resolved[imdb_id] = result
+
+    return resolved
+
+
+@router.post("/sync/imdb")
+async def sync_watchlist_from_imdb(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    csv_bytes = await file.read()
+    entries = parse_imdb_csv(csv_bytes)
+    # Filter to watchlist-type entries (no rating = watchlist item)
+    entries = [e for e in entries if e["your_rating"] is None]
+    limit_applied = False
+    if len(entries) > IMDB_IMPORT_LIMIT:
+        entries = entries[:IMDB_IMPORT_LIMIT]
+        limit_applied = True
+    if not entries:
+        return {
+            "ok": True, "status": "empty",
+            "message": "No watchlist items found in this CSV. Make sure you're uploading your IMDb Watchlist export.",
+            "total_items": 0, "added_count": 0, "already_exists_count": 0, "unmatched_count": 0,
+        }
+
+    resolved = await resolve_imdb_to_tmdb(entries)
+
+    existing_rows = (
+        await db.execute(
+            select(WatchlistItem).where(WatchlistItem.user_id == user.id)
+        )
+    ).scalars().all()
+    existing_by_key = {(r.media_type, int(r.tmdb_id)): r for r in existing_rows}
+
+    total_items = len(entries)
+    added_count = 0
+    already_exists_count = 0
+    unmatched_count = 0
+    seen_import: set[tuple[str, int]] = set()
+    pending: list[WatchlistItem] = []
+
+    for entry in entries:
+        tmdb_result = resolved.get(entry["imdb_id"])
+        if not tmdb_result:
+            unmatched_count += 1
+            continue
+        tmdb_id = int(tmdb_result.get("id") or 0)
+        if tmdb_id <= 0:
+            unmatched_count += 1
+            continue
+        media_type = tmdb_result.get("_media_type", entry["media_type"])
+        key = (media_type, tmdb_id)
+        if key in seen_import:
+            already_exists_count += 1
+            continue
+        seen_import.add(key)
+
+        title = str(tmdb_result.get("title") or tmdb_result.get("name") or entry["title"]).strip()
+        poster_path = str(tmdb_result.get("poster_path") or "").strip() or None
+        release_date = str(tmdb_result.get("release_date") or tmdb_result.get("first_air_date") or "").strip() or None
+
+        if key in existing_by_key:
+            row = existing_by_key[key]
+            row.title = title
+            row.poster_path = poster_path
+            row.release_date = release_date
+            already_exists_count += 1
+            continue
+
+        pending.append(WatchlistItem(
+            user_id=user.id, tmdb_id=tmdb_id, media_type=media_type,
+            title=title, poster_path=poster_path, release_date=release_date,
+            created_at=datetime.now(timezone.utc),
+        ))
+        added_count += 1
+
+    if pending:
+        db.add_all(pending)
+
+    if total_items > 0 and added_count == 0 and already_exists_count == 0:
+        status = "no_matches"
+        message = "No titles could be matched from IMDb to TMDB."
+    else:
+        status = "ok"
+        message = f"Synced IMDb watchlist. Added {added_count}. {already_exists_count} already in watchlist. {unmatched_count} unmatched."
+    if limit_applied:
+        message += f" Imported the first {IMDB_IMPORT_LIMIT} titles."
+
+    add_audit_log(db, action="user.watchlist_sync_imdb",
+                  message=f"IMDb watchlist sync: added {added_count}, existing {already_exists_count}, unmatched {unmatched_count}.",
+                  actor_user=user, target_user=user)
+    await db.commit()
+
+    return {"ok": True, "status": status, "message": message,
+            "total_items": total_items, "added_count": added_count,
+            "already_exists_count": already_exists_count, "unmatched_count": unmatched_count}

@@ -24,6 +24,9 @@ import {
   type LetterboxdListConflictMode,
   type LetterboxdListSyncScope,
   type LetterboxdSyncStatus,
+  syncImdbWatchlist,
+  syncImdbRatings,
+  syncImdbList,
 } from "../api/linkedAccounts";
 import { useAuth } from "../hooks/useAuth";
 import { useConfig } from "../hooks/useConfig";
@@ -223,7 +226,7 @@ export default function SettingsCenterModal({
   const { refresh: refreshLists } = useLists();
 
   const [activeSection, setActiveSection] = useState<SettingsCenterSection>(initialSection);
-  const [syncTab, setSyncTab] = useState<"letterboxd" | "plex">("letterboxd");
+  const [syncTab, setSyncTab] = useState<"letterboxd" | "plex" | "imdb">("letterboxd");
 
   const [emailPassword, setEmailPassword] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -282,6 +285,17 @@ export default function SettingsCenterModal({
   const [plexWebhookCopied, setPlexWebhookCopied] = useState(false);
   const [plexErr, setPlexErr] = useState("");
   const plexPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const [imdbFile, setImdbFileRaw] = useState<File | null>(null);
+  const [imdbDropActive, setImdbDropActive] = useState(false);
+  const [imdbWatchlistSyncing, setImdbWatchlistSyncing] = useState(false);
+  const [imdbRatingsSyncing, setImdbRatingsSyncing] = useState(false);
+  const [imdbListSyncing, setImdbListSyncing] = useState(false);
+  const [imdbListName, setImdbListName] = useState("");
+  const [imdbListConflictName, setImdbListConflictName] = useState<string | null>(null);
+  const [imdbErr, setImdbErr] = useState("");
+  const [imdbMsg, setImdbMsg] = useState("");
+  const imdbFileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
   const [countryQuery, setCountryQuery] = useState("");
@@ -371,6 +385,15 @@ export default function SettingsCenterModal({
     setLinkedListConflictNames([]);
     setLinkedExportFile(null);
     setLinkedDropActive(false);
+    setImdbFileRaw(null);
+    setImdbDropActive(false);
+    setImdbWatchlistSyncing(false);
+    setImdbRatingsSyncing(false);
+    setImdbListSyncing(false);
+    setImdbListName("");
+    setImdbListConflictName(null);
+    setImdbErr("");
+    setImdbMsg("");
     setBillingErr("");
     setBillingStatus(null);
     setSubscriptionFeatureInfoOpen(new Set());
@@ -712,6 +735,10 @@ export default function SettingsCenterModal({
   const linkedSelectedListSet = useMemo(() => new Set(linkedSelectedListNames), [linkedSelectedListNames]);
   const linkedCanSyncSelectedLists = linkedListSyncScope !== "selected" || linkedSelectedListNames.length > 0;
 
+  const imdbAnySyncing = imdbWatchlistSyncing || imdbRatingsSyncing || imdbListSyncing;
+  const imdbUploadDisabled = imdbAnySyncing;
+  const imdbCanSync = Boolean(imdbFile);
+
   const setLinkedFile = useCallback((nextFile: File | null) => {
     setLinkedExportFile(nextFile);
     setLinkedErr("");
@@ -756,6 +783,117 @@ export default function SettingsCenterModal({
     },
     [setLinkedFile]
   );
+
+  // -- IMDb file helpers (mirrors Letterboxd pattern) --
+  function isLikelyCsvFile(file: File): boolean {
+    const lowerName = (file.name || "").toLowerCase();
+    const lowerType = (file.type || "").toLowerCase();
+    return lowerName.endsWith(".csv") || lowerType === "text/csv" || lowerType === "application/csv";
+  }
+
+  const setImdbFile = useCallback((nextFile: File | null) => {
+    setImdbFileRaw(nextFile);
+    setImdbErr("");
+    setImdbMsg("");
+    setImdbListConflictName(null);
+    if (!nextFile) {
+      setImdbListName("");
+    }
+  }, []);
+
+  const openImdbFilePicker = useCallback(() => {
+    const input = imdbFileInputRef.current;
+    if (!input) return;
+    input.value = "";
+    input.click();
+  }, []);
+
+  const resetImdbSelectedFile = useCallback(() => {
+    const input = imdbFileInputRef.current;
+    if (input) input.value = "";
+    setImdbDropActive(false);
+    setImdbFile(null);
+  }, [setImdbFile]);
+
+  const handleImdbFileChange = useCallback(
+    (nextFile: File | null) => {
+      setImdbDropActive(false);
+      if (!nextFile) {
+        setImdbFile(null);
+        return;
+      }
+      if (!isLikelyCsvFile(nextFile)) {
+        setImdbErr("Please upload a .csv export file from IMDb.");
+        return;
+      }
+      setImdbFile(nextFile);
+    },
+    [setImdbFile]
+  );
+
+  const handleImdbWatchlistSync = async () => {
+    if (imdbAnySyncing || !imdbFile) return;
+    setImdbWatchlistSyncing(true);
+    setImdbErr("");
+    setImdbMsg("");
+    try {
+      const result = await syncImdbWatchlist(imdbFile);
+      setImdbMsg(result.message);
+      onSaved();
+    } catch (err) {
+      setImdbErr(err instanceof ApiError ? err.message : "Watchlist sync failed.");
+    } finally {
+      setImdbWatchlistSyncing(false);
+    }
+  };
+
+  const handleImdbRatingsSync = async () => {
+    if (imdbAnySyncing || !imdbFile) return;
+    setImdbRatingsSyncing(true);
+    setImdbErr("");
+    setImdbMsg("");
+    try {
+      const result = await syncImdbRatings(imdbFile);
+      setImdbMsg(result.message);
+      refreshWatched();
+      onSaved();
+    } catch (err) {
+      setImdbErr(err instanceof ApiError ? err.message : "Ratings sync failed.");
+    } finally {
+      setImdbRatingsSyncing(false);
+    }
+  };
+
+  const runImdbListSync = useCallback(
+    async (conflictMode?: "merge" | "overwrite") => {
+      if (imdbAnySyncing || !imdbFile || !imdbListName.trim()) return;
+      setImdbListSyncing(true);
+      setImdbErr("");
+      setImdbMsg("");
+      setImdbListConflictName(null);
+      try {
+        const result = await syncImdbList(imdbFile, imdbListName.trim(), conflictMode);
+        if (result.status === "conflict") {
+          setImdbListConflictName(result.conflict_name || imdbListName.trim());
+          setImdbErr(result.message);
+          setImdbListSyncing(false);
+          return;
+        }
+        setImdbMsg(result.message);
+        refreshLists();
+        onSaved();
+      } catch (err) {
+        setImdbErr(err instanceof ApiError ? err.message : "List sync failed.");
+      } finally {
+        setImdbListSyncing(false);
+      }
+    },
+    [imdbAnySyncing, imdbFile, imdbListName, onSaved, refreshLists]
+  );
+
+  const handleImdbListSync = useCallback(async () => {
+    await runImdbListSync(undefined);
+  }, [runImdbListSync]);
 
   const handleEmailSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -1854,7 +1992,7 @@ export default function SettingsCenterModal({
       return (
         <div className="space-y-4">
           <div className="flex gap-1 rounded-lg border border-border/70 bg-bg/40 p-1">
-            {(["letterboxd", "plex"] as const).map((tab) => (
+            {(["letterboxd", "imdb", "plex"] as const).map((tab) => (
               <button
                 key={tab}
                 type="button"
@@ -1865,7 +2003,7 @@ export default function SettingsCenterModal({
                     : "text-muted border border-transparent hover:text-text hover:bg-white/5"
                 }`}
               >
-                {tab === "letterboxd" ? "Letterboxd" : "Plex"}
+                {tab === "letterboxd" ? "Letterboxd" : tab === "imdb" ? "IMDb" : "Plex"}
               </button>
             ))}
           </div>
@@ -2196,6 +2334,239 @@ export default function SettingsCenterModal({
                 </div>
               )}
             </div>
+          )}
+        </div>
+          ) : syncTab === "imdb" ? (
+          <div className="space-y-4">
+          <div>
+            <p className="text-sm text-muted">
+              Upload your IMDb CSV export to sync watchlist, ratings, or a custom list.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-lg border border-border/80 bg-bg/40 px-3 py-2.5 text-xs text-muted space-y-1">
+              <div>1. Go to your IMDb <strong>Ratings</strong>, <strong>Watchlist</strong>, or any <strong>List</strong>.</div>
+              <div>2. Click the three dots <strong>&#8942;</strong> menu.</div>
+              <div>3. Select <strong>Export</strong> to download a CSV file.</div>
+              <div>4. Upload the downloaded CSV file below.</div>
+            </div>
+
+            <input
+              ref={imdbFileInputRef}
+              id="imdb-export-csv"
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(event) => {
+                const nextFile = event.target.files && event.target.files.length > 0 ? event.target.files[0] : null;
+                handleImdbFileChange(nextFile);
+              }}
+              className="sr-only"
+              disabled={imdbUploadDisabled}
+            />
+
+            {!imdbFile && (
+              <div
+                role="button"
+                tabIndex={imdbUploadDisabled ? -1 : 0}
+                onClick={() => {
+                  if (imdbUploadDisabled) return;
+                  openImdbFilePicker();
+                }}
+                onKeyDown={(event) => {
+                  if (imdbUploadDisabled) return;
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  openImdbFilePicker();
+                }}
+                onDragEnter={(event) => {
+                  if (imdbUploadDisabled) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setImdbDropActive(true);
+                }}
+                onDragOver={(event) => {
+                  if (imdbUploadDisabled) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setImdbDropActive(true);
+                }}
+                onDragLeave={(event) => {
+                  if (imdbUploadDisabled) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const related = event.relatedTarget as Node | null;
+                  if (related && event.currentTarget.contains(related)) return;
+                  setImdbDropActive(false);
+                }}
+                onDrop={(event) => {
+                  if (imdbUploadDisabled) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setImdbDropActive(false);
+                  const droppedFile = event.dataTransfer.files && event.dataTransfer.files.length > 0
+                    ? event.dataTransfer.files[0]
+                    : null;
+                  handleImdbFileChange(droppedFile);
+                }}
+                className={`rounded-2xl border-[2.5px] border-dashed px-4 py-6 sm:px-5 sm:py-7 transition-colors ${
+                  imdbUploadDisabled
+                    ? "border-border/50 bg-bg/30 opacity-70 cursor-not-allowed"
+                    : imdbDropActive
+                      ? "border-accent-2 bg-accent/10 cursor-pointer"
+                      : "border-border/80 bg-panel/35 hover:border-accent/65 cursor-pointer"
+                }`}
+              >
+                <div className="flex flex-col items-center justify-center text-center gap-3">
+                  <div className="w-11 h-11 rounded-full border border-border/70 bg-bg/70 flex items-center justify-center text-muted">
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <path d="M12 3v10" strokeLinecap="round" />
+                      <path d="m8 9 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M4 16.5v1A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5v-1" strokeLinecap="round" />
+                    </svg>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-sm font-semibold text-text">
+                      {imdbDropActive ? "Drop your CSV file here" : "Drag and drop your IMDb CSV file"}
+                    </div>
+                    <div className="text-xs text-muted">or choose a file manually</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (imdbUploadDisabled) return;
+                      openImdbFilePicker();
+                    }}
+                    disabled={imdbUploadDisabled}
+                    className="px-4 py-2 rounded-lg border border-border/80 bg-bg/60 text-sm font-semibold text-text hover:border-accent-2 transition-colors disabled:opacity-50"
+                  >
+                    Upload CSV file
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {imdbFile && (
+              <div className="rounded-xl border border-border/70 bg-panel/35 px-4 py-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <div className="w-11 h-11 rounded-lg border border-border/70 bg-bg/70 flex items-center justify-center text-text/90 shrink-0">
+                      <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                        <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M14 2v5h5" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M9 13h6M9 17h6" strokeLinecap="round" />
+                      </svg>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm sm:text-[0.95rem] font-semibold text-text truncate">{imdbFile.name}</div>
+                      <div className="text-xs sm:text-sm text-muted">{formatFileSize(imdbFile.size)}</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={resetImdbSelectedFile}
+                    disabled={imdbUploadDisabled}
+                    className="w-full sm:w-auto px-3.5 py-2 rounded-lg border border-border/80 bg-bg/60 text-xs sm:text-sm font-semibold text-text hover:border-accent-2 transition-colors disabled:opacity-50"
+                  >
+                    Choose a different CSV file
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="text-xs text-muted">
+              Watchlist sync adds new items. Ratings sync marks titles as watched. List sync follows your Skip, Merge, or Overwrite choice for name conflicts.
+            </div>
+            {imdbAnySyncing && (
+              <div className="text-xs rounded-md border border-accent/35 bg-accent/10 px-3 py-2 text-accent-2">
+                Please wait. Syncing can take some time for large IMDb libraries.
+              </div>
+            )}
+            {imdbCanSync ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleImdbWatchlistSync}
+                    disabled={imdbAnySyncing}
+                    className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg bg-accent text-white hover:bg-accent/85 transition-colors disabled:opacity-50 text-sm"
+                  >
+                    {imdbWatchlistSyncing ? "Syncing watchlist..." : "Sync watchlist"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleImdbRatingsSync}
+                    disabled={imdbAnySyncing}
+                    className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
+                  >
+                    {imdbRatingsSyncing ? "Syncing ratings..." : "Sync ratings (watched)"}
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-border/70 bg-bg/25 px-3 py-3 space-y-3">
+                  <h5 className="text-sm font-semibold text-text">Sync as custom list</h5>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted">List name</label>
+                    <input
+                      type="text"
+                      value={imdbListName}
+                      onChange={(e) => { setImdbListName(e.target.value); setImdbListConflictName(null); }}
+                      placeholder="My IMDb List"
+                      disabled={imdbAnySyncing}
+                      className="w-full px-3 py-2 rounded-lg border border-border/80 bg-bg/60 text-sm text-text placeholder:text-muted/60 focus:outline-none focus:border-accent/60 disabled:opacity-60"
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleImdbListSync}
+                      disabled={imdbAnySyncing || !imdbListName.trim()}
+                      className="w-full sm:w-auto px-4 py-2.5 font-semibold rounded-lg border border-border/80 bg-bg/60 text-text hover:border-accent-2 transition-colors disabled:opacity-50 text-sm"
+                    >
+                      {imdbListSyncing ? "Syncing list..." : "Sync list"}
+                    </button>
+                  </div>
+
+                  {imdbListConflictName && (
+                    <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2.5 space-y-2">
+                      <div className="text-sm text-red-300">
+                        A list named &ldquo;{imdbListConflictName}&rdquo; already exists.
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { void runImdbListSync("merge"); }}
+                          disabled={imdbAnySyncing}
+                          className="px-3.5 py-2 rounded-lg border border-border/80 bg-bg/60 text-sm font-semibold text-text hover:border-accent-2 transition-colors disabled:opacity-50"
+                        >
+                          Merge
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { void runImdbListSync("overwrite"); }}
+                          disabled={imdbAnySyncing}
+                          className="px-3.5 py-2 rounded-lg border border-border/80 bg-bg/60 text-sm font-semibold text-text hover:border-accent-2 transition-colors disabled:opacity-50"
+                        >
+                          Overwrite
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-muted">Upload a CSV file to show sync buttons.</div>
+            )}
+          </div>
+
+          {imdbErr && !imdbListConflictName && (
+            <div className="text-sm text-red-300 bg-red-500/10 rounded-md px-3 py-2">{imdbErr}</div>
+          )}
+
+          {imdbMsg && (
+            <div className="text-sm text-green-300 bg-green-500/10 rounded-md px-3 py-2">{imdbMsg}</div>
           )}
         </div>
           ) : (

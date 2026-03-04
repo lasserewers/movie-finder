@@ -1,10 +1,13 @@
 """Plex library integration endpoints + background sync."""
 
 import asyncio
+import logging
 import secrets
 import time
 import uuid as _uuid
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import delete, select
@@ -263,6 +266,8 @@ async def plex_webhook(secret: str, request: Request):
     Plex sends multipart/form-data with a 'payload' JSON field.
     We match by webhook secret, debounce, and trigger a background sync.
     """
+    logger.info("Plex webhook received (secret=%s...)", secret[:8])
+
     # Look up user by webhook secret
     async with async_session() as db:
         result = await db.execute(
@@ -270,6 +275,7 @@ async def plex_webhook(secret: str, request: Request):
         )
         prefs = result.scalar_one_or_none()
         if not prefs or not prefs.plex_token:
+            logger.warning("Plex webhook: no matching user for secret=%s...", secret[:8])
             return {"ok": False}
 
         user_id = prefs.user_id
@@ -278,6 +284,7 @@ async def plex_webhook(secret: str, request: Request):
         now = time.time()
         last = _webhook_last_sync.get(user_id, 0)
         if (now - last) < WEBHOOK_DEBOUNCE:
+            logger.info("Plex webhook debounced for user %s", user_id)
             return {"ok": True, "message": "Debounced"}
 
         # Mark sync in progress and launch background task
@@ -286,6 +293,6 @@ async def plex_webhook(secret: str, request: Request):
         prefs.plex_sync_message = "Webhook-triggered sync..."
         await db.commit()
 
-    # Run sync in background (not using BackgroundTasks since this is not a normal request handler dependency)
+    logger.info("Plex webhook triggering sync for user %s", user_id)
     asyncio.create_task(_run_plex_sync(user_id))
     return {"ok": True, "message": "Sync triggered"}

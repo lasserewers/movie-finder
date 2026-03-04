@@ -911,3 +911,120 @@ async def remove_item_from_list(
     list_row.updated_at = datetime.now(timezone.utc)
     await db.commit()
     return {"ok": True, "removed": True}
+
+
+# ---------------------------------------------------------------------------
+# IMDb list CSV import
+# ---------------------------------------------------------------------------
+
+@router.post("/sync/imdb")
+async def sync_list_from_imdb(
+    file: UploadFile = File(...),
+    list_name: str = Form("IMDb List"),
+    conflict_mode: str | None = Form(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from .routes_watchlist import parse_imdb_csv, resolve_imdb_to_tmdb, IMDB_IMPORT_LIMIT
+
+    csv_bytes = await file.read()
+    entries = parse_imdb_csv(csv_bytes)
+    if len(entries) > IMDB_IMPORT_LIMIT:
+        entries = entries[:IMDB_IMPORT_LIMIT]
+    if not entries:
+        return {
+            "ok": True, "status": "empty",
+            "message": "No items found in this IMDb CSV.",
+            "total_items": 0, "added_count": 0, "already_exists_count": 0, "unmatched_count": 0,
+        }
+
+    resolved = await resolve_imdb_to_tmdb(entries)
+
+    # Check for existing list with same name
+    existing_lists = (
+        await db.execute(select(UserList).where(UserList.user_id == user.id))
+    ).scalars().all()
+    existing_by_key = {_normalize_list_key(row.name): row for row in existing_lists}
+    list_key = _normalize_list_key(list_name)
+    existing_list = existing_by_key.get(list_key)
+
+    if existing_list and not conflict_mode:
+        return {
+            "ok": False, "status": "conflict",
+            "message": f'You already have a list named "{existing_list.name}". Choose Merge or Overwrite.',
+            "conflict_name": existing_list.name,
+            "total_items": len(entries), "added_count": 0, "already_exists_count": 0, "unmatched_count": 0,
+        }
+
+    now = datetime.now(timezone.utc)
+    if existing_list is None:
+        target_list = UserList(user_id=user.id, name=list_name, created_at=now, updated_at=now)
+        db.add(target_list)
+        await db.flush()
+    else:
+        target_list = existing_list
+
+    if existing_list and conflict_mode == "overwrite":
+        await db.execute(delete(UserListItem).where(UserListItem.list_id == target_list.id))
+
+    existing_items = (
+        await db.execute(select(UserListItem).where(UserListItem.list_id == target_list.id))
+    ).scalars().all()
+    existing_item_by_key = {(r.media_type, int(r.tmdb_id)): r for r in existing_items}
+    next_sort_index = max((int(r.sort_index or 0) for r in existing_items), default=0)
+
+    added_count = 0
+    already_exists_count = 0
+    unmatched_count = 0
+    seen: set[tuple[str, int]] = set()
+
+    for entry in entries:
+        tmdb_result = resolved.get(entry["imdb_id"])
+        if not tmdb_result:
+            unmatched_count += 1
+            continue
+        tmdb_id = int(tmdb_result.get("id") or 0)
+        if tmdb_id <= 0:
+            unmatched_count += 1
+            continue
+        media_type = tmdb_result.get("_media_type", entry["media_type"])
+        key = (media_type, tmdb_id)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        title = str(tmdb_result.get("title") or tmdb_result.get("name") or entry["title"]).strip()
+        poster_path = str(tmdb_result.get("poster_path") or "").strip() or None
+        release_date = str(tmdb_result.get("release_date") or tmdb_result.get("first_air_date") or "").strip() or None
+
+        if key in existing_item_by_key:
+            row = existing_item_by_key[key]
+            row.title = title
+            row.poster_path = poster_path
+            row.release_date = release_date
+            already_exists_count += 1
+            continue
+
+        next_sort_index += 1
+        db.add(UserListItem(
+            list_id=target_list.id, media_type=media_type, tmdb_id=tmdb_id,
+            title=title, poster_path=poster_path, release_date=release_date,
+            sort_index=next_sort_index, created_at=now,
+        ))
+        added_count += 1
+
+    target_list.updated_at = now
+
+    status = "ok"
+    if added_count == 0 and already_exists_count == 0:
+        status = "no_matches" if unmatched_count > 0 else "empty"
+    message = f'Synced IMDb list "{list_name}". Added {added_count}. {already_exists_count} already in list. {unmatched_count} unmatched.'
+
+    add_audit_log(db, action="user.lists_sync_imdb",
+                  message=f"IMDb list sync: added {added_count}, existing {already_exists_count}, unmatched {unmatched_count}.",
+                  actor_user=user, target_user=user)
+    await db.commit()
+
+    return {"ok": True, "status": status, "message": message,
+            "total_items": len(entries), "added_count": added_count,
+            "already_exists_count": already_exists_count, "unmatched_count": unmatched_count}
