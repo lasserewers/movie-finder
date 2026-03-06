@@ -4,6 +4,13 @@ import httpx
 BASE_URL = "https://api.themoviedb.org/3"
 _client: httpx.AsyncClient | None = None
 
+# Keep connections alive longer to avoid cold-start latency after idle
+_POOL_LIMITS = httpx.Limits(
+    max_connections=20,
+    max_keepalive_connections=10,
+    keepalive_expiry=300,  # 5 minutes
+)
+
 
 def _get_api_key() -> str:
     key = os.environ.get("TMDB_API_KEY", "")
@@ -15,7 +22,7 @@ def _get_api_key() -> str:
 async def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=10)
+        _client = httpx.AsyncClient(timeout=10, limits=_POOL_LIMITS, http2=True)
     return _client
 
 

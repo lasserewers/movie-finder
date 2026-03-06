@@ -42,15 +42,15 @@ from . import plex as plex_mod
 
 WATCH_PROVIDER_TTL = 6 * 60 * 60
 WATCH_PROVIDER_CACHE: dict[tuple[str, int], tuple[float, dict]] = {}
-HOME_CACHE_TTL = 10 * 60
+HOME_CACHE_TTL = 30 * 60          # 30 min — trending data doesn't change fast
 HOME_CACHE: dict[str, tuple[float, dict]] = {}
 PROVIDER_NAME_TTL = 24 * 60 * 60
 PROVIDER_NAME_CACHE: tuple[float, dict[int, str]] | None = None
-SECTION_CACHE_TTL = 10 * 60
+SECTION_CACHE_TTL = 30 * 60       # 30 min
 SECTION_CACHE: dict[str, tuple[float, dict]] = {}
 SECTION_CONFIG_CACHE: dict[str, tuple[float, list]] = {}
-SECTION_CONFIG_TTL = 10 * 60
-SEARCH_CACHE_TTL = 5 * 60
+SECTION_CONFIG_TTL = 60 * 60       # 1 hour — genre/section layout rarely changes
+SEARCH_CACHE_TTL = 10 * 60        # 10 min
 SEARCH_CACHE: dict[str, tuple[float, dict]] = {}
 FILTER_CONCURRENCY = 30
 VALID_MEDIA_TYPES = ("movie", "tv", "mix")
@@ -92,12 +92,43 @@ if not FRONTEND_DIR.exists():
 limiter = Limiter(key_func=get_remote_address)
 
 
+WARMUP_INTERVAL = 20 * 60  # 20 minutes — keep caches and connections alive
+_warmup_task: asyncio.Task | None = None
+
+
+async def _cache_warmup_loop():
+    """Periodically pre-fetch popular home page data to keep caches and HTTP
+    connection pools warm, so the first real user request after idle is fast."""
+    import logging
+    log = logging.getLogger("uvicorn.error")
+    # Wait a bit for startup to complete
+    await asyncio.sleep(10)
+    while True:
+        try:
+            # Warm guest home for common countries — populates HOME_CACHE
+            # and exercises the TMDB httpx connection pool.
+            for country in ("US", "GB", "DE"):
+                for mt in ("mix", "movie", "tv"):
+                    try:
+                        await _guest_home(1, 6, mt, country)
+                    except Exception:
+                        pass
+            log.info("Cache warm-up complete")
+        except Exception as exc:
+            log.warning("Cache warm-up error: %s", exc)
+        await asyncio.sleep(WARMUP_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _warmup_task
     await init_db()
     start_periodic_sync()
+    _warmup_task = asyncio.create_task(_cache_warmup_loop())
     yield
     stop_periodic_sync()
+    if _warmup_task:
+        _warmup_task.cancel()
     await tmdb.close_client()
     await streaming_availability.close_client()
     await ratings.close_client()
@@ -2853,7 +2884,7 @@ async def home(
     max_scan_pages = 12
     extra_max_scan_pages = 60
     recently_added_pages = 2
-    section_build_concurrency = 3
+    section_build_concurrency = 5
     semaphore = asyncio.Semaphore(FILTER_CONCURRENCY)
     flag_cache: dict[tuple[str, int, str], bool] = {}
     discover_provider_params = _discover_provider_filter_params(ids, allowed_countries, include_paid)

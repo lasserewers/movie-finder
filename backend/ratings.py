@@ -108,11 +108,19 @@ def _omdb_api_keys() -> list[str]:
     return keys
 
 
+_POOL_LIMITS = httpx.Limits(
+    max_connections=20,
+    max_keepalive_connections=10,
+    keepalive_expiry=300,
+)
+
+
 async def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
         _client = httpx.AsyncClient(
             timeout=8,
+            limits=_POOL_LIMITS,
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 (X11; Linux x86_64) "

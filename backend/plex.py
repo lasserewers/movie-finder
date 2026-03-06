@@ -20,10 +20,17 @@ _TMDB_GUID_RE = re.compile(r"tmdb://(\d+)")
 _LEGACY_TMDB_RE = re.compile(r"com\.plexapp\.agents\.themoviedb://(\d+)")
 
 
+_POOL_LIMITS = httpx.Limits(
+    max_connections=10,
+    max_keepalive_connections=5,
+    keepalive_expiry=300,
+)
+
+
 async def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=30)
+        _client = httpx.AsyncClient(timeout=30, limits=_POOL_LIMITS)
     return _client
 
 

@@ -275,10 +275,17 @@ def _get_api_key() -> str:
     return os.environ.get("STREAMING_AVAILABILITY_API_KEY", "")
 
 
+_POOL_LIMITS = httpx.Limits(
+    max_connections=20,
+    max_keepalive_connections=10,
+    keepalive_expiry=300,
+)
+
+
 async def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=10)
+        _client = httpx.AsyncClient(timeout=10, limits=_POOL_LIMITS)
     return _client
 
 

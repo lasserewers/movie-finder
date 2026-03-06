@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-httpx
+httpx[http2]
 asyncpg
 sqlalchemy[asyncio]
 argon2-cffi
