@@ -37,7 +37,7 @@ from .routes_watched import router as watched_router
 from .routes_lists import router as lists_router
 from .routes_notifications import router as notifications_router
 from .routes_billing import router as billing_router
-from .routes_plex import router as plex_router
+from .routes_plex import router as plex_router, start_periodic_sync, stop_periodic_sync
 from . import plex as plex_mod
 
 WATCH_PROVIDER_TTL = 6 * 60 * 60
@@ -95,7 +95,9 @@ limiter = Limiter(key_func=get_remote_address)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    start_periodic_sync()
     yield
+    stop_periodic_sync()
     await tmdb.close_client()
     await streaming_availability.close_client()
     await ratings.close_client()

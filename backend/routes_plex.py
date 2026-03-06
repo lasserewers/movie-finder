@@ -51,6 +51,7 @@ def invalidate_plex_cache(user_id: _uuid.UUID):
 # ---------------------------------------------------------------------------
 _webhook_last_sync: dict[_uuid.UUID, float] = {}
 WEBHOOK_DEBOUNCE = 30  # 30 seconds (incremental sync is fast)
+PERIODIC_SYNC_INTERVAL = 5 * 60  # 5 minutes
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +267,55 @@ async def _run_plex_incremental_sync(user_id: _uuid.UUID):
                     await db.commit()
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Periodic background sync (runs every PERIODIC_SYNC_INTERVAL)
+# ---------------------------------------------------------------------------
+
+_periodic_task: asyncio.Task | None = None
+
+
+async def _periodic_plex_sync_loop():
+    """Periodically run incremental sync for all connected Plex users."""
+    while True:
+        await asyncio.sleep(PERIODIC_SYNC_INTERVAL)
+        try:
+            async with async_session() as db:
+                result = await db.execute(
+                    select(UserPreferences.user_id).where(
+                        UserPreferences.plex_token.isnot(None),
+                        UserPreferences.plex_server_uri.isnot(None),
+                    )
+                )
+                user_ids = result.scalars().all()
+
+            for user_id in user_ids:
+                try:
+                    await _run_plex_incremental_sync(user_id)
+                except Exception:
+                    pass
+                # Small delay between users to avoid hammering Plex
+                await asyncio.sleep(2)
+
+        except Exception:
+            logger.exception("Periodic Plex sync loop error")
+
+
+def start_periodic_sync():
+    """Start the periodic sync background task. Call from app lifespan."""
+    global _periodic_task
+    if _periodic_task is None or _periodic_task.done():
+        _periodic_task = asyncio.create_task(_periodic_plex_sync_loop())
+        logger.info("Plex periodic sync started (every %ds)", PERIODIC_SYNC_INTERVAL)
+
+
+def stop_periodic_sync():
+    """Stop the periodic sync background task."""
+    global _periodic_task
+    if _periodic_task and not _periodic_task.done():
+        _periodic_task.cancel()
+        _periodic_task = None
 
 
 # ---------------------------------------------------------------------------
